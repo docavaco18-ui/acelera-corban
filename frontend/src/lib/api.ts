@@ -65,9 +65,20 @@ export const leadsApi = {
     const form = new FormData();
     form.append("file", file);
     return api
-      .post<{ inserted: number }>("/api/leads/upload", form)
+      .post<{ job_id: string }>("/api/leads/upload", form)
       .then((r) => r.data);
   },
+
+  uploadStatus: (jobId: string) =>
+    api
+      .get<{
+        status: "queued" | "running" | "done" | "error";
+        total: number;
+        processed: number;
+        inserted: number;
+        error?: string;
+      }>(`/api/leads/upload/${jobId}`)
+      .then((r) => r.data),
 
   exportCsv: async (status: string = "elegivel") => {
     const blob = await api

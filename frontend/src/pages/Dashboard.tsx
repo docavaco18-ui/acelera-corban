@@ -100,6 +100,7 @@ export function Dashboard() {
   const [workers, setWorkers] = useState(6);
   const [loading, setLoading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const refresh = async () => {
@@ -160,16 +161,39 @@ export function Dashboard() {
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = "";
     setUploadMsg("Enviando...");
+    setUploadProgress(null);
+    let jobId: string;
     try {
       const r = await leadsApi.uploadCsv(file);
-      setUploadMsg(`✓ ${r.inserted} inseridos`);
-      refresh();
+      jobId = r.job_id;
     } catch {
       setUploadMsg("Erro ao enviar CSV");
+      setTimeout(() => setUploadMsg(null), 5000);
+      return;
     }
-    e.target.value = "";
-    setTimeout(() => setUploadMsg(null), 5000);
+    setUploadMsg("Processando…");
+    while (true) {
+      await new Promise((res) => setTimeout(res, 1000));
+      try {
+        const s = await leadsApi.uploadStatus(jobId);
+        if (s.total > 0) setUploadProgress({ processed: s.processed, total: s.total });
+        if (s.status === "done") {
+          setUploadMsg(`✓ ${s.inserted} de ${s.total} inseridos`);
+          refresh();
+          break;
+        }
+        if (s.status === "error") {
+          setUploadMsg(`Erro: ${s.error ?? "desconhecido"}`);
+          break;
+        }
+      } catch {
+        setUploadMsg("Erro ao consultar progresso");
+        break;
+      }
+    }
+    setTimeout(() => { setUploadMsg(null); setUploadProgress(null); }, 6000);
   };
 
   const ranking = useMemo(() => {
@@ -224,7 +248,15 @@ export function Dashboard() {
             style={{ padding: "7px 16px", background: "rgba(0,191,255,.15)", color: C.blue, border: "1px solid rgba(0,191,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ⬇ Exportar Elegíveis
           </button>
-          {uploadMsg && <span style={{ fontSize: ".75rem", color: uploadMsg.startsWith("✓") ? C.green : C.red }}>{uploadMsg}</span>}
+          {uploadMsg && <span style={{ fontSize: ".75rem", color: uploadMsg.startsWith("✓") ? C.green : uploadMsg.startsWith("Erro") ? C.red : "#888" }}>{uploadMsg}</span>}
+          {uploadProgress && uploadProgress.total > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180 }}>
+              <div style={{ flex: 1, height: 6, background: "#1a1a2e", borderRadius: 3, overflow: "hidden" }}>
+                <div style={{ width: `${Math.min(100, (uploadProgress.processed / uploadProgress.total) * 100)}%`, height: "100%", background: C.purple, transition: "width .3s" }} />
+              </div>
+              <span style={{ fontSize: ".7rem", color: "#888" }}>{uploadProgress.processed}/{uploadProgress.total}</span>
+            </div>
+          )}
         </div>
       </div>
 

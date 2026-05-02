@@ -4,6 +4,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from ..database import db
 from ..auth_deps import require_user, AuthUser
+from ..services import upload_jobs
 
 router = APIRouter(prefix="/api/leads", tags=["leads"])
 
@@ -15,41 +16,27 @@ def _scope(query, user: AuthUser):
     return query
 
 
-@router.post("/upload")
+@router.post("/upload", status_code=202)
 async def upload_csv(
     file: UploadFile = File(...),
     user: AuthUser = Depends(require_user),
 ):
     content = await file.read()
-    text = content.decode("utf-8-sig")
-    reader = csv.DictReader(io.StringIO(text))
+    if not content:
+        raise HTTPException(400, "Arquivo vazio")
+    job_id = await upload_jobs.start_upload(content, user.user_id)
+    return {"job_id": job_id}
 
-    leads = []
-    for row in reader:
-        cpf = row.get("cpf", "").strip()
-        if not cpf:
-            continue
-        lead = {
-            "cpf": cpf,
-            "telefone": row.get("telefone", "").strip(),
-            "status": "pendente",
-            "owner_id": user.user_id,
-        }
-        nome = row.get("nome", "").strip()
-        if nome:
-            lead["nome"] = nome
-        data_nasc = row.get("data_nascimento", "").strip()
-        if data_nasc:
-            lead["data_nascimento"] = data_nasc
-        leads.append(lead)
 
-    if not leads:
-        raise HTTPException(400, "Nenhum CPF encontrado no arquivo")
-
-    db().table("v8_leads").upsert(
-        leads, on_conflict="owner_id,cpf", ignore_duplicates=True
-    ).execute()
-    return {"inserted": len(leads)}
+@router.get("/upload/{job_id}")
+async def upload_status(
+    job_id: str,
+    _: AuthUser = Depends(require_user),
+):
+    state = await upload_jobs.get_job(job_id)
+    if state is None:
+        raise HTTPException(404, "Job não encontrado ou expirado")
+    return state
 
 
 @router.get("/")
