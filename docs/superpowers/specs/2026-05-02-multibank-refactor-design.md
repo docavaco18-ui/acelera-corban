@@ -10,7 +10,7 @@ Transformar ACELERA CORBAN (hoje só V8) em plataforma multi-banco. Cada banco �
 ## Decisões aprovadas
 
 1. **Login** — título muda de `🤖 V8 Bot` pra `ACELERA CORBAN`.
-2. **Menu lateral** (ordem fixa): V8, VCTex, Credenciais, Dashboard.
+2. **Menu lateral** (ordem fixa): V8, VCTex, Credenciais, Higienizações, Dashboard.
 3. **Cada banco isolado** — tela própria, dados próprios, bot próprio. Não há mistura.
 4. **Tabelas separadas por banco** — `v8_leads` (existente, intocado), `vctex_leads` (nova). Sem tabela unificada.
 5. **Credenciais por usuário** — login/senha de cada banco vivem em `user_bank_credentials` criptografado (Fernet, chave única no `.env`). Bot usa as credenciais do usuário logado, não env global.
@@ -115,6 +115,7 @@ frontend/src/
 ├── pages/
 │   ├── Login.tsx         ← título atualizado
 │   ├── Credentials.tsx   ← novo
+│   ├── Higienizacoes.tsx ← novo: histórico de runs (todos os bancos)
 │   └── Dashboard.tsx     ← reescrita: agregação de tudo
 ├── lib/
 │   └── api.ts            ← rotas /api/banks/<code>/*
@@ -127,6 +128,16 @@ frontend/src/
 - Banner informativo:
   > 💡 Pra rodar muitos CPFs sem ser bloqueado, recomendamos cadastrar seus próprios proxies (IPv4). Sem proxy o sistema usa o IP do servidor — funciona, mas em volume alto pode travar.
 - Submit → `PUT /api/credentials/{bank}` com payload JSON
+
+**Tela Higienizações (histórico):**
+- Lista todas as runs do usuário (V8 + VCTex juntos), ordenadas por data desc
+- Colunas: Data, Banco (V8/VCTex), Nome do arquivo, Total CPFs, Elegíveis, Liberado (R$), Status (concluído/rodando/erro), Ações
+- Ações por linha:
+  - **Ver progresso** — abre modal com detalhes da run (logs, % processado, erros)
+  - **Baixar CSV** — exporta resultado da higienização (CPF + status + valor + telefone, etc)
+- Filtros simples: banco, data
+- Backend: `GET /api/higienizacoes` lê `v8_bot_runs` UNION `vctex_bot_runs` filtrado por `owner_id` (admin vê todos)
+- Endpoint download: `GET /api/higienizacoes/{run_id}/download` → CSV gerado dos leads daquela run
 
 **Tela Dashboard (agregada):**
 - Cards: Total leads, Total elegíveis, Total liberado (R$)
