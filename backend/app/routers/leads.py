@@ -18,8 +18,8 @@ async def upload_csv(
     content = await file.read()
     if not content:
         raise HTTPException(400, "Arquivo vazio")
-    job_id = await upload_jobs.start_upload(content, user.user_id)
-    return {"job_id": job_id}
+    result = await upload_jobs.start_upload(content, user.user_id, file_name=file.filename)
+    return result
 
 
 @router.get("/upload/{job_id}")
@@ -37,6 +37,7 @@ async def upload_status(
 async def list_leads(
     status: str = None,
     erro_contains: str = None,
+    batch_id: str | None = None,
     page: int = 1,
     limit: int = 50,
     user: AuthUser = Depends(require_user),
@@ -45,6 +46,8 @@ async def list_leads(
     q = scoped(db, "v8_leads", user.user_id).select("*").order("created_at", desc=True)
     if status:
         q = q.eq("status", status)
+    if batch_id:
+        q = q.eq("batch_id", batch_id)
     if erro_contains:
         q = q.ilike("erro", f"*{erro_contains}*")
     result = q.range((page - 1) * limit, page * limit - 1).execute()

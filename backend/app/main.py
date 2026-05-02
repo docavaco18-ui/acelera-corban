@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
-from .routers import leads, bot, stats, webhook, ws, admin
+from .routers import leads, bot, stats, webhook, ws, admin, batches
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 
@@ -23,6 +23,7 @@ app.include_router(webhook.router)
 app.include_router(ws.router)
 app.include_router(admin.router)
 app.include_router(credentials_router)
+app.include_router(batches.router)
 
 @app.get("/health")
 async def health():

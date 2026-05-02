@@ -155,11 +155,11 @@ def test_cpf_dup_between_tenants_allowed(client_as, db, monkeypatch):
     # upload_jobs spawna asyncio.Task com redis — substitui por um sync direto.
     from app.services import upload_jobs as upload_mod
 
-    async def fake_start(content, owner_id):
+    async def fake_start(content, owner_id, file_name=None):
         leads = upload_mod._parse_csv(content, owner_id)
         from app.db_scoped import scoped
         scoped(db, "v8_leads", owner_id).upsert(leads, on_conflict="owner_id,cpf").execute()
-        return "fake-job"
+        return {"job_id": "fake-job", "batch_id": "fake-batch"}
 
     monkeypatch.setattr(upload_mod, "start_upload", fake_start)
 

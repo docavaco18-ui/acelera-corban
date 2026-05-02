@@ -91,6 +91,24 @@ export interface BotEvent {
   count?: number;
 }
 
+export interface Batch {
+  id: string;
+  owner_id: string;
+  name: string;
+  file_name: string | null;
+  status: "pendente" | "processando" | "concluida" | "cancelada";
+  total_leads: number;
+  total_processed: number;
+  total_elegiveis: number;
+  total_inelegiveis: number;
+  total_liberado: number | string;
+  total_margem: number | string;
+  started_at: string | null;
+  finished_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type Tier = "gold" | "silver" | "bronze";
 
 export interface ScoredRecord extends Lead {

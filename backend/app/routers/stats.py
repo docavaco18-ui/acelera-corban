@@ -8,15 +8,15 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 PAGE = 1000
 
 
-def _scan_all(db, user_id: str, columns: str) -> list[dict]:
-    """Scaneia v8_leads do user paginado."""
+def _scan_all(db, user_id: str, columns: str, batch_id: str | None = None) -> list[dict]:
+    """Scaneia v8_leads do user paginado, opcionalmente filtrado por batch."""
     rows: list[dict] = []
     offset = 0
     while True:
-        chunk = (
-            scoped(db, "v8_leads", user_id).select(columns)
-            .range(offset, offset + PAGE - 1).execute().data or []
-        )
+        q = scoped(db, "v8_leads", user_id).select(columns)
+        if batch_id is not None:
+            q = q.eq("batch_id", batch_id)
+        chunk = q.range(offset, offset + PAGE - 1).execute().data or []
         rows.extend(chunk)
         if len(chunk) < PAGE:
             break
@@ -55,7 +55,7 @@ def _summarize(rows: list[dict]) -> dict:
 
 
 @router.get("/dashboard")
-async def dashboard(user: AuthUser = Depends(require_user)):
+async def dashboard(batch_id: str | None = None, user: AuthUser = Depends(require_user)):
     db = get_db()
-    rows = _scan_all(db, user.user_id, "status,valor_liberado,margem_disponivel,created_at,owner_id")
+    rows = _scan_all(db, user.user_id, "status,valor_liberado,margem_disponivel,created_at,owner_id,batch_id", batch_id=batch_id)
     return _summarize(rows)

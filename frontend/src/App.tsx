@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
+import Higienizacao from "./pages/Higienizacao";
+import DashboardAgregado from "./pages/DashboardAgregado";
 import Records from "./pages/Records";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
@@ -15,7 +16,8 @@ function TopBar() {
     }}>
       <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: 18 }}>V8</span>
       {[
-        ["/", "Dashboard"],
+        ["/", "Higienização"],
+        ["/dashboard", "Dashboard"],
         ["/registros", "Registros"],
         ...(isAdmin ? [["/admin", "Admin"] as const] : []),
       ].map(([to, label]) => (
@@ -66,7 +68,9 @@ export default function App() {
             <Protected>
               <TopBar />
               <Routes>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/" element={<Higienizacao />} />
+                <Route path="/higienizacao" element={<Higienizacao />} />
+                <Route path="/dashboard" element={<DashboardAgregado />} />
                 <Route path="/registros" element={<Records />} />
                 <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
               </Routes>

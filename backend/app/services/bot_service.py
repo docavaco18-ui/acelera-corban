@@ -38,36 +38,40 @@ async def _broadcast(redis, event: dict):
     await redis.publish("bot:events", json.dumps(event))
 
 
-async def _fetch_pending(db: Any, user_id: str, limit: int) -> list[dict]:
+async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None = None) -> list[dict]:
     def _q():
-        return (
-            scoped(db, "v8_leads", user_id).select("*")
-            .eq("status", "pendente").limit(limit).execute().data or []
-        )
+        q = scoped(db, "v8_leads", user_id).select("*").eq("status", "pendente")
+        if batch_id is not None:
+            q = q.eq("batch_id", batch_id)
+        return q.limit(limit).execute().data or []
     return await asyncio.to_thread(_q)
 
 
-async def _fetch_retries(db: Any, user_id: str, limit: int) -> list[dict]:
+async def _fetch_retries(db: Any, user_id: str, limit: int, batch_id: str | None = None) -> list[dict]:
     def _q():
         now_iso = datetime.now(timezone.utc).isoformat()
-        return (
+        q = (
             scoped(db, "v8_leads", user_id).select("*")
             .eq("status", "aguardando_resultado")
             .lte("proxima_tentativa", now_iso)
-            .limit(limit).execute().data or []
         )
+        if batch_id is not None:
+            q = q.eq("batch_id", batch_id)
+        return q.limit(limit).execute().data or []
     return await asyncio.to_thread(_q)
 
 
-async def _count_scheduled(db: Any, user_id: str) -> int:
+async def _count_scheduled(db: Any, user_id: str, batch_id: str | None = None) -> int:
     def _q():
         now_iso = datetime.now(timezone.utc).isoformat()
-        return len(
+        q = (
             scoped(db, "v8_leads", user_id).select("id")
             .eq("status", "aguardando_resultado")
             .gt("proxima_tentativa", now_iso)
-            .execute().data or []
         )
+        if batch_id is not None:
+            q = q.eq("batch_id", batch_id)
+        return len(q.execute().data or [])
     return await asyncio.to_thread(_q)
 
 
@@ -79,8 +83,13 @@ async def start_bot(
     db: Any,
     on_event: Callable,
     num_retry_workers: int = 3,
+    batch_id: str | None = None,
 ):
-    """Inicia bot pra um user. Levanta 409/503 via pool se já rodando ou capacidade cheia."""
+    """Inicia bot pra um user. Levanta 409/503 via pool se já rodando ou capacidade cheia.
+
+    Quando batch_id é passado, todas as queries (pending/retry/finalize)
+    são filtradas pra processar só os leads da batch — isolamento por upload.
+    """
     if user_id in _runtimes:
         return {"status": "already_running"}
 
@@ -91,7 +100,20 @@ async def start_bot(
     await _broadcast(redis, {
         "type": "bot_status", "status": "running", "user_id": user_id,
         "full_workers": handle.num_workers, "retry_workers": num_retry_workers,
+        "batch_id": batch_id,
     })
+
+    # Marca batch como "processando"
+    if batch_id is not None:
+        try:
+            def _mark_running():
+                scoped(db, "v8_batches", user_id).update({
+                    "status": "processando",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", batch_id).execute()
+            await asyncio.to_thread(_mark_running)
+        except Exception as e:
+            logger.warning(f"mark batch processando[{batch_id}] failed: {e}")
 
     processed = {"count": 0}
 
@@ -130,8 +152,8 @@ async def start_bot(
         idle_ticks = 0
         while rt.running:
             try:
-                retries = await _fetch_retries(db, user_id, RETRY_BATCH)
-                pendentes = await _fetch_pending(db, user_id, PENDING_BATCH)
+                retries = await _fetch_retries(db, user_id, RETRY_BATCH, batch_id=batch_id)
+                pendentes = await _fetch_pending(db, user_id, PENDING_BATCH, batch_id=batch_id)
 
                 added_retry = 0
                 for lead in retries:
@@ -151,7 +173,7 @@ async def start_bot(
                     await rt.pending_queue.put(lead)
                     added_pending += 1
 
-                scheduled = await _count_scheduled(db, user_id)
+                scheduled = await _count_scheduled(db, user_id, batch_id=batch_id)
                 await _broadcast(redis, {
                     "type": "cerebro_status",
                     "user_id": user_id,
@@ -216,16 +238,34 @@ async def start_bot(
             rt.retry_tasks = []
 
             def _finalize():
-                stats = scoped(db, "v8_leads", user_id).select("status").execute().data or []
+                # Stats da run: se batch_id, escopa só nessa batch; senão user inteiro.
+                q = scoped(db, "v8_leads", user_id).select("status,valor_liberado,margem_disponivel")
+                if batch_id is not None:
+                    q = q.eq("batch_id", batch_id)
+                stats = q.execute().data or []
                 eleg = sum(1 for r in stats if r["status"] == "elegivel")
                 ineleg = sum(1 for r in stats if r["status"] == "inelegivel")
+                liberado = sum(float(r.get("valor_liberado") or 0) for r in stats if r["status"] == "elegivel")
+                margem = sum(float(r.get("margem_disponivel") or 0) for r in stats if r["status"] == "elegivel")
+                now_iso = datetime.now(timezone.utc).isoformat()
                 scoped(db, "v8_bot_runs", user_id).update({
                     "status": "completed",
-                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "finished_at": now_iso,
                     "total_processed": processed["count"],
                     "total_elegiveis": eleg,
                     "total_inelegiveis": ineleg,
                 }).eq("id", handle.run_id).execute()
+                # Atualiza totais da batch (e marca concluída)
+                if batch_id is not None:
+                    scoped(db, "v8_batches", user_id).update({
+                        "status": "concluida",
+                        "finished_at": now_iso,
+                        "total_processed": processed["count"],
+                        "total_elegiveis": eleg,
+                        "total_inelegiveis": ineleg,
+                        "total_liberado": round(liberado, 2),
+                        "total_margem": round(margem, 2),
+                    }).eq("id", batch_id).execute()
             try:
                 await asyncio.to_thread(_finalize)
             except Exception as e:

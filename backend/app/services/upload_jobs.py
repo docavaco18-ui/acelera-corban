@@ -84,7 +84,7 @@ def _normalize_date(s: str) -> str | None:
     return None
 
 
-def _parse_csv(content: bytes, owner_id: str) -> list[dict]:
+def _parse_csv(content: bytes, owner_id: str, batch_id: str | None = None) -> list[dict]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -106,6 +106,8 @@ def _parse_csv(content: bytes, owner_id: str) -> list[dict]:
             "status": "pendente",
             "owner_id": owner_id,
         }
+        if batch_id is not None:
+            lead["batch_id"] = batch_id
         nome = _pick(row, normalized_row, NOME_KEYS)
         if nome:
             lead["nome"] = nome
@@ -116,9 +118,9 @@ def _parse_csv(content: bytes, owner_id: str) -> list[dict]:
     return leads
 
 
-async def _run(job_id: str, content: bytes, owner_id: str) -> None:
+async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None = None) -> None:
     try:
-        leads = _parse_csv(content, owner_id)
+        leads = _parse_csv(content, owner_id, batch_id=batch_id)
     except Exception as e:
         await _set_state(job_id, {
             "status": "error", "error": f"CSV inválido: {e}",
@@ -166,16 +168,46 @@ async def _run(job_id: str, content: bytes, owner_id: str) -> None:
             "processed": processed, "inserted": inserted,
         })
 
+    # Atualiza total_leads na batch (se houver)
+    if batch_id is not None:
+        try:
+            def _update_batch():
+                scoped(db(), "v8_batches", owner_id).update({
+                    "total_leads": inserted,
+                }).eq("id", batch_id).execute()
+            await loop.run_in_executor(None, _update_batch)
+        except Exception:
+            pass  # não-crítico
+
     await _set_state(job_id, {
         "status": "done", "total": total,
         "processed": processed, "inserted": inserted,
+        "batch_id": batch_id,
     })
 
 
-async def start_upload(content: bytes, owner_id: str) -> str:
+async def _create_batch(owner_id: str, file_name: str | None) -> str:
+    """Cria uma batch nova e retorna o id."""
+    loop = asyncio.get_running_loop()
+    name = file_name or f"Upload {uuid.uuid4().hex[:8]}"
+
+    def _insert():
+        return scoped(db(), "v8_batches", owner_id).insert({
+            "name": name,
+            "file_name": file_name,
+            "status": "pendente",
+        }).execute()
+
+    res = await loop.run_in_executor(None, _insert)
+    return res.data[0]["id"]
+
+
+async def start_upload(content: bytes, owner_id: str, file_name: str | None = None) -> dict:
     job_id = uuid.uuid4().hex
+    batch_id = await _create_batch(owner_id, file_name)
     await _set_state(job_id, {
         "status": "queued", "total": 0, "processed": 0, "inserted": 0,
+        "batch_id": batch_id,
     })
-    asyncio.create_task(_run(job_id, content, owner_id))
-    return job_id
+    asyncio.create_task(_run(job_id, content, owner_id, batch_id=batch_id))
+    return {"job_id": job_id, "batch_id": batch_id}

@@ -92,7 +92,13 @@ const EMPTY_STATS: DashboardStats = {
   em_processamento: 0, aguardando_autorizacao: 0, by_status: {},
 };
 
-export function Dashboard() {
+interface DashboardProps {
+  batchId?: string;          // se fornecido, escopa stats/leads/bot start a essa batch
+  batchName?: string;        // exibido no header
+  hideUpload?: boolean;      // omite "Carregar CSV" no header (DASHBOARD agregado não tem upload)
+}
+
+export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {}) {
   const [tab, setTab]   = useState<Tab>("geral");
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -105,20 +111,22 @@ export function Dashboard() {
 
   const refresh = async () => {
     const [s, b, ls] = await Promise.all([
-      statsApi.dashboard().catch(() => EMPTY_STATS),
+      statsApi.dashboard(batchId).catch(() => EMPTY_STATS),
       botApi.status().catch(() => botStatus),
+      // listAll não suporta batch_id ainda; filtro server-side por status,
+      // depois client filtra por batch_id se escopado
       leadsApi.listAll().catch(() => [] as Lead[]),
     ]);
     setStats(s);
     setBotStatus(b);
-    setLeads(ls);
+    setLeads(batchId ? ls.filter((l: any) => l.batch_id === batchId) : ls);
   };
 
   useEffect(() => {
     refresh();
     const t = setInterval(refresh, 15000);
     return () => clearInterval(t);
-  }, []);
+  }, [batchId]);
 
   const cutoff = stats.batch_cutoff ?? "";
   const currentLeads = useMemo(
@@ -220,6 +228,12 @@ export function Dashboard() {
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
         <h1 style={{ fontSize: "1.45rem", fontWeight: 800, color: "#fff" }}>🤖 V8 Bot</h1>
 
+        {batchName && (
+          <span style={{ padding: "4px 12px", borderRadius: 14, background: "rgba(180,74,255,.12)", color: C.purple, border: "1px solid rgba(180,74,255,.3)", fontSize: ".75rem", fontWeight: 700 }}>
+            📦 {batchName}
+          </span>
+        )}
+
         <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "5px 14px", borderRadius: 20, fontSize: ".75rem", fontWeight: 700, letterSpacing: ".5px", textTransform: "uppercase", ...pillStyle }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: dotColor, boxShadow: isRunning ? `0 0 6px ${C.green}` : "none", animation: isRunning ? "pulse 1.6s infinite" : "none" }} />
           {statusLabel}
@@ -231,7 +245,7 @@ export function Dashboard() {
             <input type="number" min={1} max={20} value={workers} onChange={e => setWorkers(Number(e.target.value))}
               style={{ width: 44, padding: "4px 7px", background: "#0d0d1f", border: `1px solid ${C.border}`, color: "#fff", borderRadius: 6, fontSize: ".78rem" }} />
           </label>
-          <button onClick={() => exec(() => botApi.start(workers))} disabled={loading || isRunning}
+          <button onClick={() => exec(() => botApi.start(workers, batchId))} disabled={loading || isRunning}
             style={{ padding: "7px 16px", background: isRunning || loading ? "#1a1a2e" : "rgba(0,255,136,.15)", color: isRunning || loading ? "#444" : C.green, border: `1px solid ${isRunning || loading ? C.border : "rgba(0,255,136,.4)"}`, borderRadius: 18, cursor: isRunning || loading ? "not-allowed" : "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ▶ Iniciar
           </button>
@@ -239,11 +253,15 @@ export function Dashboard() {
             style={{ padding: "7px 16px", background: !isRunning || loading ? "#1a1a2e" : "rgba(255,45,120,.15)", color: !isRunning || loading ? "#444" : C.red, border: `1px solid ${!isRunning || loading ? C.border : "rgba(255,45,120,.4)"}`, borderRadius: 18, cursor: !isRunning || loading ? "not-allowed" : "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ■ Parar
           </button>
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleUpload} />
-          <button onClick={() => fileRef.current?.click()}
-            style={{ padding: "7px 16px", background: "rgba(180,74,255,.15)", color: C.purple, border: "1px solid rgba(180,74,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
-            ↑ Carregar CSV
-          </button>
+          {!hideUpload && (
+            <>
+              <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={handleUpload} />
+              <button onClick={() => fileRef.current?.click()}
+                style={{ padding: "7px 16px", background: "rgba(180,74,255,.15)", color: C.purple, border: "1px solid rgba(180,74,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
+                ↑ Carregar CSV
+              </button>
+            </>
+          )}
           <button onClick={() => leadsApi.exportCsv("elegivel")}
             style={{ padding: "7px 16px", background: "rgba(0,191,255,.15)", color: C.blue, border: "1px solid rgba(0,191,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ⬇ Exportar Elegíveis

@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Lead, BotStatus, DashboardStats } from "./types";
+import type { Lead, BotStatus, DashboardStats, Batch } from "./types";
 import { supabase } from "./supabase";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "";
@@ -65,7 +65,7 @@ export const leadsApi = {
     const form = new FormData();
     form.append("file", file);
     return api
-      .post<{ job_id: string }>("/api/leads/upload", form)
+      .post<{ job_id: string; batch_id: string }>("/api/leads/upload", form)
       .then((r) => r.data);
   },
 
@@ -98,14 +98,26 @@ export const leadsApi = {
 
 export const botApi = {
   status: () => api.get<BotStatus>("/api/bot/status").then((r) => r.data),
-  start: (numWorkers = 6) =>
+  start: (numWorkers = 6, batchId?: string) =>
     api
-      .post<BotStatus>("/api/bot/start", null, { params: { num_workers: numWorkers } })
+      .post<BotStatus>("/api/bot/start", null, {
+        params: { num_workers: numWorkers, ...(batchId ? { batch_id: batchId } : {}) },
+      })
       .then((r) => r.data),
   stop: () => api.post<BotStatus>("/api/bot/stop").then((r) => r.data),
 };
 
 export const statsApi = {
-  dashboard: () =>
-    api.get<DashboardStats>("/api/stats/dashboard").then((r) => r.data),
+  dashboard: (batchId?: string) =>
+    api
+      .get<DashboardStats>("/api/stats/dashboard", { params: batchId ? { batch_id: batchId } : {} })
+      .then((r) => r.data),
+};
+
+export const batchesApi = {
+  list: () => api.get<{ data: Batch[] }>("/api/batches/").then((r) => r.data.data),
+  current: () => api.get<Batch | null>("/api/batches/current").then((r) => r.data),
+  get: (id: string) => api.get<Batch>(`/api/batches/${id}`).then((r) => r.data),
+  stats: (id: string) =>
+    api.get<DashboardStats>(`/api/batches/${id}/stats`).then((r) => r.data),
 };

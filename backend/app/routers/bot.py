@@ -19,6 +19,7 @@ async def start(
     request: Request,
     num_workers: int = 6,
     num_retry_workers: int = 3,
+    batch_id: str | None = None,
     user: AuthUser = Depends(require_user),
 ):
     db = get_db()
@@ -32,6 +33,7 @@ async def start(
         db=db,
         on_event=_on_event,
         num_retry_workers=num_retry_workers,
+        batch_id=batch_id,
     )
 
 
