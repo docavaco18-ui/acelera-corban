@@ -17,13 +17,16 @@ def _get_fernet() -> Fernet:
     return _fernet
 
 
-def encrypt(plaintext: str | None) -> bytes | None:
+def encrypt(plaintext: str | None) -> str | None:
+    """Retorna Fernet token como string urlsafe-base64 ASCII (JSON-safe)."""
     if plaintext is None:
         return None
-    return _get_fernet().encrypt(plaintext.encode("utf-8"))
+    return _get_fernet().encrypt(plaintext.encode("utf-8")).decode("ascii")
 
 
-def decrypt(ciphertext: bytes | None) -> str | None:
+def decrypt(ciphertext: str | bytes | None) -> str | None:
     if ciphertext is None:
         return None
+    if isinstance(ciphertext, str):
+        ciphertext = ciphertext.encode("ascii")
     return _get_fernet().decrypt(ciphertext).decode("utf-8")
