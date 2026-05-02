@@ -1,22 +1,15 @@
 import asyncio
 import json
 import logging
-import uuid
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Callable
-from ..database import db
+from typing import Any, Callable
 from ..redis_client import get_redis
-from .worker import LeadWorker
+from ..db_scoped import scoped
+from ..banks.v8.worker import LeadWorker
+from ..banks.v8.bot_pool import V8BotPool, RunHandle
 
 logger = logging.getLogger(__name__)
-
-_running = False
-_run_task: asyncio.Task | None = None
-_full_tasks: list[asyncio.Task] = []
-_retry_tasks: list[asyncio.Task] = []
-_pending_queue: asyncio.Queue | None = None
-_retry_queue: asyncio.Queue | None = None
-_inflight: set[str] = set()
 
 REFILL_INTERVAL = 5
 IDLE_INTERVAL = 30
@@ -25,92 +18,99 @@ PENDING_BATCH = 200
 RETRY_BATCH = 200
 
 
+@dataclass
+class _Runtime:
+    """Estado interno por user durante uma run de bot."""
+    running: bool = True
+    pending_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    retry_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    inflight: set[str] = field(default_factory=set)
+    full_tasks: list[asyncio.Task] = field(default_factory=list)
+    retry_tasks: list[asyncio.Task] = field(default_factory=list)
+    run_task: asyncio.Task | None = None
+
+
+# Per-user runtime, paralelo ao V8BotPool (que segura o RunHandle público).
+_runtimes: dict[str, _Runtime] = {}
+
+
 async def _broadcast(redis, event: dict):
     await redis.publish("bot:events", json.dumps(event))
 
 
-async def _fetch_pending(limit: int, owner_id: str | None) -> list[dict]:
+async def _fetch_pending(db: Any, user_id: str, limit: int) -> list[dict]:
     def _q():
-        q = db().table("v8_leads").select("*").eq("status", "pendente")
-        if owner_id:
-            q = q.eq("owner_id", owner_id)
-        return q.limit(limit).execute().data or []
+        return (
+            scoped(db, "v8_leads", user_id).select("*")
+            .eq("status", "pendente").limit(limit).execute().data or []
+        )
     return await asyncio.to_thread(_q)
 
 
-async def _fetch_retries(limit: int, owner_id: str | None) -> list[dict]:
+async def _fetch_retries(db: Any, user_id: str, limit: int) -> list[dict]:
     def _q():
         now_iso = datetime.now(timezone.utc).isoformat()
-        q = (
-            db().table("v8_leads").select("*")
+        return (
+            scoped(db, "v8_leads", user_id).select("*")
             .eq("status", "aguardando_resultado")
             .lte("proxima_tentativa", now_iso)
+            .limit(limit).execute().data or []
         )
-        if owner_id:
-            q = q.eq("owner_id", owner_id)
-        return q.limit(limit).execute().data or []
     return await asyncio.to_thread(_q)
 
 
-async def _count_scheduled(owner_id: str | None) -> int:
+async def _count_scheduled(db: Any, user_id: str) -> int:
     def _q():
         now_iso = datetime.now(timezone.utc).isoformat()
-        q = (
-            db().table("v8_leads").select("id")
+        return len(
+            scoped(db, "v8_leads", user_id).select("id")
             .eq("status", "aguardando_resultado")
             .gt("proxima_tentativa", now_iso)
+            .execute().data or []
         )
-        if owner_id:
-            q = q.eq("owner_id", owner_id)
-        return len(q.execute().data or [])
     return await asyncio.to_thread(_q)
 
 
 async def start_bot(
+    pool: V8BotPool,
+    user_id: str,
     num_workers: int,
+    creds: Any,
+    db: Any,
     on_event: Callable,
     num_retry_workers: int = 3,
-    owner_id: str | None = None,
-    initiator_id: str | None = None,
 ):
-    global _running, _run_task, _full_tasks, _retry_tasks, _pending_queue, _retry_queue, _inflight
-    if _running:
+    """Inicia bot pra um user. Levanta 409/503 via pool se já rodando ou capacidade cheia."""
+    if user_id in _runtimes:
         return {"status": "already_running"}
 
-    _running = True
-    _pending_queue = asyncio.Queue()
-    _retry_queue = asyncio.Queue()
-    _inflight = set()
+    handle = await pool.start(user_id=user_id, num_workers=num_workers, creds=creds, db=db)
+    rt = _Runtime()
+    _runtimes[user_id] = rt
     redis = await get_redis()
-    await redis.set("bot:status", "running")
     await _broadcast(redis, {
-        "type": "bot_status", "status": "running",
-        "full_workers": num_workers, "retry_workers": num_retry_workers,
-        "owner_id": owner_id,
+        "type": "bot_status", "status": "running", "user_id": user_id,
+        "full_workers": handle.num_workers, "retry_workers": num_retry_workers,
     })
-
-    run_id = str(uuid.uuid4())
-    await asyncio.to_thread(
-        lambda: db().table("v8_bot_runs").insert({
-            "id": run_id, "num_workers": num_workers + num_retry_workers, "status": "running",
-            "owner_id": initiator_id,
-        }).execute()
-    )
 
     processed = {"count": 0}
 
     async def on_event_async(event):
-        if event["type"] == "lead_result":
+        if event.get("type") == "lead_result":
             processed["count"] += 1
         await _broadcast(redis, event)
         on_event(event)
+        pool.emit(user_id, event)
 
     def on_event_wrapper(event):
         asyncio.create_task(on_event_async(event))
 
     async def _consume(worker_id: int, queue: asyncio.Queue, role: str, role_index: int):
-        worker = LeadWorker(worker_id, redis, on_event_wrapper, role=role, role_index=role_index)
-        while _running:
+        worker = LeadWorker(
+            worker_id=worker_id, user_id=user_id, creds=creds, db=db,
+            on_event=on_event_wrapper, role=role, role_index=role_index,
+        )
+        while rt.running:
             try:
                 lead = await asyncio.wait_for(queue.get(), timeout=2.0)
             except asyncio.TimeoutError:
@@ -121,61 +121,57 @@ async def start_bot(
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.exception(f"Worker[{role}] {worker_id} crash CPF {cpf}: {e}")
+                logger.exception(f"Worker[{role}][{user_id}] {worker_id} crash CPF {cpf}: {e}")
             finally:
-                _inflight.discard(cpf)
+                rt.inflight.discard(cpf)
                 queue.task_done()
 
     async def cerebro_loop():
-        """Coordenador: monitora filas, dispatcha leads e emite telemetria."""
         idle_ticks = 0
-        while _running:
+        while rt.running:
             try:
-                # 1. Coletar trabalho
-                retries = await _fetch_retries(RETRY_BATCH, owner_id)
-                pendentes = await _fetch_pending(PENDING_BATCH, owner_id)
+                retries = await _fetch_retries(db, user_id, RETRY_BATCH)
+                pendentes = await _fetch_pending(db, user_id, PENDING_BATCH)
 
-                # 2. Dispatch — retries para retry_queue, pendentes para pending_queue
                 added_retry = 0
                 for lead in retries:
                     cpf = lead.get("cpf")
-                    if cpf in _inflight:
+                    if cpf in rt.inflight:
                         continue
-                    _inflight.add(cpf)
-                    await _retry_queue.put(lead)
+                    rt.inflight.add(cpf)
+                    await rt.retry_queue.put(lead)
                     added_retry += 1
 
                 added_pending = 0
                 for lead in pendentes:
                     cpf = lead.get("cpf")
-                    if cpf in _inflight:
+                    if cpf in rt.inflight:
                         continue
-                    _inflight.add(cpf)
-                    await _pending_queue.put(lead)
+                    rt.inflight.add(cpf)
+                    await rt.pending_queue.put(lead)
                     added_pending += 1
 
-                # 3. Telemetria do cérebro
-                scheduled = await _count_scheduled(owner_id)
+                scheduled = await _count_scheduled(db, user_id)
                 await _broadcast(redis, {
                     "type": "cerebro_status",
+                    "user_id": user_id,
                     "worker_name": "SUPERVISOR",
                     "worker_role": "supervisor",
                     "ts": datetime.now(timezone.utc).isoformat(),
-                    "pending_queue": _pending_queue.qsize(),
-                    "retry_queue": _retry_queue.qsize(),
-                    "inflight": len(_inflight),
+                    "pending_queue": rt.pending_queue.qsize(),
+                    "retry_queue": rt.retry_queue.qsize(),
+                    "inflight": len(rt.inflight),
                     "scheduled_retries": scheduled,
                     "added_pending": added_pending,
                     "added_retry": added_retry,
-                    "full_pool": num_workers,
+                    "full_pool": handle.num_workers,
                     "retry_pool": num_retry_workers,
                 })
 
-                # 4. Encerramento: tudo zerado e nada agendado
                 if (
                     added_pending == 0 and added_retry == 0
-                    and _pending_queue.empty() and _retry_queue.empty()
-                    and not _inflight and scheduled == 0
+                    and rt.pending_queue.empty() and rt.retry_queue.empty()
+                    and not rt.inflight and scheduled == 0
                 ):
                     idle_ticks += 1
                     if idle_ticks >= 2:
@@ -183,7 +179,6 @@ async def start_bot(
                 else:
                     idle_ticks = 0
 
-                # 5. Cadência
                 if added_pending == 0 and added_retry == 0 and scheduled > 0:
                     await asyncio.sleep(IDLE_INTERVAL)
                 else:
@@ -191,75 +186,92 @@ async def start_bot(
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                logger.exception(f"cerebro_loop error: {e}")
+                logger.exception(f"cerebro_loop[{user_id}] error: {e}")
                 await asyncio.sleep(REFILL_INTERVAL)
 
     async def _run():
-        global _running, _full_tasks, _retry_tasks
         try:
-            _full_tasks = [
-                asyncio.create_task(_consume(i, _pending_queue, "full", i))
-                for i in range(num_workers)
+            rt.full_tasks = [
+                asyncio.create_task(_consume(i, rt.pending_queue, "full", i))
+                for i in range(handle.num_workers)
             ]
-            _retry_tasks = [
-                asyncio.create_task(_consume(1000 + i, _retry_queue, "retry", i))
+            rt.retry_tasks = [
+                asyncio.create_task(_consume(1000 + i, rt.retry_queue, "retry", i))
                 for i in range(num_retry_workers)
             ]
+            handle.tasks.extend(rt.full_tasks + rt.retry_tasks)
             cerebro = asyncio.create_task(cerebro_loop())
+            handle.tasks.append(cerebro)
             await cerebro
-            await _pending_queue.join()
-            await _retry_queue.join()
+            await rt.pending_queue.join()
+            await rt.retry_queue.join()
         except asyncio.CancelledError:
-            logger.info("bot run cancelled")
+            logger.info(f"bot run[{user_id}] cancelled")
         finally:
-            _running = False
-            for t in _full_tasks + _retry_tasks:
+            rt.running = False
+            for t in rt.full_tasks + rt.retry_tasks:
                 t.cancel()
-            await asyncio.gather(*_full_tasks, *_retry_tasks, return_exceptions=True)
-            _full_tasks = []
-            _retry_tasks = []
+            await asyncio.gather(*rt.full_tasks, *rt.retry_tasks, return_exceptions=True)
+            rt.full_tasks = []
+            rt.retry_tasks = []
 
             def _finalize():
-                q = db().table("v8_leads").select("status")
-                if owner_id:
-                    q = q.eq("owner_id", owner_id)
-                stats = q.execute().data or []
+                stats = scoped(db, "v8_leads", user_id).select("status").execute().data or []
                 eleg = sum(1 for r in stats if r["status"] == "elegivel")
                 ineleg = sum(1 for r in stats if r["status"] == "inelegivel")
-                db().table("v8_bot_runs").update({
+                scoped(db, "v8_bot_runs", user_id).update({
                     "status": "completed",
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     "total_processed": processed["count"],
                     "total_elegiveis": eleg,
                     "total_inelegiveis": ineleg,
-                }).eq("id", run_id).execute()
+                }).eq("id", handle.run_id).execute()
             try:
                 await asyncio.to_thread(_finalize)
             except Exception as e:
-                logger.warning(f"finalize bot_run failed: {e}")
-            await redis.set("bot:status", "idle")
-            await _broadcast(redis, {"type": "bot_status", "status": "idle"})
+                logger.warning(f"finalize bot_run[{user_id}] failed: {e}")
+            await _broadcast(redis, {"type": "bot_status", "status": "idle", "user_id": user_id})
+            _runtimes.pop(user_id, None)
+            # Best-effort: pool.stop garante que o RunHandle saia do pool.
+            try:
+                await pool.stop(user_id)
+            except Exception:
+                pass
 
-    _run_task = asyncio.create_task(_run())
-    return {"status": "started", "full_workers": num_workers, "retry_workers": num_retry_workers}
+    rt.run_task = asyncio.create_task(_run())
+    return {
+        "status": "started",
+        "run_id": handle.run_id,
+        "full_workers": handle.num_workers,
+        "retry_workers": num_retry_workers,
+    }
 
 
-async def stop_bot():
-    global _running, _run_task
-    _running = False
-    if _run_task:
-        _run_task.cancel()
+async def stop_bot(pool: V8BotPool, user_id: str):
+    rt = _runtimes.get(user_id)
+    if not rt:
+        await pool.stop(user_id)
+        return {"status": "not_running"}
+    rt.running = False
+    if rt.run_task:
+        rt.run_task.cancel()
         try:
-            await asyncio.wait_for(_run_task, timeout=10)
+            await asyncio.wait_for(rt.run_task, timeout=10)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
+    await pool.stop(user_id)
     redis = await get_redis()
-    await redis.set("bot:status", "idle")
-    await _broadcast(redis, {"type": "bot_status", "status": "idle"})
+    await _broadcast(redis, {"type": "bot_status", "status": "idle", "user_id": user_id})
     return {"status": "stopped"}
 
 
-async def get_bot_status():
-    redis = await get_redis()
-    status = await redis.get("bot:status") or "idle"
-    return {"status": status}
+async def get_bot_status(pool: V8BotPool, user_id: str):
+    handle = pool.status(user_id)
+    if handle is None:
+        return {"status": "idle"}
+    return {
+        "status": "running",
+        "run_id": handle.run_id,
+        "num_workers": handle.num_workers,
+        "started_at": handle.started_at.isoformat(),
+    }
