@@ -230,8 +230,14 @@ async def fase1_assinar_link(
         """)
 
         # 5. Clicar no item de menu "Link Termo Autorização" (ícone ContentCopy)
+        # Se não aparecer em 6s, presume que o termo já foi assinado em run anterior
+        # (o portal esconde a opção depois de usar) → pula pra fase2 sem erro.
         link_item = page.locator(cfg.SEL_F1_MENU_LINK).first
-        await link_item.wait_for(state="visible", timeout=10_000)
+        try:
+            await link_item.wait_for(state="visible", timeout=6_000)
+        except Exception:
+            log.info("CPF %s — item 'Link Termo Autorização' ausente; presumindo já assinado", cpf)
+            return "aguardando_autorizacao"
         await link_item.click()
         await asyncio.sleep(1)
 
