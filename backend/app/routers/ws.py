@@ -30,7 +30,7 @@ async def websocket_events(ws: WebSocket, token: str = ""):
             except (TypeError, ValueError):
                 continue
             ev_user = ev.get("user_id")
-            if ev_user is not None and ev_user != user.user_id:
+            if ev_user != user.user_id:
                 continue
             await ws.send_text(message["data"] if isinstance(message["data"], str) else message["data"].decode())
     except WebSocketDisconnect:
