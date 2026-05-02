@@ -10,7 +10,7 @@ Transformar ACELERA CORBAN (hoje só V8) em plataforma multi-banco. Cada banco �
 ## Decisões aprovadas
 
 1. **Login** — título muda de `🤖 V8 Bot` pra `ACELERA CORBAN`.
-2. **Menu lateral** (ordem fixa): V8, VCTex, Credenciais, Higienizações, Dashboard.
+2. **Menu lateral** (ordem fixa): Dashboard, V8, VCTex, Credenciais, Higienizações.
 3. **Cada banco isolado** — tela própria, dados próprios, bot próprio. Não há mistura.
 4. **Tabelas separadas por banco** — `v8_leads` (existente, intocado), `vctex_leads` (nova). Sem tabela unificada.
 5. **Credenciais por usuário** — login/senha de cada banco vivem em `user_bank_credentials` criptografado (Fernet, chave única no `.env`). Bot usa as credenciais do usuário logado, não env global.
@@ -147,7 +147,7 @@ frontend/src/
 
 **Roteamento pós-login:**
 - Se usuário não tem nenhuma credencial cadastrada → redirect pra `/credentials`
-- Senão → primeiro banco com credencial cadastrada
+- Senão → `/dashboard` (tela inicial padrão)
 
 ## Fluxo de deploy (zero-downtime)
 
