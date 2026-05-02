@@ -13,9 +13,10 @@ from ..banks.vctex.bot_pool import VCTexBotPool, VCTexRunHandle
 
 logger = logging.getLogger(__name__)
 
-REFILL_INTERVAL = 8
+REFILL_INTERVAL = 5
 PENDING_BATCH = 50
 EVENT_CHANNEL = "vctex:events"
+WORKER_STAGGER_SECONDS = 1.5  # Era 5s — antiga proteção contra impossible-travel
 
 
 @dataclass
@@ -124,7 +125,7 @@ async def start_bot(
                 w = VCTexLeadWorker(
                     worker_id=i, user_id=user_id, creds=creds, db=db,
                     on_event=on_event_wrapper,
-                    startup_delay=i * 5.0,  # stagger pra evitar impossible-travel
+                    startup_delay=i * WORKER_STAGGER_SECONDS,
                     batch_id=batch_id,
                 )
 

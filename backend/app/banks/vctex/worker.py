@@ -142,8 +142,6 @@ class VCTexLeadWorker:
         """Loop principal: pega leads da fila e processa."""
         if self.startup_delay > 0:
             await asyncio.sleep(self.startup_delay)
-        else:
-            await asyncio.sleep(random.uniform(0, 2))
 
         await self.engine.start(headless=True)
         try:
