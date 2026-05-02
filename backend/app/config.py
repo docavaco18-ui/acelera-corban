@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:3000"
     v8_proxies: str = ""
 
+    app_encryption_key: str = ""
+
     # Auth Supabase (multi-tenant)
     supabase_jwt_secret: str = ""
     supabase_project_ref: str = ""
