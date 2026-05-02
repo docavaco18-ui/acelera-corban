@@ -203,7 +203,19 @@ async def fase1_assinar_link(
             log.error("fase1 erro CPF %s: botão Ações não encontrado após pesquisa", cpf)
             await _screenshot_on_error(page, f"fase1_sem_acoes_{cpf.replace('.','').replace('-','')}")
             return "erro:botão Ações não encontrado após pesquisa"
-        await acoes_btn.click()
+        # Click resiliente: scroll+visível+force fallback (resolve overlays/loading bloqueando)
+        try:
+            await acoes_btn.scroll_into_view_if_needed(timeout=5000)
+            await acoes_btn.wait_for(state="visible", timeout=5000)
+            await acoes_btn.click(timeout=8000)
+        except Exception as click_err:
+            log.warning("fase1 CPF %s: click normal falhou (%s); tentando force", cpf, str(click_err)[:80])
+            try:
+                await acoes_btn.click(force=True, timeout=5000)
+            except Exception as force_err:
+                log.error("fase1 erro CPF %s: click force também falhou: %s", cpf, str(force_err)[:120])
+                await _screenshot_on_error(page, f"fase1_acoes_click_falhou_{cpf.replace('.','').replace('-','')}")
+                return "erro:botão Ações não clicável (overlay ou loading)"
         await asyncio.sleep(0.6)
 
         # 4. Interceptar o link antes de clicar no botão de cópia
