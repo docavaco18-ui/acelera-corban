@@ -1,21 +1,22 @@
 from fastapi import APIRouter, Depends
-from ..database import db
 from ..auth_deps import require_user, AuthUser
+from ..database import db as get_db
+from ..db_scoped import scoped
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 PAGE = 1000
 
 
-def _scan_all(columns: str, owner_id: str | None) -> list[dict]:
-    """Scaneia v8_leads paginado. Se owner_id != None, filtra; senão (admin) traz tudo."""
+def _scan_all(db, user_id: str, columns: str) -> list[dict]:
+    """Scaneia v8_leads do user paginado."""
     rows: list[dict] = []
     offset = 0
     while True:
-        q = db().table("v8_leads").select(columns)
-        if owner_id is not None:
-            q = q.eq("owner_id", owner_id)
-        chunk = q.range(offset, offset + PAGE - 1).execute().data or []
+        chunk = (
+            scoped(db, "v8_leads", user_id).select(columns)
+            .range(offset, offset + PAGE - 1).execute().data or []
+        )
         rows.extend(chunk)
         if len(chunk) < PAGE:
             break
@@ -55,6 +56,6 @@ def _summarize(rows: list[dict]) -> dict:
 
 @router.get("/dashboard")
 async def dashboard(user: AuthUser = Depends(require_user)):
-    owner_id = None if user.is_admin else user.user_id
-    rows = _scan_all("status,valor_liberado,margem_disponivel,created_at,owner_id", owner_id)
+    db = get_db()
+    rows = _scan_all(db, user.user_id, "status,valor_liberado,margem_disponivel,created_at,owner_id")
     return _summarize(rows)

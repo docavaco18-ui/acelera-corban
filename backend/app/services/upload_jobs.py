@@ -14,6 +14,7 @@ import unicodedata
 import uuid
 
 from ..database import db
+from ..db_scoped import scoped
 from ..redis_client import get_redis
 
 BATCH_SIZE = 500
@@ -146,7 +147,7 @@ async def _run(job_id: str, content: bytes, owner_id: str) -> None:
         try:
             def _upsert(b=batch):
                 return (
-                    db().table("v8_leads")
+                    scoped(db(), "v8_leads", owner_id)
                     .upsert(b, on_conflict="owner_id,cpf", ignore_duplicates=True)
                     .execute()
                 )

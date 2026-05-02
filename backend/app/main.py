@@ -3,8 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .routers import leads, bot, stats, webhook, ws, admin
 from .credentials.router import router as credentials_router
+from .banks.v8.bot_pool import V8BotPool
 
 app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
+app.state.v8_pool = V8BotPool()
 
 app.add_middleware(
     CORSMiddleware,

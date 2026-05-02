@@ -27,13 +27,14 @@ class _ScopedQuery:
     def update(self, payload):
         return _ScopedQuery(self._q.update(payload).eq("owner_id", self._user_id), self._user_id)
 
-    def upsert(self, payload, on_conflict: str | None = None):
+    def upsert(self, payload, on_conflict: str | None = None, **kwargs):
         if isinstance(payload, list):
             payload = [{**p, "owner_id": self._user_id} for p in payload]
         else:
             payload = {**payload, "owner_id": self._user_id}
-        kw = {"on_conflict": on_conflict} if on_conflict is not None else {}
-        return _ScopedQuery(self._q.upsert(payload, **kw), self._user_id)
+        if on_conflict is not None:
+            kwargs["on_conflict"] = on_conflict
+        return _ScopedQuery(self._q.upsert(payload, **kwargs), self._user_id)
 
     def delete(self):
         return _ScopedQuery(self._q.delete().eq("owner_id", self._user_id), self._user_id)
