@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     supabase_project_ref: str = ""
     admin_user_ids: str = ""
 
+    max_workers_per_user: int = 10
+    max_total_workers: int = 50
+
     @property
     def proxy_list(self) -> list[str]:
         return [p.strip() for p in self.v8_proxies.split(",") if p.strip()]
