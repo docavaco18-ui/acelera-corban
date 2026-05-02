@@ -2,11 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .routers import leads, bot, stats, webhook, ws, admin, batches
+from .routers import vctex as vctex_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
+from .banks.vctex.bot_pool import VCTexBotPool
 
 app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
 app.state.v8_pool = V8BotPool()
+app.state.vctex_pool = VCTexBotPool()
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +27,7 @@ app.include_router(ws.router)
 app.include_router(admin.router)
 app.include_router(credentials_router)
 app.include_router(batches.router)
+app.include_router(vctex_router.router)
 
 @app.get("/health")
 async def health():

@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     max_workers_per_user: int = 10
     max_total_workers: int = 50
 
+    # VCTex (Playwright) consome muito mais RAM (~300MB/worker), tetos menores
+    vctex_max_workers_per_user: int = 2
+    vctex_max_total_workers: int = 10
+    vctex_portal_url: str = "https://portal.vctex.com.br/login"
+
     @property
     def proxy_list(self) -> list[str]:
         return [p.strip() for p in self.v8_proxies.split(",") if p.strip()]

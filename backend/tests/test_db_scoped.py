@@ -71,4 +71,7 @@ def test_scoped_supports_postgrest_filters(fake_db):
 
 
 def test_tenant_tables_constant():
-    assert TENANT_TABLES == {"v8_leads", "v8_bot_runs", "v8_batches"}
+    assert TENANT_TABLES == {
+        "v8_leads", "v8_bot_runs", "v8_batches",
+        "vctex_leads", "vctex_bot_runs", "vctex_batches",
+    }

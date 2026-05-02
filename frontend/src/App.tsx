@@ -6,16 +6,51 @@ import Records from "./pages/Records";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import { useSession } from "./hooks/useSession";
+import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
+
+function BankToggle() {
+  const { bank, setBank } = useBank();
+  const reload = (b: "v8" | "vctex") => {
+    setBank(b);
+    // Força refetch das páginas que dependem do bank
+    window.location.reload();
+  };
+  return (
+    <div style={{ display: "flex", gap: 0, marginRight: 8, border: "1px solid #334155", borderRadius: 14, overflow: "hidden" }}>
+      {(["v8", "vctex"] as const).map(b => (
+        <button
+          key={b}
+          onClick={() => reload(b)}
+          style={{
+            padding: "5px 12px",
+            background: bank === b ? "#6366f1" : "transparent",
+            color: bank === b ? "#fff" : "#94a3b8",
+            border: "none",
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 700,
+            textTransform: "uppercase",
+          }}
+        >
+          {b === "v8" ? "V8" : "VCTex"}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 function TopBar() {
   const { email, isAdmin } = useSession();
+  const { bank } = useBank();
   return (
     <nav style={{
       padding: "12px 24px", background: "#1e293b",
       display: "flex", gap: 24, alignItems: "center",
     }}>
-      <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: 18 }}>V8</span>
+      <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: 18 }}>
+        {bank === "vctex" ? "VCTex" : "V8"}
+      </span>
       {[
         ["/", "Higienização"],
         ["/dashboard", "Dashboard"],
@@ -33,6 +68,7 @@ function TopBar() {
         </NavLink>
       ))}
       <div style={{ marginLeft: "auto", display: "flex", gap: 14, alignItems: "center" }}>
+        <BankToggle />
         <span style={{ color: "#94a3b8", fontSize: 12 }}>
           {email}{isAdmin ? " · admin" : ""}
         </span>

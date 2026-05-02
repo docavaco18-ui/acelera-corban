@@ -6,7 +6,10 @@ Use scoped(db, "<table>", user_id).
 import ast
 import pathlib
 
-TENANT_TABLES = {"v8_leads", "v8_bot_runs"}
+TENANT_TABLES = {
+    "v8_leads", "v8_bot_runs", "v8_batches",
+    "vctex_leads", "vctex_bot_runs", "vctex_batches",
+}
 
 ALLOWLIST = {
     "app/db_scoped.py",

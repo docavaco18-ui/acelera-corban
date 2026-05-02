@@ -1,6 +1,9 @@
 from typing import Any
 
-TENANT_TABLES: set[str] = {"v8_leads", "v8_bot_runs", "v8_batches"}
+TENANT_TABLES: set[str] = {
+    "v8_leads", "v8_bot_runs", "v8_batches",
+    "vctex_leads", "vctex_bot_runs", "vctex_batches",
+}
 
 
 def scoped(db: Any, table_name: str, user_id: str):

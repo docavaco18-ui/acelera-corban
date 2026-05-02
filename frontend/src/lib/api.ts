@@ -1,9 +1,18 @@
 import axios from "axios";
 import type { Lead, BotStatus, DashboardStats, Batch } from "./types";
 import { supabase } from "./supabase";
+import { getBank, bankPrefix } from "../hooks/useBank";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "";
 const api = axios.create({ baseURL: BASE_URL });
+
+// Reescreve URL conforme banco selecionado (v8 → original; vctex → /api/vctex/*)
+api.interceptors.request.use(async (config) => {
+  if (config.url) {
+    config.url = bankPrefix(getBank(), config.url);
+  }
+  return config;
+});
 
 api.interceptors.request.use(async (config) => {
   const { data } = await supabase.auth.getSession();
