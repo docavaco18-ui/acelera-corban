@@ -1,0 +1,4 @@
+aceleracorban.com.br, www.aceleracorban.com.br {
+	encode gzip
+	reverse_proxy frontend:80
+}
