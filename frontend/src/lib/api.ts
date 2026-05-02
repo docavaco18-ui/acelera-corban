@@ -114,6 +114,22 @@ export const statsApi = {
       .then((r) => r.data),
 };
 
+interface BankSummary {
+  configured: boolean;
+  login: string | null;
+  has_password: boolean;
+  proxies: string[];
+}
+
+export const credentialsApi = {
+  list: () =>
+    api
+      .get<Record<"v8" | "vctex", BankSummary | null>>("/api/credentials")
+      .then((r) => r.data),
+  upsert: (bank: "v8" | "vctex", body: { login: string; password: string; proxies: string[] }) =>
+    api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
+};
+
 export const batchesApi = {
   list: () => api.get<{ data: Batch[] }>("/api/batches/").then((r) => r.data.data),
   current: () => api.get<Batch | null>("/api/batches/current").then((r) => r.data),

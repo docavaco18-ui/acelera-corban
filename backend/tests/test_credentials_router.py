@@ -46,10 +46,9 @@ def test_get_returns_safe_summary(client):
     resp = client.get("/api/credentials")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["v8"] == {"configured": True, "login": "alice", "has_password": True, "proxies_count": 2}
+    assert body["v8"] == {"configured": True, "login": "alice", "has_password": True, "proxies": ["http://p1", "http://p2"]}
     assert body["vctex"] is None
     assert "s3cret" not in resp.text
-    assert "p1" not in resp.text
 
 
 def test_put_creates_credentials(client):

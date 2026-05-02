@@ -27,7 +27,7 @@ class BankSummary(BaseModel):
     configured: bool
     login: str | None
     has_password: bool
-    proxies_count: int
+    proxies: list[str]
 
 
 @router.get("")
@@ -45,7 +45,7 @@ def list_credentials(
                 configured=True,
                 login=creds.login,
                 has_password=bool(creds.password),
-                proxies_count=len(creds.proxies),
+                proxies=creds.proxies or [],
             )
     return out
 
