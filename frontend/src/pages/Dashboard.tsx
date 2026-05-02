@@ -6,6 +6,7 @@ import {
 import { botApi, leadsApi, statsApi } from "../lib/api";
 import type { BotStatus, DashboardStats, Lead } from "../lib/types";
 import { useBotWebSocket } from "../hooks/useBotWebSocket";
+import { useBank } from "../hooks/useBank";
 import WorkersLive from "../components/WorkersLive";
 import EligibleRanking from "../components/EligibleRanking";
 import ResultsTable from "../components/ResultsTable";
@@ -99,6 +100,8 @@ interface DashboardProps {
 }
 
 export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {}) {
+  const { bank } = useBank();
+  const bankLabel = bank === "vctex" ? "VCTex Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -226,7 +229,7 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "20px 18px", color: "#e0e0f0", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
-        <h1 style={{ fontSize: "1.45rem", fontWeight: 800, color: "#fff" }}>🤖 V8 Bot</h1>
+        <h1 style={{ fontSize: "1.45rem", fontWeight: 800, color: "#fff" }}>🤖 {bankLabel}</h1>
 
         {batchName && (
           <span style={{ padding: "4px 12px", borderRadius: 14, background: "rgba(180,74,255,.12)", color: C.purple, border: "1px solid rgba(180,74,255,.3)", fontSize: ".75rem", fontWeight: 700 }}>
