@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from ..services import bot_service
 from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
@@ -25,6 +25,9 @@ async def start(
     db = get_db()
     creds = get_v8_runtime_creds(user.user_id, db)  # 400 se sem creds
     pool = request.app.state.v8_pool
+    vctex_pool = request.app.state.vctex_pool
+    if vctex_pool.status(user.user_id) is not None:
+        raise HTTPException(409, "Bot VCTex já em execução. Pare-o antes de iniciar o V8.")
     return await bot_service.start_bot(
         pool=pool,
         user_id=user.user_id,

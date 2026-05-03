@@ -94,6 +94,9 @@ async def bot_start(
     db = get_db()
     creds = get_vctex_runtime_creds(user.user_id, db)
     pool = request.app.state.vctex_pool
+    v8_pool = request.app.state.v8_pool
+    if v8_pool.status(user.user_id) is not None:
+        raise HTTPException(409, "Bot V8 já em execução. Pare-o antes de iniciar o VCTex.")
     return await vctex_bot_service.start_bot(
         pool=pool, user_id=user.user_id, num_workers=num_workers,
         creds=creds, db=db, on_event=_on_event, batch_id=batch_id,
