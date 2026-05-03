@@ -128,15 +128,37 @@ class VCTexLeadWorker:
 
         return updates
 
+    # Colunas reais da tabela vctex_leads — qualquer coisa fora vai pro JSONB `payload`
+    _ALLOWED_COLS = {
+        "status", "telefone", "nome", "valor_liberado", "erro", "tentativas",
+        "consult_id",  # caso futuro
+    }
+
+    @classmethod
+    def _split_updates(cls, updates: dict) -> dict:
+        """Filtra updates pra colunas que existem em vctex_leads.
+        Campos extras (situacao, data_nascimento, tempo_de_casa, etc) vão pro payload JSONB."""
+        clean: dict = {}
+        extras: dict = {}
+        for k, v in updates.items():
+            if k in cls._ALLOWED_COLS:
+                clean[k] = v
+            else:
+                extras[k] = v
+        if extras:
+            clean["payload"] = extras
+        return clean
+
     async def _save(self, cpf: str, updates: dict):
+        clean = self._split_updates(updates)
         try:
             await asyncio.to_thread(
                 lambda: scoped(self.db, "vctex_leads", self.user_id)
-                    .update(updates).eq("cpf", cpf).execute()
+                    .update(clean).eq("cpf", cpf).execute()
             )
         except Exception as e:
-            log.error("vctex update failed | worker=%d cpf=%s err=%s",
-                      self.worker_id, cpf, str(e)[:200])
+            log.error("vctex update failed | worker=%d cpf=%s updates=%s err=%s",
+                      self.worker_id, cpf, list(clean.keys()), str(e)[:200])
 
     async def run(self, queue: asyncio.Queue):
         """Loop principal: pega leads da fila e processa."""
