@@ -84,6 +84,10 @@ async def start_bot(
     async def on_event_async(event):
         if event.get("type") == "lead_result":
             processed["count"] += 1
+            cpf_done = event.get("cpf")
+            if cpf_done:
+                # Libera CPF do inflight pra refill poder re-buscá-lo se mudou de fase
+                rt.inflight.discard(cpf_done)
         await _broadcast(redis, {**event, "bank": "vctex"})
         on_event(event)
         pool.emit(user_id, event)

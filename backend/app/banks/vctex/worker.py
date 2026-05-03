@@ -179,11 +179,18 @@ class VCTexLeadWorker:
                 self._emit("worker_start")
                 log.info("Worker %d — login OK, processando fila", self.worker_id)
 
+                empty_polls = 0
                 while True:
                     try:
-                        record = queue.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
+                        record = await asyncio.wait_for(queue.get(), timeout=2.0)
+                        empty_polls = 0
+                    except asyncio.TimeoutError:
+                        empty_polls += 1
+                        # Sai só após ~30s de fila vazia consecutiva (refill é a cada 5s)
+                        if empty_polls >= 15:
+                            log.info("Worker %d — fila vazia há ~30s, encerrando", self.worker_id)
+                            break
+                        continue
 
                     cpf = record["cpf"]
                     try:
