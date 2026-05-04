@@ -1,8 +1,9 @@
 """Agente que raspa propostas pagas do portal V8 e insere no CRM."""
 import asyncio
+import calendar
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 
 from playwright.async_api import async_playwright, TimeoutError as PWTimeout
@@ -13,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 PORTAL_URL = "https://app.v8sistema.com"
 PROPOSALS_URL = f"{PORTAL_URL}/credito-consignado/minhas-propostas"
+
+PT_MONTHS = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
 
 
 def _parse_brl(text: str) -> float:
@@ -33,12 +39,27 @@ def _parse_date_br(text: str) -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def _months_to_scrape(months_back: int) -> list[tuple[int, int]]:
+    """Retorna lista de (ano, mês) dos últimos N meses, do mais antigo ao mais recente."""
+    today = date.today()
+    result = []
+    for i in range(months_back - 1, -1, -1):
+        month = today.month - i
+        year = today.year
+        while month <= 0:
+            month += 12
+            year -= 1
+        result.append((year, month))
+    return result
+
+
 class V8ProposalsScraper:
-    def __init__(self, user_id: str, login: str, password: str, db: Any):
+    def __init__(self, user_id: str, login: str, password: str, db: Any, months_back: int = 12):
         self.user_id = user_id
         self.login = login
         self.password = password
         self.db = db
+        self.months_back = months_back
 
     async def run(self) -> dict:
         stats = {"added": 0, "skipped": 0, "errors": 0}
@@ -48,8 +69,15 @@ class V8ProposalsScraper:
             page = await ctx.new_page()
             try:
                 await self._login(page)
-                await self._navigate_and_filter(page)
-                await self._scrape_all_pages(page, stats)
+                months = _months_to_scrape(self.months_back)
+                for year, month in months:
+                    logger.info(f"Iniciando mês {year}/{month:02d}")
+                    try:
+                        await self._navigate_and_filter_month(page, year, month)
+                        await self._scrape_all_pages(page, stats)
+                    except Exception as e:
+                        logger.exception(f"Erro no mês {year}/{month:02d}: {e}")
+                        stats["errors"] += 1
             except Exception as e:
                 logger.exception(f"V8ProposalsScraper error: {e}")
                 stats["errors"] += 1
@@ -61,36 +89,101 @@ class V8ProposalsScraper:
 
     async def _login(self, page):
         await page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30_000)
-        # Aguarda campo de e-mail
-        await page.wait_for_selector("input[type='email'], input[name='email'], input[placeholder*='mail' i]", timeout=15_000)
-        await page.fill("input[type='email'], input[name='email'], input[placeholder*='mail' i]", self.login)
+        await page.wait_for_selector(
+            "input[type='email'], input[name='email'], input[placeholder*='mail' i]",
+            timeout=15_000,
+        )
+        await page.fill(
+            "input[type='email'], input[name='email'], input[placeholder*='mail' i]",
+            self.login,
+        )
         await page.fill("input[type='password']", self.password)
         await page.click("button[type='submit']")
-        # Aguarda sair da tela de login
         await page.wait_for_url(f"{PORTAL_URL}/**", timeout=20_000)
         logger.info("V8 login OK")
 
-    # ─── Navegação e filtro ───────────────────────────────────────────────────
+    # ─── Navegação e filtro por mês ───────────────────────────────────────────
 
-    async def _navigate_and_filter(self, page):
+    async def _navigate_and_filter_month(self, page, year: int, month: int):
+        """Vai para a página de propostas, aplica filtro Pago e define o intervalo do mês."""
         await page.goto(PROPOSALS_URL, wait_until="domcontentloaded", timeout=20_000)
-        # Aguarda o dropdown de status aparecer
-        await page.wait_for_selector("button:has-text('Todos os status'), button:has-text('Pago')", timeout=15_000)
+        await page.wait_for_selector(
+            "button:has-text('Todos os status'), button:has-text('Pago')",
+            timeout=15_000,
+        )
 
-        # Se já estiver filtrado por Pago, não precisa clicar
-        if await page.locator("button:has-text('Pago')").count() > 0:
-            current = await page.locator("button:has-text('Pago')").first.text_content()
-            if "Pago" in (current or ""):
+        # ── Filtro de status "Pago" ──
+        status_btn = page.locator("button:has-text('Todos os status')").first
+        if await status_btn.count() > 0:
+            await status_btn.click()
+            await page.wait_for_timeout(500)
+            await page.locator(
+                "[role='menuitem']:has-text('Pago'), [role='option']:has-text('Pago'), "
+                ".chakra-menu__menuitem:has-text('Pago')"
+            ).first.click()
+            await page.wait_for_timeout(500)
+
+        # ── Abre o date picker ──
+        await page.locator("button[aria-haspopup='dialog']").first.click()
+        await page.wait_for_selector("[role='dialog']", timeout=8_000)
+        await page.wait_for_timeout(400)
+
+        # ── Navega o calendário até o mês alvo ──
+        await self._navigate_calendar_to(page, year, month)
+
+        # ── Clica dia 1 e último dia do mês ──
+        last_day = calendar.monthrange(year, month)[1]
+        await self._click_calendar_day(page, 1)
+        await page.wait_for_timeout(300)
+        await self._click_calendar_day(page, last_day)
+        await page.wait_for_timeout(300)
+
+        # ── Aplica ──
+        await page.locator("button:has-text('Aplicar Filtro')").click()
+        await page.wait_for_load_state("networkidle", timeout=12_000)
+        await page.wait_for_timeout(600)
+        logger.info(f"Filtro aplicado: {year}/{month:02d} (1 → {last_day})")
+
+    async def _navigate_calendar_to(self, page, target_year: int, target_month: int):
+        """Navega o calendário (setas prev/next) até o calendário esquerdo mostrar o mês alvo."""
+        for _ in range(36):
+            curr_year, curr_month = await self._read_calendar_left_month(page)
+            if curr_year == target_year and curr_month == target_month:
                 return
 
-        # Abre dropdown de status
-        await page.locator("button:has-text('Todos os status')").first.click()
-        await page.wait_for_timeout(600)
+            curr_total = curr_year * 12 + curr_month
+            target_total = target_year * 12 + target_month
 
-        # Clica em "Pago" no menu dropdown
-        await page.locator("[role='menuitem']:has-text('Pago'), [role='option']:has-text('Pago'), .chakra-menu__menuitem:has-text('Pago')").first.click()
-        await page.wait_for_load_state("networkidle", timeout=10_000)
-        logger.info("Filtro 'Pago' aplicado")
+            # Os dois primeiros botões no dialog são as setas de navegação
+            # Botão 0 = mês anterior (<), Botão 1 = próximo mês (>)
+            nav_btns = page.locator("[role='dialog'] button")
+            if curr_total > target_total:
+                await nav_btns.first.click()   # ← voltar
+            else:
+                await nav_btns.nth(1).click()  # → avançar
+            await page.wait_for_timeout(350)
+
+    async def _read_calendar_left_month(self, page) -> tuple[int, int]:
+        """Lê o mês/ano exibido no calendário esquerdo do popover."""
+        try:
+            text = await page.locator("[role='dialog']").first.inner_text()
+        except Exception:
+            return 0, 0
+
+        text_lower = text.lower()
+        for i, name in enumerate(PT_MONTHS):
+            if name in text_lower:
+                year_match = re.search(r"(20\d\d)", text)
+                if year_match:
+                    return int(year_match.group(1)), i + 1
+        return 0, 0
+
+    async def _click_calendar_day(self, page, day: int):
+        """Clica em um dia específico dentro do calendário (texto exato)."""
+        day_str = str(day)
+        # :text-is() faz match exato do texto visível (sem filhos), evita clicar "10" querendo "1"
+        selector = f"[role='dialog'] button:text-is('{day_str}')"
+        await page.locator(selector).first.click()
 
     # ─── Paginação ────────────────────────────────────────────────────────────
 
@@ -99,9 +192,8 @@ class V8ProposalsScraper:
         while True:
             logger.info(f"Scraping página {page_num}")
             count = await self._scrape_page(page, stats)
-            logger.info(f"Página {page_num}: {count} linhas processadas | totais: {stats}")
+            logger.info(f"Página {page_num}: {count} linhas | totais: {stats}")
 
-            # Tenta ir para próxima página
             next_btn = page.locator("button:has-text('Próxima página')")
             if await next_btn.count() == 0 or not await next_btn.is_enabled():
                 break
@@ -113,14 +205,12 @@ class V8ProposalsScraper:
     # ─── Raspa uma página de resultados ──────────────────────────────────────
 
     async def _scrape_page(self, page, stats: dict) -> int:
-        # Conta quantos botões "Visualizar" existem
         count = await page.locator("button:has-text('Visualizar')").count()
         if count == 0:
             return 0
 
         for i in range(count):
             try:
-                # Re-localiza pois o DOM pode ter mudado após fechar modal
                 btn = page.locator("button:has-text('Visualizar')").nth(i)
                 await btn.click()
                 await page.wait_for_selector("input#name, input#cpf", timeout=8_000)
@@ -133,7 +223,6 @@ class V8ProposalsScraper:
                     else:
                         stats["skipped"] += 1
 
-                # Fecha modal com Escape
                 await page.keyboard.press("Escape")
                 await page.wait_for_timeout(400)
 
@@ -153,12 +242,10 @@ class V8ProposalsScraper:
     # ─── Extrai dados do modal ────────────────────────────────────────────────
 
     async def _extract_modal(self, page) -> dict | None:
-        # ── Dados Pessoais (aba padrão) ──
         nome = await page.input_value("input#name") or ""
         cpf_raw = await page.input_value("input#cpf") or ""
         cpf = re.sub(r"[.\-]", "", cpf_raw)
 
-        # ID da proposta e data criação do cabeçalho
         header_text = ""
         try:
             header_el = await page.query_selector("[class*='chakra-text']:has-text('Id:')")
@@ -182,7 +269,6 @@ class V8ProposalsScraper:
         if criado_match:
             data_venda = _parse_date_br(criado_match.group(1))
 
-        # ── Aba Resumo ──
         resumo_tab = page.locator("button[role='tab']:has-text('Resumo')")
         if await resumo_tab.count() == 0:
             resumo_tab = page.locator("[role='tab']:has-text('Resumo')")
@@ -229,7 +315,7 @@ class V8ProposalsScraper:
             "parcela": parcela,
             "prazo": prazo or 1,
             "codigo_proposta": proposta_id,
-            "status": "propostas",  # coluna "PAGOS"
+            "status": "propostas",
         }
 
     # ─── Salva no CRM (síncrono — chamado via to_thread) ─────────────────────

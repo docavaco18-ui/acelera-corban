@@ -17,6 +17,7 @@ _jobs: dict[str, dict] = {}
 @router.post("/sync")
 async def start_sync(
     background_tasks: BackgroundTasks,
+    months_back: int = 12,
     user: AuthUser = Depends(require_user),
 ):
     """Dispara sync em background. Retorna job_id para polling."""
@@ -35,6 +36,7 @@ async def start_sync(
                 login=creds.login,
                 password=creds.password,
                 db=db,
+                months_back=months_back,
             )
             result = await scraper.run()
             _jobs[user.user_id] = {"status": "done", **result}
