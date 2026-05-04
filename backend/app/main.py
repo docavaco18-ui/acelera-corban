@@ -1,11 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
+from .logging_config import setup_logging
 from .routers import leads, bot, stats, webhook, ws, admin, batches
 from .routers import vctex as vctex_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
+
+setup_logging(json_logs=True)
 
 app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
 app.state.v8_pool = V8BotPool()
