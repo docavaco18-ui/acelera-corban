@@ -66,15 +66,11 @@ export default function Configuracoes() {
         .filter(Boolean);
       if (!login.trim()) { setMsg({ kind: "err", text: "Login é obrigatório" }); setBusy(false); return; }
       if (!password.trim() && !current?.has_password) {
-        setMsg({ kind: "err", text: "Senha é obrigatória no primeiro cadastro" }); setBusy(false); return;
-      }
-      if (!password.trim()) {
-        setMsg({ kind: "err", text: "Digite a senha (não é possível atualizar só os proxies sem reenviar a senha)" });
-        setBusy(false); return;
+        setMsg({ kind: "err", text: "Senha obrigatória no primeiro cadastro" }); setBusy(false); return;
       }
       await credentialsApi.upsert(bank, {
         login: login.trim(),
-        password: password,
+        ...(password.trim() ? { password } : {}),
         proxies: proxyList,
       });
       setMsg({ kind: "ok", text: `✓ Salvo. ${proxyList.length} proxy(ies).` });
@@ -123,7 +119,7 @@ export default function Configuracoes() {
           />
         </Field>
 
-        <Field label={current?.has_password ? "Senha (digite pra atualizar)" : "Senha"}>
+        <Field label={current?.has_password ? "Senha (opcional — só pra trocar)" : "Senha *"}>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               type={showPassword ? "text" : "password"}

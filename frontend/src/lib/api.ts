@@ -136,7 +136,7 @@ export const credentialsApi = {
     api
       .get<Record<"v8" | "vctex", BankSummary | null>>("/api/credentials")
       .then((r) => r.data),
-  upsert: (bank: "v8" | "vctex", body: { login: string; password: string; proxies: string[] }) =>
+  upsert: (bank: "v8" | "vctex", body: { login: string; password?: string; proxies: string[] }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
 };
 

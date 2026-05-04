@@ -19,7 +19,7 @@ def get_credential_service() -> CredentialService:
 
 class CredentialPayload(BaseModel):
     login: str = Field(..., min_length=1)
-    password: str = Field(..., min_length=1)
+    password: str | None = Field(default=None)
     proxies: list[str] = Field(default_factory=list)
 
 
@@ -58,14 +58,14 @@ def upsert_credentials(
     svc: CredentialService = Depends(get_credential_service),
 ):
     if bank_code not in ALLOWED_BANKS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"bank_code inválido. Aceitos: {ALLOWED_BANKS}",
-        )
+        raise HTTPException(400, f"bank_code inválido. Aceitos: {ALLOWED_BANKS}")
+    existing = svc.get(user.user_id, bank_code)
+    if existing is None and not payload.password:
+        raise HTTPException(400, "Senha obrigatória no primeiro cadastro")
     svc.upsert(
         user_id=user.user_id,
         bank_code=bank_code,
         login=payload.login,
-        password=payload.password,
+        password=payload.password or None,
         proxies=payload.proxies,
     )

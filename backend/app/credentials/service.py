@@ -50,14 +50,18 @@ class CredentialService:
         extra: dict | None = None,
         proxies: list[str] | None = None,
     ) -> None:
-        payload = {
-            "user_id": user_id,
-            "bank_code": bank_code,
-            "login_enc": encrypt(login),
-            "password_enc": encrypt(password),
-            "extra_enc": encrypt(json.dumps(extra)) if extra else None,
-            "proxies_enc": encrypt(json.dumps(proxies)) if proxies else None,
-        }
+        existing = self.get(user_id, bank_code)
+        payload: dict = {"user_id": user_id, "bank_code": bank_code}
+        if login is not None:
+            payload["login_enc"] = encrypt(login)
+        if password is not None:
+            payload["password_enc"] = encrypt(password)
+        elif existing is None:
+            payload["password_enc"] = None
+        if extra is not None:
+            payload["extra_enc"] = encrypt(json.dumps(extra))
+        if proxies is not None:
+            payload["proxies_enc"] = encrypt(json.dumps(proxies))
         self.db.table(self.TABLE).upsert(
             payload, on_conflict="user_id,bank_code"
         ).execute()
