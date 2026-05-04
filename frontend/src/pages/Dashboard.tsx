@@ -12,6 +12,7 @@ import EligibleRanking from "../components/EligibleRanking";
 import ResultsTable from "../components/ResultsTable";
 import MetricsDashboard from "../components/MetricsDashboard";
 import CerebroIA from "../components/CerebroIA";
+import UploadGameProgress, { type UploadPhase } from "../components/UploadGameProgress";
 
 const C = {
   bg: "#080818", bg2: "rgba(255,255,255,.04)", border: "rgba(255,255,255,.07)",
@@ -112,6 +113,11 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  const [gamePhase, setGamePhase] = useState<UploadPhase | null>(null);
+  const [gameInserted, setGameInserted] = useState(0);
+  const [gameTotal, setGameTotal] = useState(0);
+  const [workerStartFired, setWorkerStartFired] = useState(false);
+
   const refresh = async () => {
     const [s, b, ls] = await Promise.all([
       statsApi.dashboard(batchId).catch(() => EMPTY_STATS),
@@ -175,32 +181,47 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
     e.target.value = "";
     setUploadMsg("Enviando...");
     setUploadProgress(null);
+    setGamePhase("uploading");
+    setGameInserted(0);
+    setGameTotal(0);
+    setWorkerStartFired(false);
     let jobId: string;
     try {
       const r = await leadsApi.uploadCsv(file);
       jobId = r.job_id;
     } catch {
       setUploadMsg("Erro ao enviar CSV");
+      setGamePhase(null);
       setTimeout(() => setUploadMsg(null), 5000);
       return;
     }
     setUploadMsg("Processando…");
+    setGamePhase("processing");
     while (true) {
       await new Promise((res) => setTimeout(res, 1000));
       try {
         const s = await leadsApi.uploadStatus(jobId);
-        if (s.total > 0) setUploadProgress({ processed: s.processed, total: s.total });
+        if (s.total > 0) {
+          setUploadProgress({ processed: s.processed, total: s.total });
+          setGameInserted(s.processed);
+          setGameTotal(s.total);
+        }
         if (s.status === "done") {
           setUploadMsg(`✓ ${s.inserted} de ${s.total} inseridos`);
+          setGameInserted(s.inserted);
+          setGameTotal(s.total);
+          setGamePhase("done");
           refresh();
           break;
         }
         if (s.status === "error") {
           setUploadMsg(`Erro: ${s.error ?? "desconhecido"}`);
+          setGamePhase(null);
           break;
         }
       } catch {
         setUploadMsg("Erro ao consultar progresso");
+        setGamePhase(null);
         break;
       }
     }
@@ -214,6 +235,15 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   }, [currentLeads]);
 
   const { events: wsEvents, botStatus: wsBotStatus, workerStates, runStartedAt } = useBotWebSocket();
+
+  useEffect(() => {
+    if (!wsEvents.length) return;
+    const latest = wsEvents[0];
+    if (latest.type === "worker_start" && gamePhase !== null) {
+      setWorkerStartFired(true);
+      setGamePhase("bot_running");
+    }
+  }, [wsEvents]);
   const liveStatus = wsBotStatus || botStatus.status;
   const isRunning = liveStatus === "running" || botStatus.status === "running";
   const processados = data.concluidos + data.erros;
@@ -628,6 +658,16 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
       )}
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>
+
+      {gamePhase && (
+        <UploadGameProgress
+          phase={gamePhase}
+          inserted={gameInserted}
+          total={gameTotal}
+          workerStartFired={workerStartFired}
+          onClose={() => setGamePhase(null)}
+        />
+      )}
     </div>
   );
 }
