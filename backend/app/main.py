@@ -33,5 +33,6 @@ app.include_router(batches.router)
 app.include_router(vctex_router.router)
 
 @app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok"}
