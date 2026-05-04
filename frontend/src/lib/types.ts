@@ -120,6 +120,33 @@ export interface Batch {
   updated_at: string;
 }
 
+export type CrmStatus = "propostas" | "importante" | "pendentes" | "leilao" | "fgts";
+
+export interface CrmProposta {
+  id: string;
+  owner_id: string;
+  nome_vendedor: string;
+  banco: string;
+  cliente_cpf: string;
+  data_venda: string;
+  valor: number;
+  prazo: number;
+  parcela: number;
+  codigo_proposta: string;
+  status: CrmStatus;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CrmStats {
+  total: number;
+  total_valor: number;
+  ticket_medio: number;
+  by_status: Record<string, number>;
+  by_banco: Record<string, number>;
+  ranking: { nome: string; total: number }[];
+}
+
 export type Tier = "gold" | "silver" | "bronze";
 
 export interface ScoredRecord extends Lead {

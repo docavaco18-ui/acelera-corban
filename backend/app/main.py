@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .logging_config import setup_logging
-from .routers import leads, bot, stats, webhook, ws, admin, batches
+from .routers import leads, bot, stats, webhook, ws, admin, batches, crm
 from .routers import vctex as vctex_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
@@ -31,6 +31,7 @@ app.include_router(admin.router)
 app.include_router(credentials_router)
 app.include_router(batches.router)
 app.include_router(vctex_router.router)
+app.include_router(crm.router)
 
 @app.get("/health")
 @app.get("/api/health")

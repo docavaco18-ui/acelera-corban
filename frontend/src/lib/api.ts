@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Lead, BotRun, BotStatus, DashboardStats, Batch } from "./types";
+import type { Lead, BotRun, BotStatus, DashboardStats, Batch, CrmProposta, CrmStats } from "./types";
 import { supabase } from "./supabase";
 import { getBank, bankPrefix } from "../hooks/useBank";
 
@@ -143,6 +143,24 @@ export const credentialsApi = {
       .then((r) => r.data),
   upsert: (bank: "v8" | "vctex", body: { login: string; password?: string; proxies: string[] }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
+};
+
+export const crmApi = {
+  listar: (params?: { status?: string; banco?: string; data_inicio?: string; data_fim?: string }) =>
+    api.get<{ data: CrmProposta[] }>("/api/crm/propostas", { params }).then((r) => r.data.data),
+
+  criar: (body: Omit<CrmProposta, "id" | "owner_id" | "created_at" | "updated_at">) =>
+    api.post<CrmProposta>("/api/crm/propostas", body).then((r) => r.data),
+
+  atualizar: (id: string, body: Partial<Omit<CrmProposta, "id" | "owner_id" | "created_at" | "updated_at">>) =>
+    api.patch<CrmProposta>(`/api/crm/propostas/${id}`, body).then((r) => r.data),
+
+  moverStatus: (id: string, status: string) =>
+    api.patch<CrmProposta>(`/api/crm/propostas/${id}`, { status }).then((r) => r.data),
+
+  deletar: (id: string) => api.delete(`/api/crm/propostas/${id}`),
+
+  stats: () => api.get<CrmStats>("/api/crm/propostas/stats").then((r) => r.data),
 };
 
 export const batchesApi = {
