@@ -7,6 +7,7 @@ import { botApi, leadsApi, statsApi } from "../lib/api";
 import type { BotRun, BotStatus, DashboardStats, Lead } from "../lib/types";
 import { useBotWebSocket } from "../hooks/useBotWebSocket";
 import { useBank } from "../hooks/useBank";
+import { useBotNotification } from "../hooks/useBotNotification";
 import WorkersLive from "../components/WorkersLive";
 import EligibleRanking from "../components/EligibleRanking";
 import ResultsTable from "../components/ResultsTable";
@@ -252,6 +253,7 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
     }
   }, [wsEvents]);
   const liveStatus = wsBotStatus || botStatus.status;
+  useBotNotification(liveStatus);
   const isRunning = liveStatus === "running" || botStatus.status === "running";
   const processados = data.concluidos + data.erros;
   const pctGeral = pct(processados, data.total);
