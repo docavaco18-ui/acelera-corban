@@ -92,7 +92,7 @@ async def reset_leads(user: AuthUser = Depends(require_user)):
 async def retry_errors(batch_id: str | None = None, user: AuthUser = Depends(require_user)):
     """Reseta leads com status 'erro' → 'pendente' pra o bot reprocessar."""
     db = get_db()
-    q = scoped(db, "v8_leads", user.user_id).update({"status": "pendente", "erro_detalhe": None}).eq("status", "erro")
+    q = scoped(db, "v8_leads", user.user_id).update({"status": "pendente", "erro": None}).eq("status", "erro")
     if batch_id:
         q = q.eq("batch_id", batch_id)
     result = q.execute()
