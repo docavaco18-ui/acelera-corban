@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
-import { crmApi, crmSettingsApi } from "../lib/api";
+import { crmApi, crmSettingsApi, v8ProposalsApi } from "../lib/api";
 import { useSession } from "../hooks/useSession";
 import type { CrmProposta, CrmStats } from "../lib/types";
 
@@ -435,6 +435,8 @@ export default function CRM() {
   const [dragId, setDragId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [showTab, setShowTab] = useState<"kanban" | "pendentes">("kanban");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [syncResult, setSyncResult] = useState<{ added: number; skipped: number; errors: number } | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -522,6 +524,29 @@ export default function CRM() {
 
   const handleEdit = (p: CrmProposta) => { setEditing(p); setShowModal(true); };
 
+  const handleSyncV8 = async () => {
+    setSyncStatus("running");
+    setSyncResult(null);
+    try {
+      await v8ProposalsApi.startSync();
+      // Polling a cada 4s até terminar
+      const poll = setInterval(async () => {
+        const s = await v8ProposalsApi.syncStatus();
+        if (s.status === "done") {
+          clearInterval(poll);
+          setSyncStatus("done");
+          setSyncResult({ added: s.added ?? 0, skipped: s.skipped ?? 0, errors: s.errors ?? 0 });
+          refresh();
+        } else if (s.status === "error") {
+          clearInterval(poll);
+          setSyncStatus("error");
+        }
+      }, 4000);
+    } catch {
+      setSyncStatus("error");
+    }
+  };
+
   const colunasPropostas = (status: CrmProposta["status"]) =>
     propostas.filter(p => p.status === status);
 
@@ -536,11 +561,31 @@ export default function CRM() {
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
         <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: 0 }}>📊 Acompanhamento de Propostas</h1>
-        <button
-          onClick={() => { setEditing(null); setShowModal(true); }}
-          style={{ padding: "8px 18px", borderRadius: 20, background: `${C.green}22`, color: C.green, border: `1px solid ${C.green}44`, fontWeight: 700, fontSize: ".85rem", cursor: "pointer" }}>
-          ➕ Nova Proposta
-        </button>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {isAdmin && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+              <button
+                onClick={handleSyncV8}
+                disabled={syncStatus === "running"}
+                style={{ padding: "8px 16px", borderRadius: 20, background: syncStatus === "running" ? "rgba(180,74,255,.08)" : `${C.purple}22`, color: syncStatus === "running" ? C.muted : C.purple, border: `1px solid ${syncStatus === "running" ? C.border : C.purple + "44"}`, fontWeight: 700, fontSize: ".82rem", cursor: syncStatus === "running" ? "not-allowed" : "pointer" }}>
+                {syncStatus === "running" ? "⏳ Sincronizando…" : "🔄 Sincronizar V8"}
+              </button>
+              {syncStatus === "done" && syncResult && (
+                <span style={{ fontSize: ".7rem", color: C.green }}>
+                  ✓ {syncResult.added} novas · {syncResult.skipped} já existiam · {syncResult.errors} erros
+                </span>
+              )}
+              {syncStatus === "error" && (
+                <span style={{ fontSize: ".7rem", color: C.red }}>Erro ao sincronizar — verifique credenciais V8</span>
+              )}
+            </div>
+          )}
+          <button
+            onClick={() => { setEditing(null); setShowModal(true); }}
+            style={{ padding: "8px 18px", borderRadius: 20, background: `${C.green}22`, color: C.green, border: `1px solid ${C.green}44`, fontWeight: 700, fontSize: ".85rem", cursor: "pointer" }}>
+            ➕ Nova Proposta
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}

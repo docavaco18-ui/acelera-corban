@@ -4,6 +4,7 @@ from .config import settings
 from .logging_config import setup_logging
 from .routers import leads, bot, stats, webhook, ws, admin, batches, crm
 from .routers import vctex as vctex_router
+from .routers import v8_proposals
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
@@ -32,6 +33,7 @@ app.include_router(credentials_router)
 app.include_router(batches.router)
 app.include_router(vctex_router.router)
 app.include_router(crm.router)
+app.include_router(v8_proposals.router)
 
 @app.get("/health")
 @app.get("/api/health")

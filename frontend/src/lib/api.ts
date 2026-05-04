@@ -169,6 +169,13 @@ export const crmApi = {
   stats: () => api.get<CrmStats>("/api/crm/propostas/stats").then((r) => r.data),
 };
 
+export const v8ProposalsApi = {
+  startSync: () =>
+    api.post<{ status: string; job_id: string }>("/api/v8proposals/sync").then((r) => r.data),
+  syncStatus: () =>
+    api.get<{ status: string; added?: number; skipped?: number; errors?: number; detail?: string }>("/api/v8proposals/sync/status").then((r) => r.data),
+};
+
 export const crmSettingsApi = {
   get: () => api.get<CrmSettings>("/api/crm/settings").then((r) => r.data),
   setPassword: (password: string) =>
