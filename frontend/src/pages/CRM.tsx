@@ -19,7 +19,7 @@ const C = {
 };
 
 const COLUNAS: { key: CrmProposta["status"]; label: string; cor: string }[] = [
-  { key: "propostas",  label: "📋 PROPOSTAS",  cor: C.blue   },
+  { key: "propostas",  label: "💰 PAGOS",       cor: C.blue   },
   { key: "importante", label: "⭐ IMPORTANTE",  cor: C.gold   },
   { key: "pendentes",  label: "⏳ PENDENTES",   cor: C.orange },
   { key: "leilao",     label: "🔨 LEILÃO",      cor: C.purple },
@@ -109,6 +109,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
     nome_vendedor: editing?.nome_vendedor ?? "",
     banco: editing?.banco ?? BANCOS[0],
     cliente_cpf: editing?.cliente_cpf ?? "",
+    cliente_nome: editing?.cliente_nome ?? "",
     data_venda: editing?.data_venda ?? new Date().toISOString().slice(0, 10),
     valor: editing?.valor?.toString() ?? "",
     prazo: editing?.prazo?.toString() ?? "",
@@ -133,6 +134,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
       nome_vendedor: form.nome_vendedor.trim(),
       banco: bancoFinal,
       cliente_cpf: form.cliente_cpf,
+      cliente_nome: form.cliente_nome.trim(),
       data_venda: form.data_venda,
       valor: parseMoney(form.valor),
       prazo: parseInt(form.prazo),
@@ -202,6 +204,11 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
               {bancoCustom && (
                 <input style={inp} value={form.banco_custom} onChange={e => set("banco_custom", e.target.value)} placeholder="Nome do banco..." />
               )}
+            </div>
+
+            <div>
+              <label style={label}>Nome do Cliente</label>
+              <input style={inp} value={form.cliente_nome} onChange={e => set("cliente_nome", e.target.value)} placeholder="Ex: Maria Santos" />
             </div>
 
             <div>
@@ -303,22 +310,31 @@ function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDra
         <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.text, marginBottom: 4 }}>
           {p.nome_vendedor}
         </div>
-        <div style={{ display: "flex", gap: 6 }}>
+        <div style={{ display: "flex", gap: 5 }}>
           {isAdmin && isPending && onApprove && (
             <button onClick={() => onApprove(p.id)}
               title="Aprovar proposta"
-              style={{ background: "rgba(0,255,136,.12)", border: "1px solid rgba(0,255,136,.3)", color: C.green, cursor: "pointer", fontSize: ".72rem", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>
+              style={{ background: "rgba(0,255,136,.12)", border: "1px solid rgba(0,255,136,.3)", color: C.green, cursor: "pointer", fontSize: ".72rem", borderRadius: 6, padding: "3px 8px", fontWeight: 700 }}>
               ✓ Aprovar
             </button>
           )}
-          <button onClick={() => onEdit(p)} style={{ background: "transparent", border: "none", color: C.muted, cursor: "pointer", fontSize: ".8rem" }}>✏️</button>
+          <button onClick={() => onEdit(p)}
+            style={{ background: "rgba(255,255,255,.06)", border: `1px solid ${C.border}`, color: C.muted, cursor: "pointer", fontSize: ".78rem", borderRadius: 6, padding: "4px 10px" }}>
+            ✏️ Editar
+          </button>
           {isAdmin && (
-            <button onClick={() => onDelete(p.id)} style={{ background: "transparent", border: "none", color: C.red, cursor: "pointer", fontSize: ".8rem" }}>🗑</button>
+            <button onClick={() => onDelete(p.id)}
+              style={{ background: "rgba(255,45,120,.08)", border: "1px solid rgba(255,45,120,.2)", color: C.red, cursor: "pointer", fontSize: ".78rem", borderRadius: 6, padding: "4px 8px" }}>
+              🗑
+            </button>
           )}
         </div>
       </div>
-      <div style={{ fontSize: ".72rem", color: isPending ? C.gold : cor, fontWeight: 700, marginBottom: 6 }}>{p.banco}</div>
-      <div style={{ fontSize: ".75rem", color: C.muted }}>{fmtCpf(p.cliente_cpf)}</div>
+      <div style={{ fontSize: ".72rem", color: isPending ? C.gold : cor, fontWeight: 700, marginBottom: 4 }}>{p.banco}</div>
+      {p.cliente_nome && (
+        <div style={{ fontSize: ".78rem", color: C.text, fontWeight: 600, marginBottom: 2 }}>{p.cliente_nome}</div>
+      )}
+      <div style={{ fontSize: ".72rem", color: C.muted }}>{fmtCpf(p.cliente_cpf)}</div>
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
         <span style={{ fontSize: ".78rem", color: C.green, fontWeight: 700 }}>{fmtMoeda(p.valor)}</span>
         <span style={{ fontSize: ".72rem", color: C.muted }}>{p.prazo}x {fmtMoeda(p.parcela)}</span>

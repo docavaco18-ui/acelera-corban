@@ -62,6 +62,7 @@ class PropostaBody(BaseModel):
     nome_vendedor: str
     banco: str
     cliente_cpf: str
+    cliente_nome: str = ""
     data_venda: date
     valor: float
     prazo: int
@@ -75,6 +76,7 @@ class PatchPropostaBody(BaseModel):
     nome_vendedor: Optional[str] = None
     banco: Optional[str] = None
     cliente_cpf: Optional[str] = None
+    cliente_nome: Optional[str] = None
     data_venda: Optional[date] = None
     valor: Optional[float] = None
     prazo: Optional[int] = None
@@ -136,6 +138,7 @@ def create_proposta(body: PropostaBody, user: AuthUser = Depends(require_user)):
         "nome_vendedor": body.nome_vendedor.strip(),
         "banco": body.banco.strip(),
         "cliente_cpf": body.cliente_cpf.strip().replace(".", "").replace("-", ""),
+        "cliente_nome": body.cliente_nome.strip(),
         "data_venda": str(body.data_venda),
         "valor": float(body.valor),
         "prazo": body.prazo,
@@ -173,6 +176,8 @@ def patch_proposta(
         payload["banco"] = body.banco.strip()
     if body.cliente_cpf is not None:
         payload["cliente_cpf"] = body.cliente_cpf.strip().replace(".", "").replace("-", "")
+    if body.cliente_nome is not None:
+        payload["cliente_nome"] = body.cliente_nome.strip()
     if body.data_venda is not None:
         payload["data_venda"] = str(body.data_venda)
     if body.valor is not None:

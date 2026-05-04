@@ -128,6 +128,7 @@ export interface CrmProposta {
   nome_vendedor: string;
   banco: string;
   cliente_cpf: string;
+  cliente_nome: string;
   data_venda: string;
   valor: number;
   prazo: number;
