@@ -290,6 +290,16 @@ def delete_batch(batch_id: str, user: AuthUser = Depends(require_user)):
     scoped(db, "vctex_batches", user.user_id).delete().eq("id", batch_id).execute()
 
 
+@router.post("/leads/retry-errors")
+def retry_errors(batch_id: str | None = None, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    q = scoped(db, "vctex_leads", user.user_id).update({"status": "pendente", "erro_detalhe": None}).eq("status", "erro")
+    if batch_id:
+        q = q.eq("batch_id", batch_id)
+    result = q.execute()
+    return {"resetados": len(result.data or [])}
+
+
 @router.get("/bot/runs")
 def list_runs(limit: int = 20, user: AuthUser = Depends(require_user)):
     db = get_db()

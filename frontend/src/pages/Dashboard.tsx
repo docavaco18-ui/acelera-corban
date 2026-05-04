@@ -302,6 +302,18 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
               </button>
             </>
           )}
+          {data.erros > 0 && (
+            <button
+              onClick={async () => {
+                const r = await leadsApi.retryErrors(batchId).catch(() => null);
+                if (r) { refresh(); }
+              }}
+              style={{ padding: "7px 16px", background: "rgba(255,140,0,.15)", color: C.orange, border: "1px solid rgba(255,140,0,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}
+              title={`${data.erros} leads com erro — clique pra retentar`}
+            >
+              ↺ Retentar Erros ({data.erros})
+            </button>
+          )}
           <button onClick={() => leadsApi.exportCsv("elegivel")}
             style={{ padding: "7px 16px", background: "rgba(0,191,255,.15)", color: C.blue, border: "1px solid rgba(0,191,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ⬇ Exportar Elegíveis

@@ -89,6 +89,11 @@ export const leadsApi = {
       }>(`/api/leads/upload/${jobId}`)
       .then((r) => r.data),
 
+  retryErrors: (batchId?: string) =>
+    api.post<{ resetados: number }>("/api/leads/retry-errors", null, {
+      params: batchId ? { batch_id: batchId } : {},
+    }).then((r) => r.data),
+
   exportCsv: async (status: string = "elegivel") => {
     const blob = await api
       .get("/api/leads/export", { params: { status }, responseType: "blob" })
