@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..services import bot_service
 from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
+from ..db_scoped import scoped
 from ..banks.v8.credentials_helper import get_v8_runtime_creds
 
 router = APIRouter(prefix="/api/bot", tags=["bot"])
@@ -55,3 +56,17 @@ async def status(request: Request, user: AuthUser = Depends(require_user)):
 @router.get("/events")
 async def events(user: AuthUser = Depends(require_user)):
     return {"events": [e for e in _events if e.get("user_id") == user.user_id][-100:]}
+
+
+@router.get("/runs")
+async def list_runs(limit: int = 20, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    rows = (
+        scoped(db, "v8_bot_runs", user.user_id)
+        .select("id,started_at,finished_at,status,num_workers,total_processed,total_elegiveis,total_inelegiveis")
+        .order("started_at", desc=True)
+        .limit(min(limit, 100))
+        .execute()
+        .data or []
+    )
+    return {"runs": rows}

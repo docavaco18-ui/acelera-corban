@@ -34,6 +34,17 @@ export interface BotStatus {
   run_id: string | null;
 }
 
+export interface BotRun {
+  id: string;
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  num_workers: number | null;
+  total_processed: number;
+  total_elegiveis: number;
+  total_inelegiveis: number;
+}
+
 // Backend /api/stats/dashboard shape
 export interface BatchStats {
   label: string;

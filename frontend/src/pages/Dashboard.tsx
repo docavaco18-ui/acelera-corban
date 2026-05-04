@@ -4,7 +4,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 import { botApi, leadsApi, statsApi } from "../lib/api";
-import type { BotStatus, DashboardStats, Lead } from "../lib/types";
+import type { BotRun, BotStatus, DashboardStats, Lead } from "../lib/types";
 import { useBotWebSocket } from "../hooks/useBotWebSocket";
 import { useBank } from "../hooks/useBank";
 import WorkersLive from "../components/WorkersLive";
@@ -27,7 +27,7 @@ const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
 const MILESTONES = [10000, 25000, 50000, 100000, 200000, 500000, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000];
 
-type Tab = "historico" | "geral" | "ranking" | "graficos" | "tabela" | "workers" | "cerebro";
+type Tab = "historico" | "geral" | "ranking" | "graficos" | "tabela" | "workers" | "cerebro" | "runs";
 const TABS: { id: Tab; label: string }[] = [
   { id: "historico", label: "📦 Histórico" },
   { id: "geral",    label: "📊 Geral" },
@@ -36,6 +36,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "tabela",   label: "📋 Todos os Resultados" },
   { id: "workers",  label: "⚡ Workers ao Vivo" },
   { id: "cerebro",  label: "🧠 Cérebro" },
+  { id: "runs",     label: "📜 Histórico de Runs" },
 ];
 
 const card = (extra?: React.CSSProperties): React.CSSProperties => ({
@@ -104,6 +105,10 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const { bank } = useBank();
   const bankLabel = bank === "vctex" ? "VCTex Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
+  const handleTabChange = (t: Tab) => {
+    setTab(t);
+    if (t === "runs") botApi.runs().then(setRuns).catch(() => {});
+  };
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: "idle", run_id: null });
@@ -112,6 +117,8 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [runs, setRuns] = useState<BotRun[]>([]);
 
   const [gamePhase, setGamePhase] = useState<UploadPhase | null>(null);
   const [gameInserted, setGameInserted] = useState(0);
@@ -313,7 +320,7 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
 
       <div style={{ display: "flex", gap: 6, marginBottom: 22, flexWrap: "wrap" }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
+          <button key={t.id} onClick={() => handleTabChange(t.id)}
             style={{ padding: "9px 20px", borderRadius: 22, border: `1px solid ${tab === t.id ? "rgba(180,74,255,.4)" : C.border}`, background: tab === t.id ? "rgba(180,74,255,.18)" : C.bg2, color: tab === t.id ? C.purple : "#666", fontSize: ".82rem", fontWeight: 700, cursor: "pointer", letterSpacing: ".4px", textTransform: "uppercase" }}>
             {t.label}
           </button>
@@ -655,6 +662,63 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
           botStatus={liveStatus}
           workerStates={workerStates}
         />
+      )}
+
+      {tab === "runs" && (
+        <div style={card()}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ fontSize: ".7rem", color: "#555", textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700 }}>📜 Histórico de Execuções do Bot</div>
+            <button onClick={() => botApi.runs().then(setRuns).catch(() => {})}
+              style={{ padding: "5px 14px", background: "rgba(180,74,255,.12)", border: "1px solid rgba(180,74,255,.3)", color: C.purple, borderRadius: 14, fontSize: ".72rem", cursor: "pointer", fontWeight: 700 }}>
+              ↻ Atualizar
+            </button>
+          </div>
+          {runs.length === 0 ? (
+            <div style={{ color: "#444", fontSize: ".85rem", padding: "20px 0", textAlign: "center" }}>Nenhuma run registrada ainda.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {runs.map(r => {
+                const dur = r.finished_at
+                  ? Math.round((new Date(r.finished_at).getTime() - new Date(r.started_at).getTime()) / 1000)
+                  : null;
+                const durLabel = dur != null
+                  ? dur >= 60 ? `${Math.floor(dur / 60)}m ${dur % 60}s` : `${dur}s`
+                  : "em andamento";
+                const conv = r.total_processed > 0 ? Math.round((r.total_elegiveis / r.total_processed) * 100) : 0;
+                const isRunning = r.status === "running";
+                return (
+                  <div key={r.id} style={{ display: "grid", gridTemplateColumns: "1fr 2fr 1fr 1fr 1fr 1fr", gap: 12, alignItems: "center", padding: "12px 16px", background: "rgba(255,255,255,.02)", border: `1px solid ${isRunning ? "rgba(0,255,136,.2)" : C.border}`, borderRadius: 10, fontSize: ".78rem" }}>
+                    <div>
+                      <div style={{ color: isRunning ? C.green : "#888", fontWeight: 700, textTransform: "uppercase", fontSize: ".68rem" }}>
+                        {isRunning ? "● Rodando" : r.status}
+                      </div>
+                      <div style={{ color: "#444", fontSize: ".68rem", marginTop: 2 }}>
+                        {new Date(r.started_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                    </div>
+                    <div style={{ color: "#555", fontSize: ".68rem", fontFamily: "monospace" }}>{r.id.slice(0, 16)}…</div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ color: "#ccc", fontWeight: 700 }}>{r.total_processed}</div>
+                      <div style={{ color: "#444", fontSize: ".65rem" }}>processados</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ color: C.green, fontWeight: 700 }}>{r.total_elegiveis}</div>
+                      <div style={{ color: "#444", fontSize: ".65rem" }}>elegíveis</div>
+                    </div>
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ color: C.gold, fontWeight: 700 }}>{conv}%</div>
+                      <div style={{ color: "#444", fontSize: ".65rem" }}>conversão</div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ color: "#777", fontSize: ".72rem" }}>{durLabel}</div>
+                      <div style={{ color: "#444", fontSize: ".65rem" }}>{r.num_workers ?? "—"} workers</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
 
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}`}</style>

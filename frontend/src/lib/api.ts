@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Lead, BotStatus, DashboardStats, Batch } from "./types";
+import type { Lead, BotRun, BotStatus, DashboardStats, Batch } from "./types";
 import { supabase } from "./supabase";
 import { getBank, bankPrefix } from "../hooks/useBank";
 
@@ -114,6 +114,7 @@ export const botApi = {
       })
       .then((r) => r.data),
   stop: () => api.post<BotStatus>("/api/bot/stop").then((r) => r.data),
+  runs: (limit = 20) => api.get<{ runs: BotRun[] }>("/api/bot/runs", { params: { limit } }).then((r) => r.data.runs),
 };
 
 export const statsApi = {
