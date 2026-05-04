@@ -115,11 +115,16 @@ async def start_bot(
         except Exception as e:
             logger.warning(f"mark batch processando[{batch_id}] failed: {e}")
 
-    processed = {"count": 0}
+    processed = {"count": 0, "eleg": 0, "ineleg": 0}
 
     async def on_event_async(event):
         if event.get("type") == "lead_result":
             processed["count"] += 1
+            s = event.get("status", "")
+            if s == "elegivel":
+                processed["eleg"] += 1
+            elif s == "inelegivel":
+                processed["ineleg"] += 1
         await _broadcast(redis, event)
         on_event(event)
         pool.emit(user_id, event)
@@ -238,15 +243,8 @@ async def start_bot(
             rt.retry_tasks = []
 
             def _finalize():
-                # Stats da run: se batch_id, escopa só nessa batch; senão user inteiro.
-                q = scoped(db, "v8_leads", user_id).select("status,valor_liberado,margem_disponivel")
-                if batch_id is not None:
-                    q = q.eq("batch_id", batch_id)
-                stats = q.execute().data or []
-                eleg = sum(1 for r in stats if r["status"] == "elegivel")
-                ineleg = sum(1 for r in stats if r["status"] == "inelegivel")
-                liberado = sum(float(r.get("valor_liberado") or 0) for r in stats if r["status"] == "elegivel")
-                margem = sum(float(r.get("margem_disponivel") or 0) for r in stats if r["status"] == "elegivel")
+                eleg = processed["eleg"]
+                ineleg = processed["ineleg"]
                 now_iso = datetime.now(timezone.utc).isoformat()
                 scoped(db, "v8_bot_runs", user_id).update({
                     "status": "completed",
@@ -255,8 +253,16 @@ async def start_bot(
                     "total_elegiveis": eleg,
                     "total_inelegiveis": ineleg,
                 }).eq("id", handle.run_id).execute()
-                # Atualiza totais da batch (e marca concluída)
+                # Atualiza totais da batch: re-escaneia só a batch pra pegar valor/margem
                 if batch_id is not None:
+                    rows = (
+                        scoped(db, "v8_leads", user_id)
+                        .select("status,valor_liberado,margem_disponivel")
+                        .eq("batch_id", batch_id)
+                        .execute().data or []
+                    )
+                    liberado = sum(float(r.get("valor_liberado") or 0) for r in rows if r["status"] == "elegivel")
+                    margem = sum(float(r.get("margem_disponivel") or 0) for r in rows if r["status"] == "elegivel")
                     scoped(db, "v8_batches", user_id).update({
                         "status": "concluida",
                         "finished_at": now_iso,

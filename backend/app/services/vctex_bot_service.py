@@ -79,11 +79,16 @@ async def start_bot(
         except Exception as e:
             logger.warning(f"vctex mark batch processando[{batch_id}] failed: {e}")
 
-    processed = {"count": 0}
+    processed = {"count": 0, "eleg": 0, "ineleg": 0}
 
     async def on_event_async(event):
         if event.get("type") == "lead_result":
             processed["count"] += 1
+            fase = event.get("fase", "")
+            if fase == "elegivel":
+                processed["eleg"] += 1
+            elif fase == "inelegivel":
+                processed["ineleg"] += 1
             cpf_done = event.get("cpf")
             if cpf_done:
                 # Libera CPF do inflight pra refill poder re-buscá-lo se mudou de fase
@@ -163,13 +168,8 @@ async def start_bot(
             rt.worker_tasks = []
 
             def _finalize():
-                q = scoped(db, "vctex_leads", user_id).select("status,valor_liberado")
-                if batch_id is not None:
-                    q = q.eq("batch_id", batch_id)
-                stats = q.execute().data or []
-                eleg = sum(1 for r in stats if r["status"] == "elegivel")
-                ineleg = sum(1 for r in stats if r["status"] == "inelegivel")
-                liberado = sum(float(r.get("valor_liberado") or 0) for r in stats if r["status"] == "elegivel")
+                eleg = processed["eleg"]
+                ineleg = processed["ineleg"]
                 now_iso = datetime.now(timezone.utc).isoformat()
                 scoped(db, "vctex_bot_runs", user_id).update({
                     "status": "completed",
@@ -179,6 +179,13 @@ async def start_bot(
                     "total_inelegiveis": ineleg,
                 }).eq("id", handle.run_id).execute()
                 if batch_id is not None:
+                    rows = (
+                        scoped(db, "vctex_leads", user_id)
+                        .select("status,valor_liberado")
+                        .eq("batch_id", batch_id)
+                        .execute().data or []
+                    )
+                    liberado = sum(float(r.get("valor_liberado") or 0) for r in rows if r["status"] == "elegivel")
                     scoped(db, "vctex_batches", user_id).update({
                         "status": "concluida",
                         "finished_at": now_iso,
