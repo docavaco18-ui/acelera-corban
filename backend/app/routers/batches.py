@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
 from ..db_scoped import scoped
@@ -118,3 +119,49 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
             break
         offset += PAGE
     return _summarize_leads(rows)
+
+
+class PatchBatchBody(BaseModel):
+    name: str | None = None
+    status: str | None = None
+
+
+@router.patch("/{batch_id}")
+def patch_batch(batch_id: str, body: PatchBatchBody, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    payload: dict = {}
+    if body.name is not None:
+        payload["name"] = body.name.strip()[:120]
+    if body.status is not None:
+        if body.status not in ("pendente", "processando", "concluida", "cancelada"):
+            raise HTTPException(400, "status inválido")
+        payload["status"] = body.status
+    if not payload:
+        raise HTTPException(400, "Nada para atualizar")
+    rows = (
+        scoped(db, "v8_batches", user.user_id)
+        .update(payload)
+        .eq("id", batch_id)
+        .execute().data or []
+    )
+    if not rows:
+        raise HTTPException(404, "Batch não encontrada")
+    return rows[0]
+
+
+@router.delete("/{batch_id}", status_code=204)
+def delete_batch(batch_id: str, user: AuthUser = Depends(require_user)):
+    """Marca batch como cancelada e remove os leads associados."""
+    db = get_db()
+    own = (
+        scoped(db, "v8_batches", user.user_id)
+        .select("id")
+        .eq("id", batch_id)
+        .execute().data or []
+    )
+    if not own:
+        raise HTTPException(404, "Batch não encontrada")
+    # Remove leads da batch
+    scoped(db, "v8_leads", user.user_id).delete().eq("batch_id", batch_id).execute()
+    # Remove a batch
+    scoped(db, "v8_batches", user.user_id).delete().eq("id", batch_id).execute()

@@ -146,4 +146,7 @@ export const batchesApi = {
   get: (id: string) => api.get<Batch>(`/api/batches/${id}`).then((r) => r.data),
   stats: (id: string) =>
     api.get<DashboardStats>(`/api/batches/${id}/stats`).then((r) => r.data),
+  rename: (id: string, name: string) =>
+    api.patch<Batch>(`/api/batches/${id}`, { name }).then((r) => r.data),
+  delete: (id: string) => api.delete(`/api/batches/${id}`),
 };
