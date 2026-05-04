@@ -3,6 +3,7 @@ import csv
 import io
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
@@ -178,6 +179,49 @@ def list_batches(user: AuthUser = Depends(require_user)):
     return {"data": rows}
 
 
+@router.get("/batches/stats/{batch_id}")
+@router.get("/batches/{batch_id}/stats")
+def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    own = (
+        scoped(db, "vctex_batches", user.user_id)
+        .select("id").eq("id", batch_id).execute().data or []
+    )
+    if not own:
+        raise HTTPException(404, "Batch não encontrada")
+    rows: list[dict] = []
+    PAGE = 1000
+    offset = 0
+    while True:
+        chunk = (
+            scoped(db, "vctex_leads", user.user_id)
+            .select("status,valor_liberado")
+            .eq("batch_id", batch_id)
+            .range(offset, offset + PAGE - 1)
+            .execute().data or []
+        )
+        rows.extend(chunk)
+        if len(chunk) < PAGE:
+            break
+        offset += PAGE
+    counts: dict[str, int] = {}
+    total_liberado = 0.0
+    for r in rows:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+        if r["status"] == "elegivel":
+            total_liberado += float(r.get("valor_liberado") or 0)
+    eleg = counts.get("elegivel", 0)
+    ineleg = counts.get("inelegivel", 0)
+    erros = counts.get("erro", 0)
+    return {
+        "total": len(rows), "elegiveis": eleg, "inelegiveis": ineleg,
+        "pendentes": counts.get("pendente", 0), "erros": erros,
+        "em_processamento": counts.get("fase0", 0) + counts.get("fase1", 0) + counts.get("fase2", 0),
+        "aguardando_autorizacao": 0, "processados": eleg + ineleg + erros,
+        "total_liberado": round(total_liberado, 2), "total_margem": 0.0, "by_status": counts,
+    }
+
+
 @router.get("/batches/current")
 def current_batch(user: AuthUser = Depends(require_user)):
     db = get_db()
@@ -205,3 +249,55 @@ def get_batch(batch_id: str, user: AuthUser = Depends(require_user)):
     if not rows:
         raise HTTPException(404, "Batch não encontrada")
     return rows[0]
+
+
+class PatchBatchBody(BaseModel):
+    name: str | None = None
+    status: str | None = None
+
+
+@router.patch("/batches/{batch_id}")
+def patch_batch(batch_id: str, body: PatchBatchBody, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    payload: dict = {}
+    if body.name is not None:
+        payload["name"] = body.name.strip()[:120]
+    if body.status is not None:
+        if body.status not in ("pendente", "processando", "concluida", "cancelada"):
+            raise HTTPException(400, "status inválido")
+        payload["status"] = body.status
+    if not payload:
+        raise HTTPException(400, "Nada para atualizar")
+    rows = (
+        scoped(db, "vctex_batches", user.user_id)
+        .update(payload).eq("id", batch_id).execute().data or []
+    )
+    if not rows:
+        raise HTTPException(404, "Batch não encontrada")
+    return rows[0]
+
+
+@router.delete("/batches/{batch_id}", status_code=204)
+def delete_batch(batch_id: str, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    own = (
+        scoped(db, "vctex_batches", user.user_id)
+        .select("id").eq("id", batch_id).execute().data or []
+    )
+    if not own:
+        raise HTTPException(404, "Batch não encontrada")
+    scoped(db, "vctex_leads", user.user_id).delete().eq("batch_id", batch_id).execute()
+    scoped(db, "vctex_batches", user.user_id).delete().eq("id", batch_id).execute()
+
+
+@router.get("/bot/runs")
+def list_runs(limit: int = 20, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    rows = (
+        scoped(db, "vctex_bot_runs", user.user_id)
+        .select("id,started_at,finished_at,status,num_workers,total_processed,total_elegiveis,total_inelegiveis")
+        .order("started_at", desc=True)
+        .limit(min(limit, 100))
+        .execute().data or []
+    )
+    return {"runs": rows}
