@@ -42,6 +42,8 @@ export const adminApi = {
   updateUser: (id: string, body: { role?: string; banned?: boolean; password?: string }) =>
     api.patch(`/api/admin/users/${id}`, body).then((r) => r.data),
   deleteUser: (id: string) => api.delete(`/api/admin/users/${id}`).then((r) => r.data),
+  runs: (limit = 50) =>
+    api.get<{ runs: any[] }>("/api/admin/runs", { params: { limit } }).then((r) => r.data.runs),
 };
 
 interface LeadListResponse {

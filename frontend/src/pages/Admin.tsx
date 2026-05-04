@@ -70,8 +70,24 @@ function ResetPasswordModal({ user, onClose }: { user: SbUser; onClose: () => vo
   );
 }
 
+interface AdminRun {
+  id: string;
+  owner_id: string;
+  bank: "v8" | "vctex";
+  started_at: string;
+  finished_at: string | null;
+  status: string;
+  num_workers: number | null;
+  total_processed: number;
+  total_elegiveis: number;
+  total_inelegiveis: number;
+}
+
 export function Admin() {
+  const [tab, setTab] = useState<"users" | "runs">("users");
   const [users, setUsers] = useState<SbUser[]>([]);
+  const [runs, setRuns] = useState<AdminRun[]>([]);
+  const [runsLoading, setRunsLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [email, setEmail] = useState("");
@@ -91,7 +107,17 @@ export function Admin() {
     } finally { setLoading(false); }
   };
 
+  const loadRuns = async () => {
+    setRunsLoading(true);
+    try {
+      const data = await adminApi.runs(100);
+      setRuns(data as AdminRun[]);
+    } catch { /* silencioso */ }
+    finally { setRunsLoading(false); }
+  };
+
   useEffect(() => { refresh(); }, []);
+  useEffect(() => { if (tab === "runs") loadRuns(); }, [tab]);
 
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -131,11 +157,28 @@ export function Admin() {
     borderRadius: 14, padding: "20px 22px", marginBottom: 14,
   };
 
+  const fmtDur = (a: string, b: string | null) => {
+    if (!b) return "—";
+    const s = Math.round((new Date(b).getTime() - new Date(a).getTime()) / 1000);
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m${s % 60}s`;
+  };
+
   return (
     <div style={{ padding: 20, color: "#e0e0f0", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
-      <h1 style={{ fontSize: "1.3rem", fontWeight: 800, marginBottom: 18 }}>👥 Administração de Usuários</h1>
+      <h1 style={{ fontSize: "1.3rem", fontWeight: 800, marginBottom: 18 }}>⚙️ Administração</h1>
 
-      <div style={card}>
+      {/* Abas */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+        {(["users", "runs"] as const).map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            style={{ padding: "7px 18px", borderRadius: 12, border: `1px solid ${tab === t ? C.purple : C.border}`, background: tab === t ? `${C.purple}22` : "transparent", color: tab === t ? C.purple : "#666", fontWeight: 700, fontSize: ".8rem", cursor: "pointer" }}>
+            {t === "users" ? "👥 Usuários" : "📜 Runs"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "users" && <><div style={card}>
         <div style={{ fontSize: ".7rem", color: "#888", textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 12 }}>
           ➕ Criar novo usuário
         </div>
@@ -220,6 +263,56 @@ export function Admin() {
       </div>
 
       {resetTarget && <ResetPasswordModal user={resetTarget} onClose={() => setResetTarget(null)} />}
+      </>}
+
+      {tab === "runs" && (
+        <div style={card}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ fontSize: ".7rem", color: "#888", textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700 }}>
+              📜 Histórico de Runs — todos os usuários ({runs.length})
+            </div>
+            <button onClick={loadRuns} style={{ background: "transparent", color: "#666", border: `1px solid ${C.border}`, borderRadius: 14, padding: "5px 12px", fontSize: ".75rem", cursor: "pointer" }}>↻ Atualizar</button>
+          </div>
+          {runsLoading ? (
+            <div style={{ color: "#666", fontSize: ".85rem" }}>Carregando...</div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: ".8rem" }}>
+                <thead>
+                  <tr style={{ color: "#666", textAlign: "left" }}>
+                    {["Banco", "Owner", "Início", "Fim", "Duração", "Status", "Processados", "Elegíveis", "Inelegíveis"].map(h => (
+                      <th key={h} style={{ padding: "8px 6px", borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {runs.map(r => (
+                    <tr key={r.id} style={{ color: "#ccc" }}>
+                      <td style={td}>
+                        <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: ".7rem", background: r.bank === "v8" ? "rgba(99,102,241,.15)" : "rgba(0,191,255,.12)", color: r.bank === "v8" ? "#818cf8" : C.blue, border: `1px solid ${r.bank === "v8" ? "rgba(99,102,241,.3)" : "rgba(0,191,255,.25)"}` }}>
+                          {r.bank.toUpperCase()}
+                        </span>
+                      </td>
+                      <td style={{ ...td, fontSize: ".7rem", color: "#666", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.owner_id.slice(0, 8)}…</td>
+                      <td style={{ ...td, fontSize: ".72rem", color: "#666" }}>{fmtDate(r.started_at)}</td>
+                      <td style={{ ...td, fontSize: ".72rem", color: "#666" }}>{fmtDate(r.finished_at)}</td>
+                      <td style={{ ...td, color: "#94a3b8" }}>{fmtDur(r.started_at, r.finished_at)}</td>
+                      <td style={td}>
+                        <span style={{ color: r.status === "completed" ? C.green : r.status === "running" ? C.gold : "#888" }}>
+                          {r.status}
+                        </span>
+                      </td>
+                      <td style={{ ...td, color: "#ccc", textAlign: "center" }}>{r.total_processed}</td>
+                      <td style={{ ...td, color: C.green, textAlign: "center", fontWeight: 700 }}>{r.total_elegiveis}</td>
+                      <td style={{ ...td, color: "#94a3b8", textAlign: "center" }}>{r.total_inelegiveis}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

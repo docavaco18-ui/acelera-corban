@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..auth_deps import require_admin, AuthUser
 from ..config import settings
+from ..database import db as get_db
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -91,6 +92,32 @@ async def update_user(
     if not r.is_success:
         raise HTTPException(r.status_code, r.text)
     return r.json()
+
+
+@router.get("/runs")
+async def list_all_runs(limit: int = 50, _: AuthUser = Depends(require_admin)):
+    """Histórico de runs de todos os usuários (V8 + VCTex) para o admin."""
+    db = get_db()
+    v8 = (
+        db.table("v8_bot_runs")
+        .select("id,owner_id,started_at,finished_at,status,num_workers,total_processed,total_elegiveis,total_inelegiveis")
+        .order("started_at", desc=True)
+        .limit(limit)
+        .execute().data or []
+    )
+    vctex = (
+        db.table("vctex_bot_runs")
+        .select("id,owner_id,started_at,finished_at,status,num_workers,total_processed,total_elegiveis,total_inelegiveis")
+        .order("started_at", desc=True)
+        .limit(limit)
+        .execute().data or []
+    )
+    merged = sorted(
+        [{**r, "bank": "v8"} for r in v8] + [{**r, "bank": "vctex"} for r in vctex],
+        key=lambda x: x.get("started_at") or "",
+        reverse=True,
+    )[:limit]
+    return {"runs": merged}
 
 
 @router.delete("/users/{user_id}")
