@@ -1,22 +1,62 @@
 """CRM — Acompanhamento de Propostas (/api/crm/*)."""
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, condecimal
-from datetime import date
+import hashlib
+import secrets
+from datetime import date, datetime, timezone
 from typing import Optional
-from decimal import Decimal
 
-from ..auth_deps import require_user, AuthUser
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+
+from ..auth_deps import require_user, require_admin, AuthUser
 from ..database import db as get_db
 from ..db_scoped import scoped
 
 router = APIRouter(prefix="/api/crm", tags=["crm"])
 
 VALID_STATUS = {"propostas", "importante", "pendentes", "leilao", "fgts"}
-VALID_BANCOS = {
-    "V8", "Zilli", "Novo Saque", "VCTex", "Pan",
-    "Facta", "C6", "Mercantil", "2S", "Soma",
-}
 
+
+# ─── Password helpers ──────────────────────────────────────────────────────────
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    digest = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+    return f"{salt}:{digest}"
+
+
+def _verify_password(password: str, stored: str) -> bool:
+    if not stored:
+        return False
+    parts = stored.split(":", 1)
+    if len(parts) != 2:
+        return False
+    salt, expected = parts
+    digest = hashlib.sha256(f"{salt}:{password}".encode()).hexdigest()
+    return secrets.compare_digest(digest, expected)
+
+
+def _get_crm_password_hash(db, user_id: str) -> str | None:
+    rows = (
+        scoped(db, "crm_settings", user_id)
+        .select("crm_password_hash")
+        .execute().data or []
+    )
+    if rows:
+        return rows[0].get("crm_password_hash")
+    return None
+
+
+def _check_crm_password(db, user_id: str, provided: str | None):
+    """Levanta 403 se senha CRM está ativa e provided não bate."""
+    stored = _get_crm_password_hash(db, user_id)
+    if stored:
+        if not provided:
+            raise HTTPException(403, "Senha CRM obrigatória para esta ação")
+        if not _verify_password(provided, stored):
+            raise HTTPException(403, "Senha CRM incorreta")
+
+
+# ─── Schemas ──────────────────────────────────────────────────────────────────
 
 class PropostaBody(BaseModel):
     nome_vendedor: str
@@ -28,6 +68,7 @@ class PropostaBody(BaseModel):
     parcela: float
     codigo_proposta: str = ""
     status: str = "propostas"
+    crm_password: Optional[str] = None
 
 
 class PatchPropostaBody(BaseModel):
@@ -42,16 +83,34 @@ class PatchPropostaBody(BaseModel):
     status: Optional[str] = None
 
 
+class DeleteBody(BaseModel):
+    crm_password: Optional[str] = None
+
+
+class CrmPasswordBody(BaseModel):
+    password: str
+
+
+# ─── Endpoints ────────────────────────────────────────────────────────────────
+
 @router.get("/propostas")
 def list_propostas(
     status: str | None = None,
     banco: str | None = None,
     data_inicio: date | None = None,
     data_fim: date | None = None,
+    pending_only: bool = False,
     user: AuthUser = Depends(require_user),
 ):
     db = get_db()
     q = scoped(db, "crm_propostas", user.user_id).select("*").order("created_at", desc=True)
+
+    if pending_only and user.is_admin:
+        q = q.eq("approved", False)
+    elif not user.is_admin:
+        # Non-admin só vê aprovadas
+        q = q.eq("approved", True)
+
     if status and status in VALID_STATUS:
         q = q.eq("status", status)
     if banco:
@@ -60,6 +119,7 @@ def list_propostas(
         q = q.gte("data_venda", str(data_inicio))
     if data_fim:
         q = q.lte("data_venda", str(data_fim))
+
     rows = q.execute().data or []
     return {"data": rows}
 
@@ -68,6 +128,10 @@ def list_propostas(
 def create_proposta(body: PropostaBody, user: AuthUser = Depends(require_user)):
     if body.status not in VALID_STATUS:
         raise HTTPException(400, f"status inválido: {body.status}")
+
+    db = get_db()
+    _check_crm_password(db, user.user_id, body.crm_password)
+
     payload = {
         "nome_vendedor": body.nome_vendedor.strip(),
         "banco": body.banco.strip(),
@@ -78,8 +142,10 @@ def create_proposta(body: PropostaBody, user: AuthUser = Depends(require_user)):
         "parcela": float(body.parcela),
         "codigo_proposta": body.codigo_proposta.strip(),
         "status": body.status,
+        "approved": user.is_admin,
+        "approved_at": datetime.now(timezone.utc).isoformat() if user.is_admin else None,
+        "approved_by": user.user_id if user.is_admin else None,
     }
-    db = get_db()
     rows = scoped(db, "crm_propostas", user.user_id).insert(payload).execute().data or []
     if not rows:
         raise HTTPException(500, "Erro ao criar proposta")
@@ -135,26 +201,93 @@ def patch_proposta(
 
 
 @router.delete("/propostas/{proposta_id}", status_code=204)
-def delete_proposta(proposta_id: str, user: AuthUser = Depends(require_user)):
+def delete_proposta(
+    proposta_id: str,
+    body: DeleteBody = DeleteBody(),
+    user: AuthUser = Depends(require_user),
+):
+    if not user.is_admin:
+        raise HTTPException(403, "Apenas administradores podem apagar propostas")
+
     db = get_db()
+    _check_crm_password(db, user.user_id, body.crm_password)
+
     own = (
         scoped(db, "crm_propostas", user.user_id)
         .select("id").eq("id", proposta_id).execute().data or []
     )
     if not own:
         raise HTTPException(404, "Proposta não encontrada")
+
     scoped(db, "crm_propostas", user.user_id).delete().eq("id", proposta_id).execute()
+
+
+@router.post("/propostas/{proposta_id}/approve")
+def approve_proposta(
+    proposta_id: str,
+    user: AuthUser = Depends(require_admin),
+):
+    db = get_db()
+    own = (
+        scoped(db, "crm_propostas", user.user_id)
+        .select("id,approved").eq("id", proposta_id).execute().data or []
+    )
+    if not own:
+        raise HTTPException(404, "Proposta não encontrada")
+
+    rows = (
+        scoped(db, "crm_propostas", user.user_id)
+        .update({
+            "approved": True,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+            "approved_by": user.user_id,
+        })
+        .eq("id", proposta_id)
+        .execute().data or []
+    )
+    if not rows:
+        raise HTTPException(500, "Erro ao aprovar")
+    return rows[0]
+
+
+@router.get("/settings")
+def get_crm_settings(user: AuthUser = Depends(require_user)):
+    db = get_db()
+    stored = _get_crm_password_hash(db, user.user_id)
+    return {"has_crm_password": bool(stored)}
+
+
+@router.put("/settings/password")
+def set_crm_password(body: CrmPasswordBody, user: AuthUser = Depends(require_admin)):
+    if len(body.password) < 4:
+        raise HTTPException(400, "Senha deve ter ao menos 4 caracteres")
+    db = get_db()
+    hashed = _hash_password(body.password)
+    now = datetime.now(timezone.utc).isoformat()
+    scoped(db, "crm_settings", user.user_id).upsert(
+        {"crm_password_hash": hashed, "updated_at": now},
+        on_conflict="owner_id",
+    ).execute()
+    return {"ok": True}
+
+
+@router.delete("/settings/password", status_code=204)
+def remove_crm_password(user: AuthUser = Depends(require_admin)):
+    db = get_db()
+    scoped(db, "crm_settings", user.user_id).upsert(
+        {"crm_password_hash": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+        on_conflict="owner_id",
+    ).execute()
 
 
 @router.get("/propostas/stats")
 def propostas_stats(user: AuthUser = Depends(require_user)):
-    """Resumo por status e banco para sidebar/gráficos."""
     db = get_db()
-    rows = (
-        scoped(db, "crm_propostas", user.user_id)
-        .select("status,banco,valor,nome_vendedor")
-        .execute().data or []
-    )
+    q = scoped(db, "crm_propostas", user.user_id).select("status,banco,valor,nome_vendedor,approved")
+    if not user.is_admin:
+        q = q.eq("approved", True)
+    rows = q.execute().data or []
+
     by_status: dict[str, int] = {}
     by_banco: dict[str, int] = {}
     by_vendedor: dict[str, float] = {}
@@ -179,6 +312,14 @@ def propostas_stats(user: AuthUser = Depends(require_user)):
         key=lambda x: x["total"], reverse=True,
     )[:10]
 
+    pending_count = 0
+    if user.is_admin:
+        pending_rows = (
+            scoped(db, "crm_propostas", user.user_id)
+            .select("id").eq("approved", False).execute().data or []
+        )
+        pending_count = len(pending_rows)
+
     return {
         "total": total,
         "total_valor": round(total_valor, 2),
@@ -186,4 +327,5 @@ def propostas_stats(user: AuthUser = Depends(require_user)):
         "by_status": by_status,
         "by_banco": by_banco,
         "ranking": ranking,
+        "pending_count": pending_count,
     }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { credentialsApi } from "../lib/api";
+import { credentialsApi, crmSettingsApi } from "../lib/api";
 import { useBank } from "../hooks/useBank";
+import { useSession } from "../hooks/useSession";
 
 const C = {
   bg: "#080818",
@@ -22,6 +23,7 @@ interface BankSummary {
 
 export default function Configuracoes() {
   const { bank } = useBank();
+  const { isAdmin } = useSession();
   const bankLabel = bank === "vctex" ? "VCTex" : "V8";
   const bankIcon = bank === "vctex" ? "🌐" : "🏦";
   const loginLabel = bank === "vctex" ? "Login (CPF / usuário do portal)" : "Login (e-mail V8)";
@@ -33,6 +35,13 @@ export default function Configuracoes() {
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  // CRM password state
+  const [hasCrmPassword, setHasCrmPassword] = useState(false);
+  const [crmPwd, setCrmPwd] = useState("");
+  const [crmPwdConfirm, setCrmPwdConfirm] = useState("");
+  const [crmBusy, setCrmBusy] = useState(false);
+  const [crmMsg, setCrmMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   const load = async () => {
     try {
@@ -50,6 +59,12 @@ export default function Configuracoes() {
       setMsg(null);
     } catch {
       setCurrent(null);
+    }
+    if (isAdmin) {
+      try {
+        const cfg = await crmSettingsApi.get();
+        setHasCrmPassword(cfg.has_crm_password);
+      } catch { /* ignora */ }
     }
   };
 
@@ -180,6 +195,94 @@ export default function Configuracoes() {
           Sem proxy, todas as chamadas saem do IP da VPS — pode aparecer rate-limit. Recomendado configurar 3-5 proxies pra distribuir.
         </div>
       </div>
+
+      {/* Segurança CRM — somente admin */}
+      {isAdmin && (
+        <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, marginBottom: 16, maxWidth: 760 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+            <h2 style={{ fontSize: "1rem", color: "#fff", margin: 0 }}>🔒 Segurança CRM</h2>
+            <span style={{
+              padding: "3px 10px", borderRadius: 12, fontSize: ".7rem", fontWeight: 700, textTransform: "uppercase",
+              background: hasCrmPassword ? "rgba(0,255,136,.12)" : "rgba(255,215,0,.12)",
+              color: hasCrmPassword ? C.green : C.gold,
+              border: `1px solid ${hasCrmPassword ? "rgba(0,255,136,.3)" : "rgba(255,215,0,.3)"}`,
+            }}>
+              {hasCrmPassword ? "Senha ativa" : "Sem senha"}
+            </span>
+          </div>
+
+          <p style={{ fontSize: ".82rem", color: "#94a3b8", marginBottom: 18 }}>
+            Quando ativa, a senha CRM é exigida de qualquer usuário para <b style={{ color: "#cbd5e1" }}>adicionar</b> ou <b style={{ color: "#cbd5e1" }}>apagar</b> propostas.
+            Deixe vazio para remover a proteção.
+          </p>
+
+          <Field label="Nova Senha CRM (mín. 4 caracteres)">
+            <input
+              type="password"
+              value={crmPwd}
+              onChange={e => setCrmPwd(e.target.value)}
+              placeholder={hasCrmPassword ? "(••• ativa — digite pra trocar)" : "Digite uma senha…"}
+              style={inputStyle}
+            />
+          </Field>
+
+          <Field label="Confirmar Senha">
+            <input
+              type="password"
+              value={crmPwdConfirm}
+              onChange={e => setCrmPwdConfirm(e.target.value)}
+              placeholder="Repita a senha…"
+              style={inputStyle}
+            />
+          </Field>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+            <button
+              disabled={crmBusy}
+              onClick={async () => {
+                if (!crmPwd.trim()) { setCrmMsg({ kind: "err", text: "Digite a nova senha" }); return; }
+                if (crmPwd !== crmPwdConfirm) { setCrmMsg({ kind: "err", text: "Senhas não conferem" }); return; }
+                if (crmPwd.length < 4) { setCrmMsg({ kind: "err", text: "Mínimo 4 caracteres" }); return; }
+                setCrmBusy(true); setCrmMsg(null);
+                try {
+                  await crmSettingsApi.setPassword(crmPwd);
+                  setCrmMsg({ kind: "ok", text: "✓ Senha CRM salva com sucesso" });
+                  setCrmPwd(""); setCrmPwdConfirm("");
+                  setHasCrmPassword(true);
+                } catch (e: any) {
+                  setCrmMsg({ kind: "err", text: e?.response?.data?.detail ?? "Erro ao salvar senha" });
+                } finally { setCrmBusy(false); }
+              }}
+              style={{ padding: "9px 20px", background: crmBusy ? "#1a1a2e" : "rgba(0,255,136,.15)", color: crmBusy ? "#444" : C.green, border: `1px solid ${crmBusy ? C.border : "rgba(0,255,136,.4)"}`, borderRadius: 18, cursor: crmBusy ? "not-allowed" : "pointer", fontSize: ".82rem", fontWeight: 700 }}>
+              {crmBusy ? "Salvando…" : "💾 Salvar Senha CRM"}
+            </button>
+
+            {hasCrmPassword && (
+              <button
+                disabled={crmBusy}
+                onClick={async () => {
+                  if (!confirm("Remover a senha CRM? Qualquer um poderá adicionar/apagar propostas.")) return;
+                  setCrmBusy(true); setCrmMsg(null);
+                  try {
+                    await crmSettingsApi.removePassword();
+                    setCrmMsg({ kind: "ok", text: "✓ Senha CRM removida" });
+                    setHasCrmPassword(false);
+                  } catch { setCrmMsg({ kind: "err", text: "Erro ao remover senha" }); }
+                  finally { setCrmBusy(false); }
+                }}
+                style={{ padding: "9px 20px", background: "rgba(255,45,120,.1)", color: C.red, border: `1px solid rgba(255,45,120,.3)`, borderRadius: 18, cursor: crmBusy ? "not-allowed" : "pointer", fontSize: ".82rem", fontWeight: 700 }}>
+                🗑 Remover Proteção
+              </button>
+            )}
+
+            {crmMsg && (
+              <span style={{ fontSize: ".82rem", color: crmMsg.kind === "ok" ? C.green : C.red, alignSelf: "center" }}>
+                {crmMsg.text}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

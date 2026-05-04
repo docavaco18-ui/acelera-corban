@@ -134,6 +134,9 @@ export interface CrmProposta {
   parcela: number;
   codigo_proposta: string;
   status: CrmStatus;
+  approved: boolean;
+  approved_at: string | null;
+  approved_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -145,6 +148,11 @@ export interface CrmStats {
   by_status: Record<string, number>;
   by_banco: Record<string, number>;
   ranking: { nome: string; total: number }[];
+  pending_count: number;
+}
+
+export interface CrmSettings {
+  has_crm_password: boolean;
 }
 
 export type Tier = "gold" | "silver" | "bronze";

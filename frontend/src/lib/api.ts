@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Lead, BotRun, BotStatus, DashboardStats, Batch, CrmProposta, CrmStats } from "./types";
+import type { Lead, BotRun, BotStatus, DashboardStats, Batch, CrmProposta, CrmStats, CrmSettings } from "./types";
 import { supabase } from "./supabase";
 import { getBank, bankPrefix } from "../hooks/useBank";
 
@@ -148,10 +148,10 @@ export const credentialsApi = {
 };
 
 export const crmApi = {
-  listar: (params?: { status?: string; banco?: string; data_inicio?: string; data_fim?: string }) =>
+  listar: (params?: { status?: string; banco?: string; data_inicio?: string; data_fim?: string; pending_only?: boolean }) =>
     api.get<{ data: CrmProposta[] }>("/api/crm/propostas", { params }).then((r) => r.data.data),
 
-  criar: (body: Omit<CrmProposta, "id" | "owner_id" | "created_at" | "updated_at">) =>
+  criar: (body: Omit<CrmProposta, "id" | "owner_id" | "created_at" | "updated_at" | "approved" | "approved_at" | "approved_by"> & { crm_password?: string }) =>
     api.post<CrmProposta>("/api/crm/propostas", body).then((r) => r.data),
 
   atualizar: (id: string, body: Partial<Omit<CrmProposta, "id" | "owner_id" | "created_at" | "updated_at">>) =>
@@ -160,9 +160,20 @@ export const crmApi = {
   moverStatus: (id: string, status: string) =>
     api.patch<CrmProposta>(`/api/crm/propostas/${id}`, { status }).then((r) => r.data),
 
-  deletar: (id: string) => api.delete(`/api/crm/propostas/${id}`),
+  deletar: (id: string, crm_password?: string) =>
+    api.delete(`/api/crm/propostas/${id}`, { data: { crm_password } }),
+
+  aprovar: (id: string) =>
+    api.post<CrmProposta>(`/api/crm/propostas/${id}/approve`).then((r) => r.data),
 
   stats: () => api.get<CrmStats>("/api/crm/propostas/stats").then((r) => r.data),
+};
+
+export const crmSettingsApi = {
+  get: () => api.get<CrmSettings>("/api/crm/settings").then((r) => r.data),
+  setPassword: (password: string) =>
+    api.put("/api/crm/settings/password", { password }).then((r) => r.data),
+  removePassword: () => api.delete("/api/crm/settings/password").then((r) => r.data),
 };
 
 export const batchesApi = {
