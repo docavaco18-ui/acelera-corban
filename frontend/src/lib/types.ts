@@ -156,18 +156,6 @@ export interface CrmSettings {
   has_crm_password: boolean;
 }
 
-export interface ScheduledJob {
-  id: string;
-  action: "start" | "stop";
-  scheduled_at: string;
-  num_workers: number | null;
-  batch_id: string | null;
-  status: "pending" | "executed" | "cancelled" | "failed";
-  executed_at: string | null;
-  error: string | null;
-  created_at: string;
-}
-
 export type Tier = "gold" | "silver" | "bronze";
 
 export interface ScoredRecord extends Lead {

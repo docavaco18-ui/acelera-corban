@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { Lead, BotRun, BotStatus, DashboardStats, Batch, CrmProposta, CrmStats, CrmSettings, ScheduledJob } from "./types";
+import type { Lead, BotRun, BotStatus, DashboardStats, Batch, CrmProposta, CrmStats, CrmSettings } from "./types";
 import { supabase } from "./supabase";
 import { getBank, bankPrefix } from "../hooks/useBank";
 
@@ -174,18 +174,6 @@ export const v8ProposalsApi = {
     api.post<{ status: string; job_id: string }>("/api/v8proposals/sync", null, { params: { months_back: monthsBack } }).then((r) => r.data),
   syncStatus: () =>
     api.get<{ status: string; added?: number; skipped?: number; errors?: number; detail?: string }>("/api/v8proposals/sync/status").then((r) => r.data),
-};
-
-export const scheduleApi = {
-  list: () =>
-    api.get<{ jobs: ScheduledJob[] }>("/api/schedule/jobs").then((r) => r.data.jobs),
-  create: (body: {
-    action: "start" | "stop";
-    scheduled_at: string;
-    num_workers?: number;
-    batch_id?: string;
-  }) => api.post<ScheduledJob>("/api/schedule/jobs", body).then((r) => r.data),
-  cancel: (id: string) => api.delete(`/api/schedule/jobs/${id}`),
 };
 
 export const crmSettingsApi = {

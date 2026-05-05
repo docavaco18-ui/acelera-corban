@@ -4,7 +4,6 @@ TENANT_TABLES: set[str] = {
     "v8_leads", "v8_bot_runs", "v8_batches",
     "vctex_leads", "vctex_bot_runs", "vctex_batches",
     "crm_propostas", "crm_settings",
-    "scheduled_jobs",
 }
 
 
