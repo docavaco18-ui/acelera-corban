@@ -285,9 +285,10 @@ interface CardProps {
   onDelete: (id: string) => void;
   onApprove?: (id: string) => void;
   onDragStart: (e: React.DragEvent, id: string) => void;
+  onDragEnd: () => void;
 }
 
-function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDragStart }: CardProps) {
+function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDragStart, onDragEnd }: CardProps) {
   const cor = COLUNAS.find(c => c.key === p.status)?.cor ?? C.blue;
   const isPending = !p.approved;
 
@@ -295,6 +296,7 @@ function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDra
     <div
       draggable={p.approved}
       onDragStart={e => p.approved && onDragStart(e, p.id)}
+      onDragEnd={onDragEnd}
       style={{
         background: isPending ? "rgba(255,215,0,.04)" : C.bg2,
         border: `1px solid ${isPending ? "rgba(255,215,0,.25)" : C.border}`,
@@ -466,17 +468,21 @@ export default function CRM() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // ID passado via dataTransfer — evita stale closure do React state
   const handleDragStart = (e: React.DragEvent, id: string) => {
-    setDragId(id);
+    e.dataTransfer.setData("text/plain", id);
     e.dataTransfer.effectAllowed = "move";
+    setDragId(id);
   };
+
+  const handleDragEnd = () => setDragId(null);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
 
-  // Vendedores fixos por coluna — arrastar pra cá troca o nome_vendedor
+  // Colunas de vendedor fixo — arrastar pra cá troca o nome_vendedor também
   const VENDOR_NAMES: Partial<Record<CrmProposta["status"], string>> = {
     karol:    "KAROL",
     giovanna: "GIOVANNA",
@@ -485,22 +491,22 @@ export default function CRM() {
 
   const handleDrop = async (e: React.DragEvent, targetStatus: CrmProposta["status"]) => {
     e.preventDefault();
-    const id = dragId;
+    const id = e.dataTransfer.getData("text/plain");
+    setDragId(null);
     if (!id) return;
     const proposta = propostas.find(p => p.id === id);
-    if (!proposta || proposta.status === targetStatus) { setDragId(null); return; }
+    if (!proposta || proposta.status === targetStatus) return;
 
     const updates: Record<string, string> = { status: targetStatus };
     if (VENDOR_NAMES[targetStatus]) updates.nome_vendedor = VENDOR_NAMES[targetStatus]!;
 
     setPropostas(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
-    setDragId(null);
     try {
       await crmApi.atualizar(id, updates);
-      refresh();
     } catch {
-      refresh();
+      // silently refresh on error
     }
+    refresh();
   };
 
   const requestDelete = (id: string) => {
@@ -688,6 +694,7 @@ export default function CRM() {
                         onEdit={handleEdit}
                         onDelete={requestDelete}
                         onDragStart={handleDragStart}
+                        onDragEnd={handleDragEnd}
                       />
                     ))
                   )}
@@ -711,6 +718,7 @@ export default function CRM() {
                       onDelete={requestDelete}
                       onApprove={handleApprove}
                       onDragStart={() => {}}
+                      onDragEnd={() => {}}
                     />
                   ))}
                 </div>
