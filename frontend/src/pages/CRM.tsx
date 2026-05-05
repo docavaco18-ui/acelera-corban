@@ -471,17 +471,32 @@ export default function CRM() {
     e.dataTransfer.effectAllowed = "move";
   };
 
-  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  // Vendedores fixos por coluna — arrastar pra cá troca o nome_vendedor
+  const VENDOR_NAMES: Partial<Record<CrmProposta["status"], string>> = {
+    karol:    "KAROL",
+    giovanna: "GIOVANNA",
+    gabriel:  "GABRIEL/I.A",
+  };
 
   const handleDrop = async (e: React.DragEvent, targetStatus: CrmProposta["status"]) => {
     e.preventDefault();
-    if (!dragId) return;
-    const proposta = propostas.find(p => p.id === dragId);
+    const id = dragId;
+    if (!id) return;
+    const proposta = propostas.find(p => p.id === id);
     if (!proposta || proposta.status === targetStatus) { setDragId(null); return; }
-    setPropostas(prev => prev.map(p => p.id === dragId ? { ...p, status: targetStatus } : p));
+
+    const updates: Record<string, string> = { status: targetStatus };
+    if (VENDOR_NAMES[targetStatus]) updates.nome_vendedor = VENDOR_NAMES[targetStatus]!;
+
+    setPropostas(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     setDragId(null);
     try {
-      await crmApi.moverStatus(dragId, targetStatus);
+      await crmApi.atualizar(id, updates);
       refresh();
     } catch {
       refresh();
@@ -649,9 +664,10 @@ export default function CRM() {
               {COLUNAS.map(col => (
                 <div
                   key={col.key}
+                  onDragEnter={handleDragOver}
                   onDragOver={handleDragOver}
                   onDrop={e => handleDrop(e, col.key)}
-                  style={{ minWidth: 220, flex: 1, background: "rgba(255,255,255,.02)", border: `1px solid ${C.border}`, borderRadius: 12, padding: 12 }}
+                  style={{ minWidth: 220, flex: 1, background: dragId ? "rgba(255,255,255,.04)" : "rgba(255,255,255,.02)", border: `1px solid ${dragId ? col.cor + "55" : C.border}`, borderRadius: 12, padding: 12, transition: "border .15s, background .15s" }}
                 >
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 10, borderBottom: `1px solid ${C.border}` }}>
                     <span style={{ fontSize: ".78rem", fontWeight: 800, color: col.cor }}>{col.label}</span>
