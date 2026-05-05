@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
@@ -5,13 +6,23 @@ from .logging_config import setup_logging
 from .routers import leads, bot, stats, webhook, ws, admin, batches, crm
 from .routers import vctex as vctex_router
 from .routers import v8_proposals
+from .routers import schedule as schedule_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
+from .services import scheduler_service
 
 setup_logging(json_logs=True)
 
-app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler_service.start(app)
+    yield
+    scheduler_service.stop()
+
+
+app = FastAPI(title="V8 CLT Higienização", version="1.0.0", lifespan=lifespan)
 app.state.v8_pool = V8BotPool()
 app.state.vctex_pool = VCTexBotPool()
 
@@ -34,6 +45,7 @@ app.include_router(batches.router)
 app.include_router(vctex_router.router)
 app.include_router(crm.router)
 app.include_router(v8_proposals.router)
+app.include_router(schedule_router.router)
 
 @app.get("/health")
 @app.get("/api/health")

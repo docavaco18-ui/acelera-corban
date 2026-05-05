@@ -3,8 +3,8 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
-import { botApi, leadsApi, statsApi } from "../lib/api";
-import type { BotRun, BotStatus, DashboardStats, Lead } from "../lib/types";
+import { botApi, leadsApi, statsApi, scheduleApi } from "../lib/api";
+import type { BotRun, BotStatus, DashboardStats, Lead, ScheduledJob } from "../lib/types";
 import { useBotWebSocket } from "../hooks/useBotWebSocket";
 import { useBank } from "../hooks/useBank";
 import { useBotNotification } from "../hooks/useBotNotification";
@@ -28,7 +28,7 @@ const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 100) : 0);
 
 const MILESTONES = [10000, 25000, 50000, 100000, 200000, 500000, 1000000, 1500000, 2000000, 3000000, 4000000, 5000000];
 
-type Tab = "historico" | "geral" | "ranking" | "graficos" | "tabela" | "workers" | "cerebro" | "runs";
+type Tab = "historico" | "geral" | "ranking" | "graficos" | "tabela" | "workers" | "cerebro" | "runs" | "agendado";
 const TABS: { id: Tab; label: string }[] = [
   { id: "historico", label: "📦 Histórico" },
   { id: "geral",    label: "📊 Geral" },
@@ -38,6 +38,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "workers",  label: "⚡ Workers ao Vivo" },
   { id: "cerebro",  label: "🧠 Cérebro" },
   { id: "runs",     label: "📜 Histórico de Runs" },
+  { id: "agendado", label: "⏰ Agendado" },
 ];
 
 const card = (extra?: React.CSSProperties): React.CSSProperties => ({
@@ -109,6 +110,7 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const handleTabChange = (t: Tab) => {
     setTab(t);
     if (t === "runs") botApi.runs().then(setRuns).catch(() => {});
+    if (t === "agendado") loadSchedJobs();
   };
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -120,6 +122,37 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [runs, setRuns] = useState<BotRun[]>([]);
+
+  const [schedJobs, setSchedJobs] = useState<ScheduledJob[]>([]);
+  const [schedAction, setSchedAction] = useState<"start" | "stop">("start");
+  const [schedDate, setSchedDate] = useState("");
+  const [schedTime, setSchedTime] = useState("");
+  const [schedWorkers, setSchedWorkers] = useState(6);
+  const [schedMsg, setSchedMsg] = useState<string | null>(null);
+
+  const loadSchedJobs = () => scheduleApi.list().then(setSchedJobs).catch(() => {});
+
+  const handleSchedule = async () => {
+    if (!schedDate || !schedTime) { setSchedMsg("Informe data e horário"); return; }
+    const scheduled_at = new Date(`${schedDate}T${schedTime}:00`).toISOString();
+    try {
+      await scheduleApi.create({
+        action: schedAction,
+        scheduled_at,
+        num_workers: schedAction === "start" ? schedWorkers : undefined,
+      });
+      setSchedMsg("Agendado com sucesso!");
+      loadSchedJobs();
+    } catch (e: any) {
+      setSchedMsg(e?.response?.data?.detail || "Erro ao agendar");
+    }
+    setTimeout(() => setSchedMsg(null), 4000);
+  };
+
+  const handleCancelJob = async (id: string) => {
+    await scheduleApi.cancel(id).catch(() => {});
+    loadSchedJobs();
+  };
 
   const [gamePhase, setGamePhase] = useState<UploadPhase | null>(null);
   const [gameInserted, setGameInserted] = useState(0);
@@ -732,6 +765,90 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
               })}
             </div>
           )}
+        </div>
+      )}
+
+      {tab === "agendado" && (
+        <div>
+          <div style={card()}>
+            <div style={{ fontSize: ".7rem", color: "#555", textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 16 }}>⏰ Programar Disparo</div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: ".75rem", color: "#888" }}>
+                Ação
+                <select value={schedAction} onChange={e => setSchedAction(e.target.value as "start" | "stop")}
+                  style={{ padding: "7px 10px", background: "#0d0d1f", border: `1px solid ${C.border}`, color: "#fff", borderRadius: 8, fontSize: ".78rem" }}>
+                  <option value="start">▶ Iniciar Bot</option>
+                  <option value="stop">■ Parar Bot</option>
+                </select>
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: ".75rem", color: "#888" }}>
+                Data
+                <input type="date" value={schedDate} onChange={e => setSchedDate(e.target.value)}
+                  style={{ padding: "7px 10px", background: "#0d0d1f", border: `1px solid ${C.border}`, color: "#fff", borderRadius: 8, fontSize: ".78rem" }} />
+              </label>
+              <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: ".75rem", color: "#888" }}>
+                Horário
+                <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)}
+                  style={{ padding: "7px 10px", background: "#0d0d1f", border: `1px solid ${C.border}`, color: "#fff", borderRadius: 8, fontSize: ".78rem" }} />
+              </label>
+              {schedAction === "start" && (
+                <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: ".75rem", color: "#888" }}>
+                  Workers
+                  <input type="number" min={1} max={20} value={schedWorkers} onChange={e => setSchedWorkers(Number(e.target.value))}
+                    style={{ width: 60, padding: "7px 10px", background: "#0d0d1f", border: `1px solid ${C.border}`, color: "#fff", borderRadius: 8, fontSize: ".78rem" }} />
+                </label>
+              )}
+              <button onClick={handleSchedule}
+                style={{ padding: "8px 20px", background: "rgba(0,191,255,.15)", color: C.blue, border: "1px solid rgba(0,191,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700, alignSelf: "flex-end" }}>
+                + Agendar
+              </button>
+              {schedMsg && (
+                <span style={{ fontSize: ".75rem", color: schedMsg.includes("sucesso") ? C.green : C.red, alignSelf: "flex-end" }}>
+                  {schedMsg}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <div style={card()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+              <div style={{ fontSize: ".7rem", color: "#555", textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700 }}>Agendamentos</div>
+              <button onClick={loadSchedJobs}
+                style={{ padding: "5px 14px", background: "rgba(180,74,255,.12)", border: "1px solid rgba(180,74,255,.3)", color: C.purple, borderRadius: 14, fontSize: ".72rem", cursor: "pointer", fontWeight: 700 }}>
+                ↻ Atualizar
+              </button>
+            </div>
+            {schedJobs.length === 0 ? (
+              <div style={{ color: "#444", fontSize: ".85rem", padding: "20px 0", textAlign: "center" }}>Nenhum agendamento.</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {schedJobs.map(j => {
+                  const isPending = j.status === "pending";
+                  const statusColor = j.status === "executed" ? C.green : j.status === "failed" ? C.red : j.status === "cancelled" ? "#555" : C.blue;
+                  const statusLabel = { pending: "⏳ Pendente", executed: "✓ Executado", cancelled: "✗ Cancelado", failed: "✗ Falhou" }[j.status];
+                  return (
+                    <div key={j.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", background: "rgba(255,255,255,.02)", border: `1px solid ${isPending ? "rgba(0,191,255,.2)" : C.border}`, borderRadius: 10, fontSize: ".78rem" }}>
+                      <div style={{ minWidth: 90, fontWeight: 700, color: j.action === "start" ? C.green : C.red }}>
+                        {j.action === "start" ? "▶ Iniciar" : "■ Parar"}
+                        {j.action === "start" && j.num_workers && <span style={{ color: "#555", fontWeight: 400, marginLeft: 4 }}>({j.num_workers}w)</span>}
+                      </div>
+                      <div style={{ flex: 1, color: "#ccc" }}>
+                        {new Date(j.scheduled_at).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </div>
+                      <div style={{ color: statusColor, fontWeight: 700, fontSize: ".72rem" }}>{statusLabel}</div>
+                      {j.error && <div style={{ color: C.red, fontSize: ".65rem", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={j.error}>{j.error}</div>}
+                      {isPending && (
+                        <button onClick={() => handleCancelJob(j.id)}
+                          style={{ padding: "4px 12px", background: "rgba(255,45,120,.12)", color: C.red, border: "1px solid rgba(255,45,120,.3)", borderRadius: 12, cursor: "pointer", fontSize: ".68rem", fontWeight: 700 }}>
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
