@@ -500,13 +500,16 @@ export default function CRM() {
     const updates: Record<string, string> = { status: targetStatus };
     if (VENDOR_NAMES[targetStatus]) updates.nome_vendedor = VENDOR_NAMES[targetStatus]!;
 
+    // Optimistic update
     setPropostas(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
     try {
       await crmApi.atualizar(id, updates);
-    } catch {
-      // silently refresh on error
+      refresh();
+    } catch (ex: any) {
+      // Reverter optimistic update e exibir erro
+      setErr(ex?.response?.data?.detail ?? "Erro ao mover proposta");
+      refresh();
     }
-    refresh();
   };
 
   const requestDelete = (id: string) => {

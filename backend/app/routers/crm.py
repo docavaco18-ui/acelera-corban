@@ -13,7 +13,7 @@ from ..db_scoped import scoped
 
 router = APIRouter(prefix="/api/crm", tags=["crm"])
 
-VALID_STATUS = {"propostas", "importante", "pendentes", "leilao", "fgts"}
+VALID_STATUS = {"propostas", "importante", "pendentes", "leilao", "fgts", "karol", "giovanna", "gabriel"}
 
 
 # ─── Password helpers ──────────────────────────────────────────────────────────
