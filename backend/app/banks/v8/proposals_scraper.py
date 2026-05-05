@@ -104,29 +104,24 @@ class V8ProposalsScraper:
 
     # ─── Navegação e filtro por mês ───────────────────────────────────────────
 
+    DIALOG = "section[role='dialog']"
+
     async def _navigate_and_filter_month(self, page, year: int, month: int):
         """Vai para a página de propostas, aplica filtro Pago e define o intervalo do mês."""
         await page.goto(PROPOSALS_URL, wait_until="domcontentloaded", timeout=20_000)
-        await page.wait_for_selector(
-            "button:has-text('Todos os status'), button:has-text('Pago')",
-            timeout=15_000,
-        )
+        await page.wait_for_selector("button.chakra-menu__menu-button[aria-haspopup='menu']", timeout=15_000)
 
-        # ── Filtro de status "Pago" ──
-        status_btn = page.locator("button:has-text('Todos os status')").first
-        if await status_btn.count() > 0:
-            await status_btn.click()
-            await page.wait_for_timeout(500)
-            await page.locator(
-                "[role='menuitem']:has-text('Pago'), [role='option']:has-text('Pago'), "
-                ".chakra-menu__menuitem:has-text('Pago')"
-            ).first.click()
-            await page.wait_for_timeout(500)
+        # ── Filtro de status "Pago" (data-index="6") ──
+        await page.locator("button.chakra-menu__menu-button[aria-haspopup='menu']").first.click()
+        await page.wait_for_selector("[role='menu']", timeout=5_000)
+        await page.locator("[role='menu'] [role='menuitem'][data-index='6']").click()
+        await page.wait_for_load_state("networkidle", timeout=10_000)
+        await page.wait_for_timeout(400)
 
         # ── Abre o date picker ──
         await page.locator("button[aria-haspopup='dialog']").first.click()
-        await page.wait_for_selector("[role='dialog']", timeout=8_000)
-        await page.wait_for_timeout(400)
+        await page.wait_for_selector(self.DIALOG, timeout=8_000)
+        await page.wait_for_timeout(500)
 
         # ── Navega o calendário até o mês alvo ──
         await self._navigate_calendar_to(page, year, month)
@@ -138,14 +133,15 @@ class V8ProposalsScraper:
         await self._click_calendar_day(page, last_day)
         await page.wait_for_timeout(300)
 
-        # ── Aplica ──
-        await page.locator("button:has-text('Aplicar Filtro')").click()
+        # ── Aplica filtro ──
+        dialog = page.locator(self.DIALOG)
+        await dialog.locator("button", has_text="Aplicar Filtro").click()
         await page.wait_for_load_state("networkidle", timeout=12_000)
         await page.wait_for_timeout(600)
         logger.info(f"Filtro aplicado: {year}/{month:02d} (1 → {last_day})")
 
     async def _navigate_calendar_to(self, page, target_year: int, target_month: int):
-        """Navega o calendário (setas prev/next) até o calendário esquerdo mostrar o mês alvo."""
+        """Navega o calendário via botões react-day-picker até o mês alvo aparecer à esquerda."""
         for _ in range(36):
             curr_year, curr_month = await self._read_calendar_left_month(page)
             if curr_year == target_year and curr_month == target_month:
@@ -154,36 +150,41 @@ class V8ProposalsScraper:
             curr_total = curr_year * 12 + curr_month
             target_total = target_year * 12 + target_month
 
-            # Os dois primeiros botões no dialog são as setas de navegação
-            # Botão 0 = mês anterior (<), Botão 1 = próximo mês (>)
-            nav_btns = page.locator("[role='dialog'] button")
             if curr_total > target_total:
-                await nav_btns.first.click()   # ← voltar
+                await page.locator("button[name='previous-month']").first.click()
             else:
-                await nav_btns.nth(1).click()  # → avançar
+                await page.locator("button[name='next-month']").first.click()
             await page.wait_for_timeout(350)
 
     async def _read_calendar_left_month(self, page) -> tuple[int, int]:
-        """Lê o mês/ano exibido no calendário esquerdo do popover."""
+        """Lê o mês/ano do caption esquerdo do react-day-picker."""
         try:
-            text = await page.locator("[role='dialog']").first.inner_text()
+            # react-day-picker usa .rdp-caption_label para o título do mês
+            labels = await page.locator(f"{self.DIALOG} .rdp-caption_label").all_text_contents()
+            if labels:
+                text = labels[0].lower()  # pega o calendário da esquerda
+                for i, name in enumerate(PT_MONTHS):
+                    if name in text:
+                        year_match = re.search(r"(20\d\d)", text)
+                        if year_match:
+                            return int(year_match.group(1)), i + 1
         except Exception:
-            return 0, 0
-
-        text_lower = text.lower()
-        for i, name in enumerate(PT_MONTHS):
-            if name in text_lower:
-                year_match = re.search(r"(20\d\d)", text)
-                if year_match:
-                    return int(year_match.group(1)), i + 1
+            pass
         return 0, 0
 
     async def _click_calendar_day(self, page, day: int):
-        """Clica em um dia específico dentro do calendário (texto exato)."""
-        day_str = str(day)
-        # :text-is() faz match exato do texto visível (sem filhos), evita clicar "10" querendo "1"
-        selector = f"[role='dialog'] button:text-is('{day_str}')"
-        await page.locator(selector).first.click()
+        """Clica em um dia específico do react-day-picker, ignorando dias de meses adjacentes."""
+        dialog = page.locator(self.DIALOG)
+        # button[name="day"] com texto exato e sem classe rdp-day_outside
+        day_btns = dialog.locator("button[name='day']:not(.rdp-day_outside):not(.rdp-day_disabled)")
+        count = await day_btns.count()
+        for i in range(count):
+            btn = day_btns.nth(i)
+            text = (await btn.text_content() or "").strip()
+            if text == str(day):
+                await btn.click()
+                return
+        logger.warning(f"Dia {day} não encontrado no calendário")
 
     # ─── Paginação ────────────────────────────────────────────────────────────
 
@@ -322,26 +323,33 @@ class V8ProposalsScraper:
 
     def _save_to_crm(self, data: dict) -> bool:
         proposta_id = data.get("codigo_proposta", "")
-        if proposta_id:
-            existing = (
-                scoped(self.db, "crm_propostas", self.user_id)
-                .select("id")
-                .eq("codigo_proposta", proposta_id)
-                .execute().data or []
-            )
-            if existing:
-                return False  # duplicata
+        for attempt in range(3):
+            try:
+                if proposta_id:
+                    existing = (
+                        scoped(self.db, "crm_propostas", self.user_id)
+                        .select("id")
+                        .eq("codigo_proposta", proposta_id)
+                        .execute().data or []
+                    )
+                    if existing:
+                        return False  # duplicata
 
-        now_iso = datetime.now(timezone.utc).isoformat()
-        payload = {
-            **data,
-            "approved": True,
-            "approved_at": now_iso,
-            "approved_by": self.user_id,
-        }
-        rows = (
-            scoped(self.db, "crm_propostas", self.user_id)
-            .insert(payload)
-            .execute().data or []
-        )
-        return bool(rows)
+                now_iso = datetime.now(timezone.utc).isoformat()
+                payload = {
+                    **data,
+                    "approved": True,
+                    "approved_at": now_iso,
+                    "approved_by": self.user_id,
+                }
+                rows = (
+                    scoped(self.db, "crm_propostas", self.user_id)
+                    .insert(payload)
+                    .execute().data or []
+                )
+                return bool(rows)
+            except Exception as e:
+                logger.warning(f"_save_to_crm tentativa {attempt + 1} falhou: {e}")
+                if attempt == 2:
+                    raise
+        return False
