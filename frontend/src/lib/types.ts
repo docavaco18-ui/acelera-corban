@@ -120,7 +120,7 @@ export interface Batch {
   updated_at: string;
 }
 
-export type CrmStatus = "propostas" | "importante" | "pendentes" | "leilao" | "fgts";
+export type CrmStatus = "propostas" | "karol" | "giovanna" | "gabriel" | "importante" | "pendentes" | "leilao" | "fgts";
 
 export interface CrmProposta {
   id: string;

@@ -19,11 +19,14 @@ const C = {
 };
 
 const COLUNAS: { key: CrmProposta["status"]; label: string; cor: string }[] = [
-  { key: "propostas",  label: "💰 PAGOS",       cor: C.blue   },
-  { key: "importante", label: "⭐ IMPORTANTE",  cor: C.gold   },
-  { key: "pendentes",  label: "⏳ PENDENTES",   cor: C.orange },
-  { key: "leilao",     label: "🔨 LEILÃO",      cor: C.purple },
-  { key: "fgts",       label: "💚 FGTS",        cor: C.green  },
+  { key: "propostas",  label: "💰 PAGOS",        cor: C.blue   },
+  { key: "karol",      label: "👤 KAROL",        cor: "#ff69b4" },
+  { key: "giovanna",   label: "👤 GIOVANNA",     cor: "#da70d6" },
+  { key: "gabriel",    label: "🤖 GABRIEL/I.A",  cor: C.green  },
+  { key: "importante", label: "⭐ IMPORTANTE",   cor: C.gold   },
+  { key: "pendentes",  label: "⏳ PENDENTES",    cor: C.orange },
+  { key: "leilao",     label: "🔨 LEILÃO",       cor: C.purple },
+  { key: "fgts",       label: "💚 FGTS",         cor: "#00c896" },
 ];
 
 const BANCOS = ["V8", "Zilli", "Novo Saque", "VCTex", "Pan", "Facta", "C6", "Mercantil", "2S", "Soma"];
