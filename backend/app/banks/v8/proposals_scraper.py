@@ -88,7 +88,15 @@ class V8ProposalsScraper:
     # ─── Login ────────────────────────────────────────────────────────────────
 
     async def _login(self, page):
-        await page.goto(PORTAL_URL, wait_until="domcontentloaded", timeout=30_000)
+        await page.goto(f"{PORTAL_URL}/signin", wait_until="domcontentloaded", timeout=30_000)
+
+        # Passo 1: clicar em "Entrar na minha conta" para abrir o formulário
+        entrar_btn = page.locator("button:has-text('Entrar na minha conta')")
+        if await entrar_btn.count() > 0:
+            await entrar_btn.first.click()
+            await page.wait_for_timeout(600)
+
+        # Passo 2: preencher email e senha
         await page.wait_for_selector(
             "input[type='email'], input[name='email'], input[placeholder*='mail' i]",
             timeout=15_000,
@@ -98,7 +106,10 @@ class V8ProposalsScraper:
             self.login,
         )
         await page.fill("input[type='password']", self.password)
-        await page.click("button[type='submit']")
+
+        # Passo 3: submeter (botão "Log in" ou type=submit)
+        submit = page.locator("button:has-text('Log in'), button[type='submit']")
+        await submit.first.click()
         await page.wait_for_url(f"{PORTAL_URL}/**", timeout=20_000)
         logger.info("V8 login OK")
 
