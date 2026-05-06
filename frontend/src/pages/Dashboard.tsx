@@ -75,10 +75,6 @@ function deriveDash(leads: Lead[], stats: DashboardStats): DashData {
   const concluidos = leads.filter(l => l.status === "elegivel" || l.status === "inelegivel").length;
   const elegivel = leads.filter(l => l.status === "elegivel").length;
   const nao_elegivel = leads.filter(l => l.status === "inelegivel").length;
-  const total_liberado = leads
-    .filter(l => l.status === "elegivel")
-    .reduce((sum, l) => sum + (l.valor_liberado ?? 0), 0);
-
   return {
     total: stats.total || leads.length,
     fase0,
@@ -88,7 +84,9 @@ function deriveDash(leads: Lead[], stats: DashboardStats): DashData {
     nao_elegivel: stats.inelegiveis || nao_elegivel,
     erros: stats.erros,
     pendentes: stats.pendentes,
-    total_liberado,
+    total_liberado: stats.total_liberado ?? leads
+      .filter(l => l.status === "elegivel")
+      .reduce((sum, l) => sum + (l.valor_liberado ?? 0), 0),
   };
 }
 
