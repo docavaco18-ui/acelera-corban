@@ -9,17 +9,34 @@ import asyncio
 import csv
 import io
 import json
+import logging
 import re
 import unicodedata
 import uuid
+
+import httpx
 
 from ..database import db
 from ..db_scoped import scoped
 from ..redis_client import get_redis
 
+logger = logging.getLogger(__name__)
+
 BATCH_SIZE = 500
 JOB_TTL_SECONDS = 3600
 JOB_KEY_PREFIX = "upload:"
+UPSERT_MAX_ATTEMPTS = 4
+UPSERT_BACKOFF_BASE = 0.5  # 0.5, 1, 2, 4 segundos
+
+TRANSIENT_HTTPX_ERRORS = (
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteError,
+    httpx.PoolTimeout,
+    httpx.ConnectTimeout,
+)
 
 
 def _job_key(job_id: str) -> str:
@@ -137,35 +154,36 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None 
         return
 
     await _set_state(job_id, {
-        "status": "running", "total": total, "processed": 0, "inserted": 0,
+        "status": "running", "total": total, "processed": 0, "inserted": 0, "duplicates": 0,
     })
 
     inserted = 0
+    duplicates = 0
     processed = 0
     loop = asyncio.get_running_loop()
 
     for i in range(0, total, BATCH_SIZE):
         batch = leads[i:i + BATCH_SIZE]
         try:
-            def _upsert(b=batch):
-                return (
-                    scoped(db(), "v8_leads", owner_id)
-                    .upsert(b, on_conflict="owner_id,cpf", ignore_duplicates=True)
-                    .execute()
-                )
-            res = await loop.run_in_executor(None, _upsert)
-            inserted += len(res.data or [])
+            res = await _upsert_with_retry(batch, owner_id, loop)
+            new_rows = len(res.data or [])
+            inserted += new_rows
+            duplicates += len(batch) - new_rows
         except Exception as e:
+            logger.exception("Upload %s falhou no batch i=%d (processado=%d, inserido=%d)",
+                             job_id, i, processed, inserted)
             await _set_state(job_id, {
-                "status": "error", "error": str(e),
-                "total": total, "processed": processed, "inserted": inserted,
+                "status": "error",
+                "error": f"{type(e).__name__}: {e}",
+                "total": total, "processed": processed,
+                "inserted": inserted, "duplicates": duplicates,
             })
             return
 
         processed += len(batch)
         await _set_state(job_id, {
             "status": "running", "total": total,
-            "processed": processed, "inserted": inserted,
+            "processed": processed, "inserted": inserted, "duplicates": duplicates,
         })
 
     # Atualiza total_leads na batch (se houver)
@@ -182,8 +200,49 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None 
     await _set_state(job_id, {
         "status": "done", "total": total,
         "processed": processed, "inserted": inserted,
+        "duplicates": duplicates,
         "batch_id": batch_id,
     })
+
+
+async def _upsert_with_retry(batch: list[dict], owner_id: str, loop) -> object:
+    """Upsert com retry em erros httpx transientes (Server disconnected, ReadError, etc.).
+
+    PostgREST + ignore_duplicates é idempotente, então retry é seguro.
+    Se o batch foi parcialmente commitado antes da queda, na retry os já-inseridos
+    viram duplicatas (não são reinseridos), o que pode subestimar o counter — mas
+    a integridade dos dados é mantida.
+    """
+    def _upsert(b=batch):
+        return (
+            scoped(db(), "v8_leads", owner_id)
+            .upsert(b, on_conflict="owner_id,cpf", ignore_duplicates=True)
+            .execute()
+        )
+
+    last_err: Exception | None = None
+    for attempt in range(UPSERT_MAX_ATTEMPTS):
+        try:
+            return await loop.run_in_executor(None, _upsert)
+        except TRANSIENT_HTTPX_ERRORS as e:
+            last_err = e
+            wait = UPSERT_BACKOFF_BASE * (2 ** attempt)
+            logger.warning("upsert tentativa %d/%d falhou (%s); retry em %.1fs",
+                           attempt + 1, UPSERT_MAX_ATTEMPTS, type(e).__name__, wait)
+            await asyncio.sleep(wait)
+        except Exception as e:
+            # Heurística: erros que mencionam "disconnect" / "connection" também são transientes
+            msg = str(e).lower()
+            if any(k in msg for k in ("disconnect", "connection reset", "broken pipe", "connection aborted")):
+                last_err = e
+                wait = UPSERT_BACKOFF_BASE * (2 ** attempt)
+                logger.warning("upsert tentativa %d/%d falhou (%s: %s); retry em %.1fs",
+                               attempt + 1, UPSERT_MAX_ATTEMPTS, type(e).__name__, e, wait)
+                await asyncio.sleep(wait)
+            else:
+                raise
+    assert last_err is not None
+    raise last_err
 
 
 async def _create_batch(owner_id: str, file_name: str | None) -> str:

@@ -1,6 +1,10 @@
 #!/bin/bash
-# Dispara o bot V8 com 20 workers
+# Dispara o bot V8 com 10 workers (cap atual do servidor)
 # Login automatico via Supabase, sem dependencia de token JWT manual
+# Endpoint via dominio publico — Caddy so atende aceleracorban.com.br
+
+API_URL="${API_URL:-https://aceleracorban.com.br}"
+WORKERS="${WORKERS:-10}"
 
 SUPABASE_URL=$(grep VITE_SUPABASE_URL /root/acelera-corban/frontend/.env | cut -d= -f2)
 SUPABASE_ANON=$(grep VITE_SUPABASE_ANON_KEY /root/acelera-corban/frontend/.env | cut -d= -f2-)
@@ -17,6 +21,6 @@ if [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-RESP=$(curl -s -X POST "http://localhost:3002/api/bot/start?num_workers=20" \
+RESP=$(curl -s -X POST "$API_URL/api/bot/start?num_workers=$WORKERS" \
   -H "Authorization: Bearer $TOKEN")
 echo "[$(date)] $RESP"
