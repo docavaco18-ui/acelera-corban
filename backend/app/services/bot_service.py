@@ -115,7 +115,7 @@ async def start_bot(
         except Exception as e:
             logger.warning(f"mark batch processando[{batch_id}] failed: {e}")
 
-    processed = {"count": 0, "eleg": 0, "ineleg": 0}
+    processed = {"count": 0, "eleg": 0, "ineleg": 0, "last_persisted": -1}
 
     async def on_event_async(event):
         if event.get("type") == "lead_result":
@@ -128,6 +128,35 @@ async def start_bot(
         await _broadcast(redis, event)
         on_event(event)
         pool.emit(user_id, event)
+
+    async def _persist_live_counts():
+        """Atualiza v8_bot_runs (e v8_batches se houver) com contadores em tempo real.
+
+        Roda dentro do cerebro_loop, que tickeia 3-5s. Faz no-op se nada mudou.
+        Best-effort: warning em falha, não interrompe a run.
+        """
+        if processed["count"] == processed["last_persisted"]:
+            return
+        snapshot = dict(processed)
+
+        def _flush():
+            scoped(db, "v8_bot_runs", user_id).update({
+                "total_processed": snapshot["count"],
+                "total_elegiveis": snapshot["eleg"],
+                "total_inelegiveis": snapshot["ineleg"],
+            }).eq("id", handle.run_id).execute()
+            if batch_id is not None:
+                scoped(db, "v8_batches", user_id).update({
+                    "total_processed": snapshot["count"],
+                    "total_elegiveis": snapshot["eleg"],
+                    "total_inelegiveis": snapshot["ineleg"],
+                }).eq("id", batch_id).execute()
+
+        try:
+            await asyncio.to_thread(_flush)
+            processed["last_persisted"] = snapshot["count"]
+        except Exception as e:
+            logger.warning(f"persist live counts[{user_id}] falhou: {e}")
 
     def on_event_wrapper(event):
         asyncio.create_task(on_event_async(event))
@@ -177,6 +206,9 @@ async def start_bot(
                     rt.inflight.add(cpf)
                     await rt.pending_queue.put(lead)
                     added_pending += 1
+
+                # Persiste contadores ao vivo na run + batch (best-effort)
+                await _persist_live_counts()
 
                 scheduled = await _count_scheduled(db, user_id, batch_id=batch_id)
                 await _broadcast(redis, {

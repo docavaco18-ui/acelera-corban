@@ -96,15 +96,17 @@ export const leadsApi = {
       params: batchId ? { batch_id: batchId } : {},
     }).then((r) => r.data),
 
-  exportCsv: async (status: string = "elegivel") => {
+  exportCsv: async (status: string = "elegivel", batchId?: string, filename?: string) => {
+    const params: Record<string, string> = { status };
+    if (batchId) params.batch_id = batchId;
     const blob = await api
-      .get("/api/leads/export", { params: { status }, responseType: "blob" })
+      .get("/api/leads/export", { params, responseType: "blob" })
       .then((r) => r.data as Blob);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     const date = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = `v8-${status}-${date}.csv`;
+    a.download = filename ?? `v8-${status}-${date}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();

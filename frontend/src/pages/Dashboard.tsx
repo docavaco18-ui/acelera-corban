@@ -3,8 +3,8 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend,
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
-import { botApi, leadsApi, statsApi } from "../lib/api";
-import type { BotRun, BotStatus, DashboardStats, Lead } from "../lib/types";
+import { batchesApi, botApi, leadsApi, statsApi } from "../lib/api";
+import type { Batch, BotRun, BotStatus, DashboardStats, Lead } from "../lib/types";
 import { useBotWebSocket } from "../hooks/useBotWebSocket";
 import { useBank } from "../hooks/useBank";
 import { useBotNotification } from "../hooks/useBotNotification";
@@ -14,6 +14,7 @@ import ResultsTable from "../components/ResultsTable";
 import MetricsDashboard from "../components/MetricsDashboard";
 import CerebroIA from "../components/CerebroIA";
 import UploadGameProgress, { type UploadPhase } from "../components/UploadGameProgress";
+import BatchHistoryList from "../components/BatchHistoryList";
 
 const C = {
   bg: "#080818", bg2: "rgba(255,255,255,.04)", border: "rgba(255,255,255,.07)",
@@ -106,9 +107,13 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const { bank } = useBank();
   const bankLabel = bank === "vctex" ? "VCTex Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
+  const [batchesList, setBatchesList] = useState<Batch[]>([]);
+  const [batchDownloading, setBatchDownloading] = useState<string | null>(null);
+  const refreshBatchesList = () => batchesApi.list().then(setBatchesList).catch(() => {});
   const handleTabChange = (t: Tab) => {
     setTab(t);
     if (t === "runs") botApi.runs().then(setRuns).catch(() => {});
+    if (t === "historico") refreshBatchesList();
   };
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -145,6 +150,14 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
     return () => clearInterval(t);
   }, [batchId]);
 
+  // Auto-refresh da lista de batches enquanto a aba Histórico está aberta
+  useEffect(() => {
+    if (tab !== "historico") return;
+    refreshBatchesList();
+    const t = setInterval(refreshBatchesList, 15000);
+    return () => clearInterval(t);
+  }, [tab]);
+
   const cutoff = stats.batch_cutoff ?? "";
   const currentLeads = useMemo(
     () => (cutoff ? leads.filter(l => (l.created_at ?? "") >= cutoff) : leads),
@@ -169,12 +182,6 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
     };
   }, [stats]);
   const data = useMemo(() => deriveDash(currentLeads, currentStats), [currentLeads, currentStats]);
-  const historicoData = useMemo(() => {
-    const h = stats.batches?.anterior;
-    if (!h) return null;
-    const processados = h.elegiveis + h.inelegiveis + h.erros;
-    return { ...h, processados };
-  }, [stats]);
 
   const exec = async (fn: () => Promise<BotStatus>) => {
     setLoading(true);
@@ -342,61 +349,29 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
       </div>
 
       {tab === "historico" && (
-        <>
-          {!historicoData && (
-            <div style={card()}>
-              <div style={{ color: "#666", fontSize: ".9rem" }}>Nenhum batch histórico disponível.</div>
-            </div>
-          )}
-          {historicoData && (
-            <>
-              <div style={{ background: "rgba(100,116,139,.06)", border: "1px solid rgba(148,163,184,.18)", borderRadius: 18, padding: "28px 32px", marginBottom: 14, textAlign: "center" }}>
-                <div style={{ fontSize: ".72rem", color: "#64748b", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>📦 {historicoData.label}</div>
-                <div style={{ fontSize: "3rem", fontWeight: 900, color: "#94a3b8", lineHeight: 1, letterSpacing: -2 }}>{fmtBRL(historicoData.total_liberado)}</div>
-                <div style={{ fontSize: ".82rem", color: "#475569", marginTop: 10 }}>
-                  <b style={{ color: "#cbd5e1" }}>{historicoData.elegiveis}</b> elegíveis ·
-                  <b style={{ color: "#cbd5e1", marginLeft: 4 }}>{historicoData.processados}</b>/{historicoData.total} processados ·
-                  conversão <b style={{ color: "#cbd5e1", marginLeft: 4 }}>{pct(historicoData.elegiveis, historicoData.processados)}%</b>
-                </div>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 14 }}>
-                <div style={resCard()}>
-                  <div style={{ fontSize: "2rem", fontWeight: 800, color: C.green, lineHeight: 1, marginBottom: 4 }}>{historicoData.elegiveis}</div>
-                  <div style={{ fontSize: ".72rem", color: "#555", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 600 }}>Elegíveis</div>
-                </div>
-                <div style={resCard()}>
-                  <div style={{ fontSize: "2rem", fontWeight: 800, color: "#888", lineHeight: 1, marginBottom: 4 }}>{historicoData.inelegiveis}</div>
-                  <div style={{ fontSize: ".72rem", color: "#555", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 600 }}>Inelegíveis</div>
-                </div>
-                <div style={resCard()}>
-                  <div style={{ fontSize: "2rem", fontWeight: 800, color: C.red, lineHeight: 1, marginBottom: 4 }}>{historicoData.erros}</div>
-                  <div style={{ fontSize: ".72rem", color: "#555", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 600 }}>Erros</div>
-                </div>
-                <div style={resCard()}>
-                  <div style={{ fontSize: "2rem", fontWeight: 800, color: C.gold, lineHeight: 1, marginBottom: 4 }}>{fmtBRL(historicoData.total_margem)}</div>
-                  <div style={{ fontSize: ".72rem", color: "#555", textTransform: "uppercase", letterSpacing: ".5px", fontWeight: 600 }}>Margem total</div>
-                </div>
-              </div>
-              <div style={card()}>
-                <div style={{ fontSize: ".7rem", color: "#555", textTransform: "uppercase", letterSpacing: ".8px", marginBottom: 12, fontWeight: 700 }}>Detalhamento por status</div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                  {Object.entries(historicoData.by_status).map(([k, v]) => (
-                    <div key={k} style={{ padding: "6px 14px", borderRadius: 14, fontSize: ".75rem", border: `1px solid ${C.border}`, background: "rgba(255,255,255,.03)", color: "#aaa" }}>
-                      <b style={{ color: "#ddd" }}>{v}</b> {k}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </>
+        <BatchHistoryList
+          batches={batchesList}
+          downloading={batchDownloading}
+          onDownload={async (b) => {
+            if (b.total_elegiveis === 0) return;
+            setBatchDownloading(b.id);
+            try {
+              const date = (b.finished_at || b.created_at).slice(0, 10);
+              const slug = (b.name || b.id.slice(0, 8)).replace(/[^a-zA-Z0-9-_]/g, "_").slice(0, 60);
+              await leadsApi.exportCsv("elegivel", b.id, `elegiveis_${slug}_${date}.csv`);
+            } finally {
+              setBatchDownloading(null);
+            }
+          }}
+          onRefresh={refreshBatchesList}
+        />
       )}
 
       {tab === "geral" && (
         <>
           {stats.batches && (
             <div style={{ marginBottom: 14, fontSize: ".75rem", color: "#64748b", letterSpacing: ".4px" }}>
-              Mostrando dados do batch atual: <b style={{ color: "#cbd5e1" }}>{stats.batches.atual.label}</b> · histórico anterior disponível na aba 📦 Histórico
+              📊 Geral mostra <b style={{ color: "#cbd5e1" }}>somente o CSV atual</b>: <b style={{ color: "#cbd5e1" }}>{stats.batches.atual.label}</b>. Pra ver higienizações anteriores e baixar elegíveis de cada uma, vá na aba <b style={{ color: "#cbd5e1" }}>📦 Histórico</b>.
             </div>
           )}
           <div style={{ background: "linear-gradient(135deg,rgba(255,215,0,.08),rgba(180,74,255,.08))", border: "1px solid rgba(255,215,0,.2)", borderRadius: 18, padding: "28px 32px", marginBottom: 14, textAlign: "center" }}>

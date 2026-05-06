@@ -57,11 +57,32 @@ async def list_leads(
 @router.get("/export")
 async def export_csv(
     status: str = "elegivel",
+    batch_id: str | None = None,
     user: AuthUser = Depends(require_user),
 ):
     db = get_db()
-    result = scoped(db, "v8_leads", user.user_id).select("*").eq("status", status).execute()
+    q = scoped(db, "v8_leads", user.user_id).select("*").eq("status", status)
+    if batch_id:
+        q = q.eq("batch_id", batch_id)
+    result = q.execute()
     leads = result.data
+
+    # Slug do nome do batch pra filename
+    suffix = ""
+    if batch_id:
+        try:
+            row = (
+                scoped(db, "v8_batches", user.user_id)
+                .select("name")
+                .eq("id", batch_id)
+                .execute().data or []
+            )
+            if row:
+                raw = (row[0].get("name") or "")[:60]
+                slug = "".join(c if c.isalnum() else "_" for c in raw).strip("_") or batch_id[:8]
+                suffix = f"_{slug}"
+        except Exception:
+            suffix = f"_{batch_id[:8]}"
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
@@ -76,7 +97,7 @@ async def export_csv(
     return StreamingResponse(
         io.BytesIO(output.getvalue().encode()),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={status}_v8.csv"},
+        headers={"Content-Disposition": f"attachment; filename={status}_v8{suffix}.csv"},
     )
 
 
