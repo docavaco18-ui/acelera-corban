@@ -26,7 +26,11 @@ async def _search_cpf(page: Page, cpf: str, cfg: _Cfg) -> None:
     await search.fill("")
     await search.fill(cpf_fmt)
     await page.locator(cfg.SEL_F1_BTN_SEARCH).click()
-    await asyncio.sleep(2.5)
+    # Aguarda tabela renderizar (Ações ou linha vazia) — 2.5s era insuficiente
+    try:
+        await page.locator("button:has-text('Ações'), button:has-text('Simular'), button:has-text('Acompanhar')").first.wait_for(state="visible", timeout=10_000)
+    except Exception:
+        await asyncio.sleep(3)
 
 
 async def _screenshot_on_error(page: Page, label: str) -> None:
