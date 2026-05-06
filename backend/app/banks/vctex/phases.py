@@ -215,20 +215,41 @@ async def fase1_assinar_link(
             log.error("fase1 erro CPF %s: botão Ações não encontrado após pesquisa", cpf)
             await _screenshot_on_error(page, f"fase1_sem_acoes_{cpf.replace('.','').replace('-','')}")
             return "erro:botão Ações não encontrado após pesquisa"
-        # Click resiliente: scroll+visível+force fallback (resolve overlays/loading bloqueando)
+        # Click resiliente: tenta click normal (timeout longo), depois dispatch event
         try:
-            await acoes_btn.scroll_into_view_if_needed(timeout=5000)
-            await acoes_btn.wait_for(state="visible", timeout=5000)
-            await acoes_btn.click(timeout=8000)
+            await acoes_btn.click(timeout=10_000)
         except Exception as click_err:
-            log.warning("fase1 CPF %s: click normal falhou (%s); tentando force", cpf, str(click_err)[:80])
+            log.warning("fase1 CPF %s: click normal falhou (%s); tentando dispatch_event", cpf, str(click_err)[:80])
             try:
-                await acoes_btn.click(force=True, timeout=5000)
+                await acoes_btn.dispatch_event("click")
             except Exception as force_err:
-                log.error("fase1 erro CPF %s: click force também falhou: %s", cpf, str(force_err)[:120])
+                log.error("fase1 erro CPF %s: dispatch_event também falhou: %s", cpf, str(force_err)[:120])
                 await _screenshot_on_error(page, f"fase1_acoes_click_falhou_{cpf.replace('.','').replace('-','')}")
                 return "erro:botão Ações não clicável (overlay ou loading)"
-        await asyncio.sleep(0.6)
+        await asyncio.sleep(0.8)
+
+        # Verifica se o menu abriu (qualquer menuitem visível)
+        menu_abriu = False
+        try:
+            await page.locator("[role='menuitem'], [role='menu'] li").first.wait_for(state="visible", timeout=5_000)
+            menu_abriu = True
+        except Exception:
+            # Retry: navega de novo e tenta clicar Ações
+            log.warning("fase1 CPF %s: menu Ações não abriu — retry com re-nav", cpf)
+            await asyncio.sleep(2)
+            await _nav_consultas(page, cfg)
+            await _search_cpf(page, cpf, cfg)
+            await asyncio.sleep(1.5)
+            acoes_btn = page.locator(cfg.SEL_F1_BTN_ACOES).first
+            try:
+                await acoes_btn.click(timeout=10_000)
+                await asyncio.sleep(0.8)
+                await page.locator("[role='menuitem'], [role='menu'] li").first.wait_for(state="visible", timeout=5_000)
+                menu_abriu = True
+            except Exception as retry_err:
+                log.error("fase1 CPF %s: menu não abriu após retry: %s", cpf, str(retry_err)[:120])
+                await _screenshot_on_error(page, f"fase1_menu_nao_abriu_{cpf.replace('.','').replace('-','')}")
+                return "erro:menu Ações não abriu"
 
         # 4. Interceptar o link antes de clicar no botão de cópia
         #    Sobrescreve clipboard.writeText para capturar a URL
@@ -242,12 +263,21 @@ async def fase1_assinar_link(
         """)
 
         # 5. Clicar no item de menu "Link Termo Autorização" (ícone ContentCopy)
-        # Se não aparecer em 6s, presume que o termo já foi assinado em run anterior
-        # (o portal esconde a opção depois de usar) → pula pra fase2 sem erro.
+        # Se não aparecer em 6s, loga todos os itens visíveis para diagnóstico.
+        # Presume assinado apenas se menu abriu mas a opção genuinamente não existe
+        # (portal remove a opção após o termo ser assinado).
         link_item = page.locator(cfg.SEL_F1_MENU_LINK).first
         try:
             await link_item.wait_for(state="visible", timeout=6_000)
         except Exception:
+            # Debug: lista todos os itens do menu aberto
+            try:
+                menu_items = await page.locator("[role='menuitem']").all_inner_texts()
+                log.warning("CPF %s — 'Link Termo' não encontrado no menu. Itens visíveis: %s", cpf, menu_items)
+            except Exception:
+                body_snip = (await page.inner_text("body"))[:500]
+                log.warning("CPF %s — 'Link Termo' não encontrado. Body snippet: %s", cpf, body_snip)
+            await _screenshot_on_error(page, f"fase1_sem_link_{cpf.replace('.','').replace('-','')}")
             log.info("CPF %s — item 'Link Termo Autorização' ausente; presumindo já assinado", cpf)
             return "aguardando_autorizacao"
         await link_item.click()
