@@ -35,13 +35,13 @@ class VCTexConfig:
     SEL_F0_EMAIL:  str = "input[name='emailEmployee']"
     SEL_F0_TEL:    str = "input[name='phoneEmployee']"
     SEL_F0_SUBMIT: str = "button[type='submit']:has-text('Enviar Termo')"
-    SEL_F0_POPUP_OVERLAY: str = "div.css-4lxdxq"   # backdrop para fechar popup
+    SEL_F0_POPUP_OVERLAY: str = "div.css-4lxdxq, [role='dialog'] ~ div, .MuiBackdrop-root"
 
     # ── Fase 1 — Pesquisa + Ações + Link ──────────────────────────────────────
     SEL_F1_SEARCH_CPF:  str = "input[name='cpf']"
     SEL_F1_BTN_SEARCH:  str = "[aria-label='Pesquisar']"
     SEL_F1_BTN_ACOES:   str = "button:has-text('Ações')"
-    SEL_F1_MENU_LINK:   str = "[data-testid='ContentCopyIcon']"   # ícone dentro do item de menu
+    SEL_F1_MENU_LINK:   str = "[role='menuitem']:has-text('Link Termo'), li:has-text('Link Termo'), [data-testid='ContentCopyIcon']"
     # Página do Plurio (nova aba)
     SEL_PLURIO_ASSINAR:  str = "button#modalBtn"
     SEL_PLURIO_SUCESSO:  str = "span.message-box--span"
@@ -51,8 +51,8 @@ class VCTexConfig:
     SEL_F2_BTN_ACOMPANHAR:    str = "button:has-text('Acompanhar a autorização')"
     SEL_F2_POPUP_VALIDADO:    str = "h2:has-text('Termo autorização validado')"
     # Dados do trabalhador na tela Nova Proposta
-    SEL_F2_LABEL:             str = "p.css-7b7t20"
-    SEL_F2_VALUE:             str = "span.css-l69bhl"
+    SEL_F2_LABEL:             str = "p.css-7b7t20, [class*='label'], [class*='Label']"
+    SEL_F2_VALUE:             str = "span.css-l69bhl, [class*='value'], [class*='Value']"
     # Resultado Elegível / erro
     SEL_F2_BTN_SELECIONAR:    str = "button:not([disabled]):has-text('Selecionar')"
     SEL_F2_ERROR_MSG:         str = "p.CardEmployee_ErrorInfo__VJyWT"
