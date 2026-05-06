@@ -154,44 +154,40 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None 
         return
 
     await _set_state(job_id, {
-        "status": "running", "total": total, "processed": 0, "inserted": 0, "duplicates": 0,
+        "status": "running", "total": total, "processed": 0, "inserted": 0,
     })
 
     inserted = 0
-    duplicates = 0
     processed = 0
     loop = asyncio.get_running_loop()
 
     for i in range(0, total, BATCH_SIZE):
         batch = leads[i:i + BATCH_SIZE]
         try:
-            res = await _upsert_with_retry(batch, owner_id, loop)
-            new_rows = len(res.data or [])
-            inserted += new_rows
-            duplicates += len(batch) - new_rows
+            await _upsert_with_retry(batch, owner_id, loop)
+            inserted += len(batch)  # upsert real: todos os leads viram pendente
         except Exception as e:
             logger.exception("Upload %s falhou no batch i=%d (processado=%d, inserido=%d)",
                              job_id, i, processed, inserted)
             await _set_state(job_id, {
                 "status": "error",
                 "error": f"{type(e).__name__}: {e}",
-                "total": total, "processed": processed,
-                "inserted": inserted, "duplicates": duplicates,
+                "total": total, "processed": processed, "inserted": inserted,
             })
             return
 
         processed += len(batch)
         await _set_state(job_id, {
             "status": "running", "total": total,
-            "processed": processed, "inserted": inserted, "duplicates": duplicates,
+            "processed": processed, "inserted": inserted,
         })
 
-    # Atualiza total_leads na batch (se houver)
+    # Atualiza total_leads na batch (usa `total`, não `inserted`, pra contar todos os CPFs do CSV)
     if batch_id is not None:
         try:
             def _update_batch():
                 scoped(db(), "v8_batches", owner_id).update({
-                    "total_leads": inserted,
+                    "total_leads": total,
                 }).eq("id", batch_id).execute()
             await loop.run_in_executor(None, _update_batch)
         except Exception:
@@ -200,7 +196,6 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None 
     await _set_state(job_id, {
         "status": "done", "total": total,
         "processed": processed, "inserted": inserted,
-        "duplicates": duplicates,
         "batch_id": batch_id,
     })
 
@@ -214,9 +209,10 @@ async def _upsert_with_retry(batch: list[dict], owner_id: str, loop) -> object:
     a integridade dos dados é mantida.
     """
     def _upsert(b=batch):
+        # Upsert real: UPDATE status=pendente em conflito pra permitir re-upload da mesma base
         return (
             scoped(db(), "v8_leads", owner_id)
-            .upsert(b, on_conflict="owner_id,cpf", ignore_duplicates=True)
+            .upsert(b, on_conflict="owner_id,cpf")
             .execute()
         )
 

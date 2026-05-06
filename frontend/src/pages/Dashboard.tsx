@@ -183,6 +183,15 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   }, [stats]);
   const data = useMemo(() => deriveDash(currentLeads, currentStats), [currentLeads, currentStats]);
 
+  const handleLimpar = async () => {
+    if (!confirm("Limpar base atual?\n\nIsso vai remover todos os leads dos processamentos que ainda não foram concluídos, liberando espaço pra um novo CSV.\n\nHistórico de runs concluídas fica preservado.")) return;
+    const all = await batchesApi.list().catch(() => [] as Batch[]);
+    const active = all.filter(b => b.status === "pendente" || b.status === "processando");
+    await Promise.all(active.map(b => batchesApi.delete(b.id).catch(() => {})));
+    await refresh();
+    if (tab === "historico") refreshBatchesList();
+  };
+
   const exec = async (fn: () => Promise<BotStatus>) => {
     setLoading(true);
     const s = await fn().catch(() => botStatus);
@@ -369,11 +378,21 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
 
       {tab === "geral" && (
         <>
-          {stats.batches && (
-            <div style={{ marginBottom: 14, fontSize: ".75rem", color: "#64748b", letterSpacing: ".4px" }}>
-              📊 Geral mostra <b style={{ color: "#cbd5e1" }}>somente o CSV atual</b>: <b style={{ color: "#cbd5e1" }}>{stats.batches.atual.label}</b>. Pra ver higienizações anteriores e baixar elegíveis de cada uma, vá na aba <b style={{ color: "#cbd5e1" }}>📦 Histórico</b>.
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ fontSize: ".75rem", color: "#64748b", letterSpacing: ".4px" }}>
+              {stats.batches
+                ? <>📊 Geral mostra <b style={{ color: "#cbd5e1" }}>somente o CSV atual</b>: <b style={{ color: "#cbd5e1" }}>{stats.batches.atual.label}</b>. Pra ver higienizações anteriores, vá na aba <b style={{ color: "#cbd5e1" }}>📦 Histórico</b>.</>
+                : <>📊 Nenhum CSV carregado. Clique em <b style={{ color: "#cbd5e1" }}>↑ Carregar CSV</b> pra começar.</>
+              }
             </div>
-          )}
+            <button
+              onClick={handleLimpar}
+              disabled={isRunning}
+              title={isRunning ? "Pare o bot antes de limpar" : "Remove os leads do processamento atual e libera pra um novo CSV"}
+              style={{ padding: "6px 14px", background: isRunning ? "rgba(100,100,100,.06)" : "rgba(255,45,120,.1)", color: isRunning ? "#444" : C.red, border: `1px solid ${isRunning ? C.border : "rgba(255,45,120,.3)"}`, borderRadius: 14, cursor: isRunning ? "not-allowed" : "pointer", fontSize: ".72rem", fontWeight: 700, whiteSpace: "nowrap" }}>
+              🗑 Limpar Base
+            </button>
+          </div>
           <div style={{ background: "linear-gradient(135deg,rgba(255,215,0,.08),rgba(180,74,255,.08))", border: "1px solid rgba(255,215,0,.2)", borderRadius: 18, padding: "28px 32px", marginBottom: 14, textAlign: "center" }}>
             <div style={{ fontSize: ".72rem", color: "#888", textTransform: "uppercase", letterSpacing: 1, fontWeight: 700, marginBottom: 8 }}>💰 Total Liberado aos Elegíveis (batch atual)</div>
             <div style={{ fontSize: "3.2rem", fontWeight: 900, color: C.gold, lineHeight: 1, letterSpacing: -2, textShadow: "0 0 40px rgba(255,215,0,.4)" }}>{fmtBRL(data.total_liberado)}</div>
