@@ -95,7 +95,7 @@ async def fase0_adicionar_termo(
         await asyncio.sleep(0.8)
 
         # 3. Preencher campos
-        await page.locator(cfg.SEL_F0_CPF).fill(cpf)
+        await page.locator(cfg.SEL_F0_CPF).fill(cpf.zfill(11))
         await asyncio.sleep(0.3)
 
         # Nome: precisa de pelo menos 2 palavras; usa fallback se ausente ou inválido

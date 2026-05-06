@@ -73,8 +73,8 @@ def _parse_csv(content: bytes, owner_id: str, batch_id: str | None = None) -> li
     leads: list[dict] = []
     for row in reader:
         cpf_raw = _pick(row, normalized_row, CPF_KEYS)
-        cpf = re.sub(r"\D", "", cpf_raw)
-        if not cpf:
+        cpf = re.sub(r"\D", "", cpf_raw).zfill(11)
+        if not cpf or len(cpf) > 11:
             continue
         lead = {
             "cpf": cpf,
