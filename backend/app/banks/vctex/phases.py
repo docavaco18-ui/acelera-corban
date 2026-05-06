@@ -26,11 +26,17 @@ async def _search_cpf(page: Page, cpf: str, cfg: _Cfg) -> None:
     await search.fill("")
     await search.fill(cpf_fmt)
     await page.locator(cfg.SEL_F1_BTN_SEARCH).click()
-    # Aguarda tabela renderizar (Ações ou linha vazia) — 2.5s era insuficiente
+    # Aguarda tabela renderizar — loga estado se não encontrar botões esperados
     try:
         await page.locator("button:has-text('Ações'), button:has-text('Simular'), button:has-text('Acompanhar')").first.wait_for(state="visible", timeout=10_000)
     except Exception:
         await asyncio.sleep(3)
+        try:
+            buttons_vis = await page.locator("button:visible").all_inner_texts()
+            log.warning("_search_cpf CPF %s: botões esperados não encontrados. URL=%s | buttons=%s",
+                        cpf, page.url, buttons_vis[:15])
+        except Exception:
+            pass
 
 
 async def _screenshot_on_error(page: Page, label: str) -> None:
@@ -204,6 +210,13 @@ async def fase1_assinar_link(
         await _search_cpf(page, cpf, cfg)
 
         # 3. Clicar em "Ações"
+        # Log estado da página antes de tentar clicar
+        try:
+            buttons_vis = await page.locator("button:visible").all_inner_texts()
+            log.info("fase1 CPF %s — página: url=%s | buttons=%s", cpf, page.url, buttons_vis[:15])
+        except Exception:
+            pass
+
         acoes_btn = page.locator(cfg.SEL_F1_BTN_ACOES).first
         if await acoes_btn.count() == 0:
             # Tenta novamente com espera extra (portal pode demorar para exibir o termo recém-adicionado)
