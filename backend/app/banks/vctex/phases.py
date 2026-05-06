@@ -143,19 +143,27 @@ async def fase0_adicionar_termo(
                 pass
             return "ja_existe"
 
-        # Verifica que o popup "Termo Enviado" apareceu (confirmação real de envio)
+        # Verifica sucesso: popup CSS (pode mudar) OU texto de confirmação no body
         overlay = page.locator(cfg.SEL_F0_POPUP_OVERLAY).first
         popup_visible = await overlay.count() > 0
-        if not popup_visible:
+        success_text = re.search(
+            r"termo enviado|enviado com sucesso|sucesso|termo.*criado|link.*enviado",
+            body_text, re.IGNORECASE
+        )
+        if not popup_visible and not success_text:
             await _screenshot_on_error(page, f"fase0_sem_submit_{cpf.replace('.','').replace('-','')}")
             log.error("fase0 CPF %s: popup não apareceu — submit falhou silenciosamente", cpf)
             return "erro:submit não disparado pelo portal"
 
-        # 6. Fechar popup clicando fora
-        try:
-            await overlay.click()
-            await asyncio.sleep(0.8)
-        except Exception:
+        # 6. Fechar popup clicando fora (se overlay CSS presente)
+        if popup_visible:
+            try:
+                await overlay.click()
+                await asyncio.sleep(0.8)
+            except Exception:
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.5)
+        else:
             await page.keyboard.press("Escape")
             await asyncio.sleep(0.5)
 
