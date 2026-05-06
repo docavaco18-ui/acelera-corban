@@ -40,13 +40,44 @@ def _summarize_leads(rows: list[dict]) -> dict:
 @router.get("/")
 def list_batches(user: AuthUser = Depends(require_user)):
     db = get_db()
-    rows = (
+    batches = (
         scoped(db, "v8_batches", user.user_id)
         .select("*")
         .order("created_at", desc=True)
         .execute().data or []
     )
-    return {"data": rows}
+    if not batches:
+        return {"data": []}
+
+    # Compute live stats for all batches in one extra query (3 cols only)
+    batch_ids = [b["id"] for b in batches]
+    leads = (
+        scoped(db, "v8_leads", user.user_id)
+        .select("batch_id,status,valor_liberado")
+        .in_("batch_id", batch_ids)
+        .execute().data or []
+    )
+
+    agg: dict[str, dict] = {}
+    for lead in leads:
+        bid = lead.get("batch_id")
+        if not bid:
+            continue
+        if bid not in agg:
+            agg[bid] = {"total_processed": 0, "total_elegiveis": 0, "total_liberado": 0.0}
+        if lead["status"] in ("elegivel", "inelegivel", "erro"):
+            agg[bid]["total_processed"] += 1
+        if lead["status"] == "elegivel":
+            agg[bid]["total_elegiveis"] += 1
+            agg[bid]["total_liberado"] += float(lead.get("valor_liberado") or 0)
+
+    for b in batches:
+        s = agg.get(b["id"], {})
+        b["total_processed"] = s.get("total_processed", b.get("total_processed") or 0)
+        b["total_elegiveis"] = s.get("total_elegiveis", b.get("total_elegiveis") or 0)
+        b["total_liberado"] = round(s.get("total_liberado", float(b.get("total_liberado") or 0)), 2)
+
+    return {"data": batches}
 
 
 @router.get("/current")
