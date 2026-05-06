@@ -49,14 +49,23 @@ def list_batches(user: AuthUser = Depends(require_user)):
     if not batches:
         return {"data": []}
 
-    # Compute live stats for all batches in one extra query (3 cols only)
+    # Compute live stats for all batches — paginated (Supabase default cap = 1000 rows)
     batch_ids = [b["id"] for b in batches]
-    leads = (
-        scoped(db, "v8_leads", user.user_id)
-        .select("batch_id,status,valor_liberado")
-        .in_("batch_id", batch_ids)
-        .execute().data or []
-    )
+    PAGE = 1000
+    leads: list[dict] = []
+    offset = 0
+    while True:
+        chunk = (
+            scoped(db, "v8_leads", user.user_id)
+            .select("batch_id,status,valor_liberado")
+            .in_("batch_id", batch_ids)
+            .range(offset, offset + PAGE - 1)
+            .execute().data or []
+        )
+        leads.extend(chunk)
+        if len(chunk) < PAGE:
+            break
+        offset += PAGE
 
     agg: dict[str, dict] = {}
     for lead in leads:
