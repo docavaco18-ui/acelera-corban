@@ -334,7 +334,7 @@ export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: 
               ↺ Retentar Erros ({data.erros})
             </button>
           )}
-          <button onClick={() => leadsApi.exportCsv("elegivel")}
+          <button onClick={() => leadsApi.exportCsv("elegivel", batchId)}
             style={{ padding: "7px 16px", background: "rgba(0,191,255,.15)", color: C.blue, border: "1px solid rgba(0,191,255,.4)", borderRadius: 18, cursor: "pointer", fontSize: ".78rem", fontWeight: 700 }}>
             ⬇ Exportar Elegíveis
           </button>
@@ -558,7 +558,7 @@ export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: 
               <b style={{ color: "#aaa" }}>{data.elegivel}</b> leads elegíveis · maior valor: <b style={{ color: "#aaa" }}>{ranking[0]?.valor_liberado != null ? fmtBRL(ranking[0].valor_liberado) : "—"}</b>
             </div>
             <div style={{ marginTop: 18 }}>
-              <button onClick={() => leadsApi.exportCsv("elegivel")}
+              <button onClick={() => leadsApi.exportCsv("elegivel", batchId)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 26px", borderRadius: 22, background: "linear-gradient(135deg,rgba(0,255,136,.15),rgba(0,200,100,.08))", border: "1px solid rgba(0,255,136,.4)", color: C.green, fontWeight: 700, fontSize: ".82rem", cursor: "pointer", letterSpacing: ".4px" }}>
                 ⬇️ Baixar CSV dos Elegíveis
               </button>
