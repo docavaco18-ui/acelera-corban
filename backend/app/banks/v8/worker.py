@@ -149,11 +149,24 @@ class LeadWorker:
                 if not cfg:
                     continue
                 try:
-                    simulation = await create_simulation(
-                        await self._token(), consult_id, cfg["id"], margin,
-                        num_installments=_max_installments(cfg),
-                        proxy=self.proxy,
-                    )
+                    num_inst = _max_installments(cfg)
+                    try:
+                        simulation = await create_simulation(
+                            await self._token(), consult_id, cfg["id"], margin,
+                            num_installments=num_inst,
+                            proxy=self.proxy,
+                        )
+                    except V8APIError as e:
+                        # API rejeita parcelas acima do limite pra esse lead — retenta com 12x
+                        if e.status == 400 and "parcelas" in str(e).lower() and num_inst > 12:
+                            logger.info(f"Worker {self.worker_id} CPF {cpf}: parcelas {num_inst}→12 (limite da API)")
+                            simulation = await create_simulation(
+                                await self._token(), consult_id, cfg["id"], margin,
+                                num_installments=12,
+                                proxy=self.proxy,
+                            )
+                        else:
+                            raise
                     used_seguro = prefer_seguro
                     break
                 except Exception as e:
