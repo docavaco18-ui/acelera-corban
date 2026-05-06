@@ -22,7 +22,7 @@ from ..redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 
-BATCH_SIZE = 500
+BATCH_SIZE = 150
 JOB_TTL_SECONDS = 3600
 JOB_KEY_PREFIX = "upload:"
 UPSERT_MAX_ATTEMPTS = 4
@@ -156,6 +156,18 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str | None 
     await _set_state(job_id, {
         "status": "running", "total": total, "processed": 0, "inserted": 0,
     })
+
+    # Atualiza total_leads imediatamente após parse (antes do loop de upsert)
+    if batch_id is not None:
+        try:
+            _loop_early = asyncio.get_running_loop()
+            def _update_batch_early():
+                scoped(db(), "v8_batches", owner_id).update({
+                    "total_leads": total,
+                }).eq("id", batch_id).execute()
+            await _loop_early.run_in_executor(None, _update_batch_early)
+        except Exception:
+            pass
 
     inserted = 0
     processed = 0

@@ -101,9 +101,10 @@ interface DashboardProps {
   batchId?: string;          // se fornecido, escopa stats/leads/bot start a essa batch
   batchName?: string;        // exibido no header
   hideUpload?: boolean;      // omite "Carregar CSV" no header (DASHBOARD agregado não tem upload)
+  onSessionChanged?: () => void; // chamado após upload ou limpar — pai re-busca batch ativo
 }
 
-export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {}) {
+export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: DashboardProps = {}) {
   const { bank } = useBank();
   const bankLabel = bank === "vctex" ? "VCTex Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
@@ -184,10 +185,12 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
   const data = useMemo(() => deriveDash(currentLeads, currentStats), [currentLeads, currentStats]);
 
   const handleLimpar = async () => {
-    if (!confirm("Limpar base atual?\n\nIsso vai remover todos os leads dos processamentos que ainda não foram concluídos, liberando espaço pra um novo CSV.\n\nHistórico de runs concluídas fica preservado.")) return;
+    if (!confirm("Limpar sessão atual?\n\nO CSV atual vai pro Histórico (leads elegíveis ainda disponíveis pra download). Uma nova sessão ficará pronta pra novo CSV.")) return;
+    if (isRunning) await botApi.stop().catch(() => {});
     const all = await batchesApi.list().catch(() => [] as Batch[]);
     const active = all.filter(b => b.status === "pendente" || b.status === "processando");
-    await Promise.all(active.map(b => batchesApi.delete(b.id).catch(() => {})));
+    await Promise.all(active.map(b => batchesApi.cancel(b.id).catch(() => {})));
+    onSessionChanged?.();
     await refresh();
     if (tab === "historico") refreshBatchesList();
   };
@@ -231,10 +234,11 @@ export function Dashboard({ batchId, batchName, hideUpload }: DashboardProps = {
           setGameTotal(s.total);
         }
         if (s.status === "done") {
-          setUploadMsg(`✓ ${s.inserted} de ${s.total} inseridos`);
-          setGameInserted(s.inserted);
+          setUploadMsg(`✓ ${s.total} leads carregados`);
+          setGameInserted(s.total);
           setGameTotal(s.total);
           setGamePhase("done");
+          onSessionChanged?.();
           refresh();
           break;
         }

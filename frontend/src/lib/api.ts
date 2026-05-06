@@ -193,5 +193,25 @@ export const batchesApi = {
     api.get<DashboardStats>(`/api/batches/${id}/stats`).then((r) => r.data),
   rename: (id: string, name: string) =>
     api.patch<Batch>(`/api/batches/${id}`, { name }).then((r) => r.data),
+  cancel: (id: string) =>
+    api.patch<Batch>(`/api/batches/${id}`, { status: "cancelada" }).then((r) => r.data),
   delete: (id: string) => api.delete(`/api/batches/${id}`),
+};
+
+export const chatwootApi = {
+  getSettings: () =>
+    api.get<{ configured: boolean; chatwoot_url?: string; account_id?: string; inbox_ids?: string; last_sync_at?: string }>(
+      "/api/chatwoot/settings"
+    ).then((r) => r.data),
+  putSettings: (body: { chatwoot_url: string; account_id: string; api_token?: string | null; inbox_ids?: string | null }) =>
+    api.put("/api/chatwoot/settings", body).then((r) => r.data),
+  startSync: () => api.post<{ run_id: string; status: string }>("/api/chatwoot/sync").then((r) => r.data),
+  syncStatus: () => api.get<any>("/api/chatwoot/sync/status").then((r) => r.data),
+  syncHistory: (limit = 10) =>
+    api.get<{ runs: any[] }>("/api/chatwoot/sync/history", { params: { limit } }).then((r) => r.data.runs),
+  metrics: (batchId?: string) =>
+    api.get<any>("/api/chatwoot/metrics", { params: batchId ? { batch_id: batchId } : {} }).then((r) => r.data),
+  leads: (params?: { bucket?: string; status_v8?: string; batch_id?: string; label?: string; limit?: number; offset?: number }) =>
+    api.get<{ leads: any[]; limit: number; offset: number }>("/api/chatwoot/leads", { params }).then((r) => r.data),
+  labels: () => api.get<{ labels: { label: string; count: number }[] }>("/api/chatwoot/labels").then((r) => r.data.labels),
 };

@@ -1,22 +1,24 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Dashboard } from "./Dashboard";
 import { batchesApi } from "../lib/api";
 import type { Batch } from "../lib/types";
 
 export default function Higienizacao() {
   const [batch, setBatch] = useState<Batch | null | undefined>(undefined); // undefined = loading
+  const aliveRef = useRef(true);
+
+  const fetchCurrent = useCallback(() => {
+    batchesApi.current()
+      .then(b => { if (aliveRef.current) setBatch(b); })
+      .catch(() => { if (aliveRef.current) setBatch(null); });
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    const fetchCurrent = () => {
-      batchesApi.current()
-        .then(b => { if (alive) setBatch(b); })
-        .catch(() => { if (alive) setBatch(null); });
-    };
+    aliveRef.current = true;
     fetchCurrent();
     const t = setInterval(fetchCurrent, 30000);
-    return () => { alive = false; clearInterval(t); };
-  }, []);
+    return () => { aliveRef.current = false; clearInterval(t); };
+  }, [fetchCurrent]);
 
   if (batch === undefined) {
     return <div style={{ padding: 40, color: "#94a3b8" }}>Carregando base atual…</div>;
@@ -27,10 +29,7 @@ export default function Higienizacao() {
       <div style={{ padding: 40, color: "#94a3b8", textAlign: "center" }}>
         <h2 style={{ color: "#fff", marginBottom: 12 }}>📭 Nenhuma base ativa</h2>
         <p>Faça upload de um CSV pra começar a higienizar.</p>
-        <p style={{ marginTop: 24, fontSize: ".85rem", color: "#64748b" }}>
-          Vá pra aba <b>HIGIENIZAÇÃO</b> e clique em <b>↑ Carregar CSV</b> (vai aparecer abaixo).
-        </p>
-        <Dashboard />
+        <Dashboard onSessionChanged={fetchCurrent} />
       </div>
     );
   }
@@ -40,6 +39,7 @@ export default function Higienizacao() {
       batchId={batch.id}
       batchName={batch.name}
       key={batch.id}
+      onSessionChanged={fetchCurrent}
     />
   );
 }
