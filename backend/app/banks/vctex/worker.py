@@ -118,7 +118,9 @@ class VCTexLeadWorker:
                 # Mapeia 'fase' do projeto antigo → 'status' aqui
                 if "fase" in result:
                     result["status"] = result.pop("fase")
-                if "observacao" in result:
+                if "observacao_portal" in result:
+                    result["erro"] = result.pop("observacao_portal")
+                elif "observacao" in result:
                     result["erro"] = result.pop("observacao")
                 if "valor_aprovado" in result:
                     result["valor_liberado"] = result.pop("valor_aprovado")

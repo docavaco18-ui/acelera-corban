@@ -503,7 +503,7 @@ async def fase2_simular(
                     status_msg = m.group(1).strip()[:200] if m else "Não Elegível"
                     log.info("CPF %s — banco já processou (não elegível): %s", cpf, status_msg[:100])
                     result.update({
-                        "fase": "concluido",
+                        "fase": "inelegivel",
                         "situacao": "Não Elegível",
                         "observacao_portal": status_msg,
                     })
@@ -560,7 +560,7 @@ async def fase2_simular(
         if not is_elegivel:
             _STATUSES_VALIDOS = {"Elegível", "Não Elegível", "NÃO TEM VÍNCULO CLT"}
             situacao_final = situacao_raw if situacao_raw in _STATUSES_VALIDOS else "Não Elegível"
-            result["fase"]     = "concluido"
+            result["fase"]     = "inelegivel"
             result["situacao"] = situacao_final
             result["observacao_portal"] = error_text or situacao_raw
             log.info("CPF %s — NÃO ELEGÍVEL: %s", cpf, result["observacao_portal"])
@@ -615,7 +615,7 @@ async def fase2_simular(
                     break
 
         result.update({
-            "fase":           "concluido",
+            "fase":           "elegivel",
             "situacao":       "Elegível",
             "valor_liberado": valor_liberado,
             "parcelas":       parcelas,
