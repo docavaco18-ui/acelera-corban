@@ -38,7 +38,7 @@ async def _broadcast(redis, event: dict):
 async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None = None) -> list[dict]:
     def _q():
         q = scoped(db, "vctex_leads", user_id).select("*").in_(
-            "status", ["pendente", "fase0", "fase1", "fase2", "erro"]
+            "status", ["pendente", "fase0", "fase1", "fase2", "aguardando_autorizacao", "erro"]
         )
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)

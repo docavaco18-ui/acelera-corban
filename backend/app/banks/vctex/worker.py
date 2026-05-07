@@ -106,6 +106,9 @@ class VCTexLeadWorker:
                 fase = "fase2"
                 updates["status"] = "fase2"
 
+            if fase == "aguardando_autorizacao":
+                fase = "fase2"  # reprocessa: verifica se banco já liberou
+
             if fase == "fase2":
                 self._emit("status_update", cpf=cpf, fase="fase2")
                 await human_delay_between_actions(2.0, 5.0)
