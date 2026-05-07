@@ -209,63 +209,51 @@ async def fase1_assinar_link(
         # 2. Pesquisar CPF
         await _search_cpf(page, cpf, cfg)
 
-        # 3. Clicar em "Ações"
+        # 3. Aguarda loading da tabela desaparecer após pesquisa
+        try:
+            await page.locator("[role='progressbar'], .MuiCircularProgress-root, .MuiLinearProgress-root").wait_for(state="hidden", timeout=8_000)
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+
         # Log estado da página antes de tentar clicar
         try:
             buttons_vis = await page.locator("button:visible").all_inner_texts()
-            log.info("fase1 CPF %s — página: url=%s | buttons=%s", cpf, page.url, buttons_vis[:15])
+            log.info("fase1 CPF %s — url=%s | buttons=%s", cpf, page.url, buttons_vis[:20])
         except Exception:
             pass
 
+        # 4. Clicar em "Ações"
         acoes_btn = page.locator(cfg.SEL_F1_BTN_ACOES).first
         if await acoes_btn.count() == 0:
-            # Tenta novamente com espera extra (portal pode demorar para exibir o termo recém-adicionado)
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
             await _nav_consultas(page, cfg)
             await _search_cpf(page, cpf, cfg)
+            try:
+                await page.locator("[role='progressbar'], .MuiCircularProgress-root").wait_for(state="hidden", timeout=8_000)
+            except Exception:
+                pass
             acoes_btn = page.locator(cfg.SEL_F1_BTN_ACOES).first
         if await acoes_btn.count() == 0:
-            log.error("fase1 erro CPF %s: botão Ações não encontrado após pesquisa", cpf)
+            log.error("fase1 erro CPF %s: botão Ações não encontrado após pesquisa. url=%s", cpf, page.url)
             await _screenshot_on_error(page, f"fase1_sem_acoes_{cpf.replace('.','').replace('-','')}")
             return "erro:botão Ações não encontrado após pesquisa"
-        # Click resiliente: tenta click normal (timeout longo), depois dispatch event
+
+        # Click: tenta normal primeiro, fallback force=True (bypassa overlay)
         try:
-            await acoes_btn.click(timeout=10_000)
+            await acoes_btn.scroll_into_view_if_needed(timeout=3000)
+            await acoes_btn.click(timeout=6_000)
         except Exception as click_err:
-            log.warning("fase1 CPF %s: click normal falhou (%s); tentando dispatch_event", cpf, str(click_err)[:80])
+            log.warning("fase1 CPF %s: click normal falhou (%s); tentando force=True", cpf, str(click_err)[:80])
             try:
-                await acoes_btn.dispatch_event("click")
+                await acoes_btn.click(force=True, timeout=5000)
             except Exception as force_err:
-                log.error("fase1 erro CPF %s: dispatch_event também falhou: %s", cpf, str(force_err)[:120])
-                await _screenshot_on_error(page, f"fase1_acoes_click_falhou_{cpf.replace('.','').replace('-','')}")
-                return "erro:botão Ações não clicável (overlay ou loading)"
-        await asyncio.sleep(0.8)
+                log.error("fase1 CPF %s: force click também falhou: %s", cpf, str(force_err)[:120])
+                await _screenshot_on_error(page, f"fase1_acoes_nao_clicavel_{cpf.replace('.','').replace('-','')}")
+                return "erro:botão Ações não clicável"
+        await asyncio.sleep(2.0)  # aguarda animação do menu MUI
 
-        # Verifica se o menu abriu (qualquer menuitem visível)
-        menu_abriu = False
-        try:
-            await page.locator("[role='menuitem'], [role='menu'] li").first.wait_for(state="visible", timeout=5_000)
-            menu_abriu = True
-        except Exception:
-            # Retry: navega de novo e tenta clicar Ações
-            log.warning("fase1 CPF %s: menu Ações não abriu — retry com re-nav", cpf)
-            await asyncio.sleep(2)
-            await _nav_consultas(page, cfg)
-            await _search_cpf(page, cpf, cfg)
-            await asyncio.sleep(1.5)
-            acoes_btn = page.locator(cfg.SEL_F1_BTN_ACOES).first
-            try:
-                await acoes_btn.click(timeout=10_000)
-                await asyncio.sleep(0.8)
-                await page.locator("[role='menuitem'], [role='menu'] li").first.wait_for(state="visible", timeout=5_000)
-                menu_abriu = True
-            except Exception as retry_err:
-                log.error("fase1 CPF %s: menu não abriu após retry: %s", cpf, str(retry_err)[:120])
-                await _screenshot_on_error(page, f"fase1_menu_nao_abriu_{cpf.replace('.','').replace('-','')}")
-                return "erro:menu Ações não abriu"
-
-        # 4. Interceptar o link antes de clicar no botão de cópia
-        #    Sobrescreve clipboard.writeText para capturar a URL
+        # 5. Interceptar clipboard antes de clicar no item
         await page.evaluate("""
             window.__vctex_link = null;
             const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
@@ -275,23 +263,25 @@ async def fase1_assinar_link(
             };
         """)
 
-        # 5. Clicar no item de menu "Link Termo Autorização" (ícone ContentCopy)
-        # Se não aparecer em 6s, loga todos os itens visíveis para diagnóstico.
-        # Presume assinado apenas se menu abriu mas a opção genuinamente não existe
-        # (portal remove a opção após o termo ser assinado).
+        # 6. Clicar no item "Link Termo Autorização"
+        # Se não aparecer em 6s, loga TODOS os itens visíveis do menu para diagnóstico
         link_item = page.locator(cfg.SEL_F1_MENU_LINK).first
         try:
             await link_item.wait_for(state="visible", timeout=6_000)
         except Exception:
-            # Debug: lista todos os itens do menu aberto
+            # ── DIAGNÓSTICO: que itens tem no menu? ──────────────────────────
             try:
                 menu_items = await page.locator("[role='menuitem']").all_inner_texts()
-                log.warning("CPF %s — 'Link Termo' não encontrado no menu. Itens visíveis: %s", cpf, menu_items)
-            except Exception:
-                body_snip = (await page.inner_text("body"))[:500]
-                log.warning("CPF %s — 'Link Termo' não encontrado. Body snippet: %s", cpf, body_snip)
+                if menu_items:
+                    log.warning("CPF %s — menu aberto mas 'Link Termo' ausente. Itens: %s", cpf, menu_items)
+                else:
+                    # Menu não abriu — loga body para entender o estado
+                    body_snip = (await page.inner_text("body"))[:600]
+                    log.warning("CPF %s — menu vazio/não abriu. Body: %s", cpf, body_snip)
+            except Exception as de:
+                log.warning("CPF %s — erro ao diagnosticar menu: %s", cpf, str(de)[:100])
             await _screenshot_on_error(page, f"fase1_sem_link_{cpf.replace('.','').replace('-','')}")
-            log.info("CPF %s — item 'Link Termo Autorização' ausente; presumindo já assinado", cpf)
+            log.info("CPF %s — 'Link Termo' ausente no menu; presumindo já assinado", cpf)
             return "aguardando_autorizacao"
         await link_item.click()
         await asyncio.sleep(1)
