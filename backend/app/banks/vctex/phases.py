@@ -26,17 +26,12 @@ async def _search_cpf(page: Page, cpf: str, cfg: _Cfg) -> None:
     await search.fill("")
     await search.fill(cpf_fmt)
     await page.locator(cfg.SEL_F1_BTN_SEARCH).click()
-    # Aguarda tabela renderizar — loga estado se não encontrar botões esperados
+    # Aguarda tabela renderizar — usa networkidle + sleep fixo (botões têm pointer-events:none durante loading)
     try:
-        await page.locator("button:has-text('Ações'), button:has-text('Simular'), button:has-text('Acompanhar')").first.wait_for(state="visible", timeout=10_000)
+        await page.wait_for_load_state("networkidle", timeout=15_000)
     except Exception:
-        await asyncio.sleep(3)
-        try:
-            buttons_vis = await page.locator("button:visible").all_inner_texts()
-            log.warning("_search_cpf CPF %s: botões esperados não encontrados. URL=%s | buttons=%s",
-                        cpf, page.url, buttons_vis[:15])
-        except Exception:
-            pass
+        pass
+    await asyncio.sleep(2)  # margem extra pra animação do spinner desaparecer
 
 
 async def _screenshot_on_error(page: Page, label: str) -> None:
@@ -239,19 +234,44 @@ async def fase1_assinar_link(
             await _screenshot_on_error(page, f"fase1_sem_acoes_{cpf.replace('.','').replace('-','')}")
             return "erro:botão Ações não encontrado após pesquisa"
 
-        # Click: tenta normal primeiro, fallback force=True (bypassa overlay)
-        try:
-            await acoes_btn.scroll_into_view_if_needed(timeout=3000)
-            await acoes_btn.click(timeout=6_000)
-        except Exception as click_err:
-            log.warning("fase1 CPF %s: click normal falhou (%s); tentando force=True", cpf, str(click_err)[:80])
+        # Click: tenta normal → force → JS evaluate (último recurso para React/MUI com pointer-events:none)
+        menu_abriu = False
+        for _attempt, _strategy in enumerate(["normal", "force", "js"]):
             try:
-                await acoes_btn.click(force=True, timeout=5000)
-            except Exception as force_err:
-                log.error("fase1 CPF %s: force click também falhou: %s", cpf, str(force_err)[:120])
-                await _screenshot_on_error(page, f"fase1_acoes_nao_clicavel_{cpf.replace('.','').replace('-','')}")
-                return "erro:botão Ações não clicável"
-        await asyncio.sleep(2.0)  # aguarda animação do menu MUI
+                if _strategy == "normal":
+                    await acoes_btn.scroll_into_view_if_needed(timeout=3000)
+                    await acoes_btn.click(timeout=6_000)
+                elif _strategy == "force":
+                    log.warning("fase1 CPF %s: click normal falhou; tentando force=True", cpf)
+                    await acoes_btn.click(force=True, timeout=5000)
+                else:
+                    log.warning("fase1 CPF %s: force falhou; tentando JS evaluate click", cpf)
+                    clicked = await page.evaluate("""() => {
+                        const btns = Array.from(document.querySelectorAll('button'));
+                        const btn = btns.find(b => b.textContent.trim().startsWith('Ações'));
+                        if (btn) { btn.click(); return true; }
+                        return false;
+                    }""")
+                    if not clicked:
+                        log.error("fase1 CPF %s: JS click — botão Ações não encontrado no DOM", cpf)
+                        await _screenshot_on_error(page, f"fase1_acoes_nao_encontrado_{cpf.replace('.','').replace('-','')}")
+                        return "erro:botão Ações não encontrado no DOM"
+            except Exception as click_err:
+                log.warning("fase1 CPF %s: estratégia %s falhou: %s", cpf, _strategy, str(click_err)[:80])
+                continue
+
+            await asyncio.sleep(2.0)
+            # Verifica se menu abriu
+            n_items = await page.locator("[role='menuitem']").count()
+            if n_items > 0:
+                log.info("fase1 CPF %s — menu abriu via '%s' (%d itens)", cpf, _strategy, n_items)
+                menu_abriu = True
+                break
+
+        if not menu_abriu:
+            await _screenshot_on_error(page, f"fase1_menu_nao_abriu_{cpf.replace('.','').replace('-','')}")
+            log.error("fase1 CPF %s — menu Ações não abriu com nenhuma estratégia", cpf)
+            return "erro:menu Ações não abriu"
 
         # 5. Interceptar clipboard antes de clicar no item
         await page.evaluate("""
