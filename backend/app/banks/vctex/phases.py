@@ -276,26 +276,47 @@ async def fase1_assinar_link(
         # 5. Interceptar clipboard antes de clicar no item
         await page.evaluate("""
             window.__vctex_link = null;
-            const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
-            navigator.clipboard.writeText = async (text) => {
-                window.__vctex_link = text;
-                try { return await orig(text); } catch(e) {}
-            };
+            // Intercepta navigator.clipboard.writeText
+            try {
+                const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
+                navigator.clipboard.writeText = async (text) => {
+                    window.__vctex_link = text;
+                    try { return await orig(text); } catch(e) {}
+                };
+            } catch(e) {}
+            // Intercepta document.execCommand('copy') — portais legados
+            try {
+                const origExec = document.execCommand.bind(document);
+                document.execCommand = function(cmd, ...args) {
+                    if (cmd === 'copy') {
+                        try {
+                            const sel = window.getSelection();
+                            if (sel && sel.toString().startsWith('http')) {
+                                window.__vctex_link = sel.toString();
+                            }
+                            // Tenta ler de input/textarea selecionada
+                            const active = document.activeElement;
+                            if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
+                                const v = active.value || '';
+                                if (v.startsWith('http')) window.__vctex_link = v;
+                            }
+                        } catch(e) {}
+                    }
+                    return origExec(cmd, ...args);
+                };
+            } catch(e) {}
         """)
 
         # 6. Clicar no item "Link Termo Autorização"
-        # Se não aparecer em 6s, loga TODOS os itens visíveis do menu para diagnóstico
         link_item = page.locator(cfg.SEL_F1_MENU_LINK).first
         try:
             await link_item.wait_for(state="visible", timeout=6_000)
         except Exception:
-            # ── DIAGNÓSTICO: que itens tem no menu? ──────────────────────────
             try:
                 menu_items = await page.locator("[role='menuitem']").all_inner_texts()
                 if menu_items:
                     log.warning("CPF %s — menu aberto mas 'Link Termo' ausente. Itens: %s", cpf, menu_items)
                 else:
-                    # Menu não abriu — loga body para entender o estado
                     body_snip = (await page.inner_text("body"))[:600]
                     log.warning("CPF %s — menu vazio/não abriu. Body: %s", cpf, body_snip)
             except Exception as de:
@@ -303,20 +324,40 @@ async def fase1_assinar_link(
             await _screenshot_on_error(page, f"fase1_sem_link_{cpf.replace('.','').replace('-','')}")
             log.info("CPF %s — 'Link Termo' ausente no menu; presumindo já assinado", cpf)
             return "aguardando_autorizacao"
-        await link_item.click()
-        await asyncio.sleep(1)
 
-        # 6. Recuperar o link copiado
+        log.info("CPF %s — clicando Link Termo...", cpf)
+        await link_item.click()
+        await asyncio.sleep(2)  # aguarda async clipboard
+
+        # 7. Recuperar link — 3 estratégias
         link_url: str | None = await page.evaluate("window.__vctex_link")
+        log.info("CPF %s — clipboard intercept: %s", cpf, repr(link_url)[:120])
 
         if not link_url or not link_url.startswith("http"):
-            # Fallback: tenta ler da clipboard via API
             try:
                 link_url = await page.evaluate("navigator.clipboard.readText()")
+                log.info("CPF %s — clipboard.readText(): %s", cpf, repr(link_url)[:120])
+            except Exception as ce:
+                log.warning("CPF %s — clipboard.readText() falhou: %s", cpf, str(ce)[:100])
+
+        if not link_url or not link_url.startswith("http"):
+            # Fallback DOM: procura âncora com URL do Plurio/autorização
+            try:
+                link_url = await page.evaluate("""() => {
+                    const anchors = Array.from(document.querySelectorAll('a[href]'));
+                    const found = anchors.find(a =>
+                        a.href.includes('plurio') || a.href.includes('autorizac') ||
+                        a.href.includes('assinar') || a.href.includes('termo')
+                    );
+                    return found ? found.href : null;
+                }""")
+                log.info("CPF %s — DOM anchor fallback: %s", cpf, repr(link_url)[:120])
             except Exception:
                 pass
 
         if not link_url or not link_url.startswith("http"):
+            log.error("CPF %s — FALHA: link de autorização não obtido. Todas estratégias falharam.", cpf)
+            await _screenshot_on_error(page, f"fase1_sem_link_clipboard_{cpf.replace('.','').replace('-','')}")
             return "erro:não foi possível obter o link de autorização"
 
         log.info("CPF %s — link obtido: %s", cpf, link_url[:60])

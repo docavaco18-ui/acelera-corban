@@ -100,6 +100,7 @@ class VCTexLeadWorker:
                     return {"status": "erro", "erro": "Sessão expirou antes da fase1"}
                 status = await fase1_assinar_link(page, cpf)
                 if status.startswith("erro"):
+                    log.error("Worker %d | CPF %s — fase1 retornou erro: %s", self.worker_id, cpf, status[5:])
                     return {"status": "erro", "erro": status[5:]}
                 await human_delay_between_actions(2.0, 4.0)
                 fase = "fase2"

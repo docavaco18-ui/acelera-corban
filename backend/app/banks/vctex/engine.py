@@ -94,6 +94,7 @@ class BotEngine:
             locale="pt-BR",
             timezone_id="America/Sao_Paulo",
             viewport={"width": 1366, "height": 768},
+            permissions=["clipboard-read", "clipboard-write"],
         )
         await ctx.add_init_script(
             """
