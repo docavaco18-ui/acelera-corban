@@ -273,7 +273,7 @@ async def fase1_assinar_link(
             log.error("fase1 CPF %s — menu Ações não abriu com nenhuma estratégia", cpf)
             return "erro:menu Ações não abriu"
 
-        # 5. Log atributos do menu item antes de clicar (diagnóstico)
+        # 5. Inspeciona menuitem e verifica se clipboard.writeText é patchável
         try:
             item_meta = await page.evaluate("""() => {
                 const items = document.querySelectorAll('[role="menuitem"]');
@@ -281,23 +281,36 @@ async def fase1_assinar_link(
                     text: el.textContent.trim().substring(0, 80),
                     href: el.href || el.getAttribute('href') || null,
                     dataUrl: el.dataset.url || el.dataset.href || null,
-                    html: el.innerHTML.substring(0, 200),
+                    hasInnerButton: el.querySelectorAll('button').length,
+                    html: el.innerHTML.substring(0, 300),
                 }));
             }""")
-            log.info("CPF %s — menuitem attrs: %s", cpf, str(item_meta)[:400])
+            log.info("CPF %s — menuitem attrs: %s", cpf, str(item_meta)[:600])
         except Exception:
             pass
 
-        # Intercepta clipboard + nova aba abertas pelo clique
+        # Verifica se clipboard API está disponível e patchável
+        try:
+            cb_info = await page.evaluate("""() => ({
+                hasClipboard: typeof navigator.clipboard === 'object',
+                hasWriteText: typeof navigator.clipboard?.writeText === 'function',
+            })""")
+            log.info("CPF %s — clipboard API: %s", cpf, cb_info)
+        except Exception:
+            pass
+
+        # Intercepta clipboard + execCommand
         await page.evaluate("""
             window.__vctex_link = null;
+            // Patch writeText
             try {
                 const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
                 navigator.clipboard.writeText = async (text) => {
                     window.__vctex_link = text;
                     try { return await orig(text); } catch(e) {}
                 };
-            } catch(e) {}
+            } catch(e) { window.__vctex_patch_err = String(e); }
+            // Patch execCommand (fallback legado)
             try {
                 const origExec = document.execCommand.bind(document);
                 document.execCommand = function(cmd, ...args) {
@@ -312,6 +325,11 @@ async def fase1_assinar_link(
                                 const v = active.value || '';
                                 if (v.startsWith('http')) window.__vctex_link = v;
                             }
+                            // Também varre todos textareas/inputs recém-criados
+                            document.querySelectorAll('input[value], textarea').forEach(el => {
+                                const v = el.value || '';
+                                if (v.startsWith('http') && !window.__vctex_link) window.__vctex_link = v;
+                            });
                         } catch(e) {}
                     }
                     return origExec(cmd, ...args);
@@ -319,7 +337,7 @@ async def fase1_assinar_link(
             } catch(e) {}
         """)
 
-        # 6. Clicar no item "Link Termo Autorização"
+        # 6. Encontrar item "Link Termo Autorização"
         link_item = page.locator(cfg.SEL_F1_MENU_LINK).first
         try:
             await link_item.wait_for(state="visible", timeout=6_000)
@@ -328,30 +346,53 @@ async def fase1_assinar_link(
                 menu_items = await page.locator("[role='menuitem']").all_inner_texts()
                 if menu_items:
                     log.warning("CPF %s — menu aberto mas 'Link Termo' ausente. Itens: %s", cpf, menu_items)
-                else:
-                    body_snip = (await page.inner_text("body"))[:600]
-                    log.warning("CPF %s — menu vazio/não abriu. Body: %s", cpf, body_snip)
             except Exception as de:
                 log.warning("CPF %s — erro ao diagnosticar menu: %s", cpf, str(de)[:100])
             await _screenshot_on_error(page, f"fase1_sem_link_{cpf.replace('.','').replace('-','')}")
             log.info("CPF %s — 'Link Termo' ausente no menu; presumindo já assinado", cpf)
             return "aguardando_autorizacao"
 
-        # Registra listener de nova aba — portal pode abrir o link direto em vez de copiar
+        # Registra listener de nova aba
         new_pages: list = []
         def _capture_new_page(p):
             new_pages.append(p)
         page.context.on("page", _capture_new_page)
 
-        log.info("CPF %s — clicando Link Termo...", cpf)
-        await link_item.click()
-        await asyncio.sleep(2.5)  # aguarda clipboard async ou nova aba
+        # Clica no botão interno do menuitem (ContentCopy) se existir, senão no container
+        log.info("CPF %s — clicando Link Termo (botão interno)...", cpf)
+        inner_copy_btn = page.locator("[role='menuitem']:has-text('Link Termo') button").first
+        if await inner_copy_btn.count() > 0:
+            try:
+                await inner_copy_btn.click(timeout=4_000)
+            except Exception:
+                await page.evaluate("""() => {
+                    const items = document.querySelectorAll('[role="menuitem"]');
+                    for (const li of items) {
+                        if (li.textContent.includes('Link Termo')) {
+                            const btn = li.querySelector('button');
+                            if (btn) { btn.click(); return; }
+                            li.click();
+                            return;
+                        }
+                    }
+                }""")
+        else:
+            await link_item.click()
 
+        await asyncio.sleep(3.0)  # aguarda clipboard async ou nova aba
         page.context.remove_listener("page", _capture_new_page)
 
-        # 7. Recuperar link — 4 estratégias em ordem de prioridade
+        # Log estado pós-clique
+        try:
+            patch_err = await page.evaluate("window.__vctex_patch_err")
+            if patch_err:
+                log.warning("CPF %s — clipboard patch erro: %s", cpf, patch_err)
+        except Exception:
+            pass
 
-        # Estratégia A: nova aba/popup abriu com o link
+        # 7. Recuperar link — 5 estratégias em ordem de prioridade
+
+        # A: nova aba/popup abriu com o link
         link_url: str | None = None
         if new_pages:
             np = new_pages[0]
@@ -360,19 +401,19 @@ async def fase1_assinar_link(
             log.info("CPF %s — nova aba detectada: %s", cpf, candidate[:120])
             if candidate and candidate.startswith("http") and "about:blank" not in candidate:
                 link_url = candidate
-                plurio_page = np  # reutiliza a aba já aberta
+                plurio_page = np
             else:
                 try:
                     await np.close()
                 except Exception:
                     pass
 
-        # Estratégia B: intercept clipboard.writeText
+        # B: intercept clipboard.writeText
         if not link_url:
             link_url = await page.evaluate("window.__vctex_link")
             log.info("CPF %s — clipboard intercept: %s", cpf, repr(link_url)[:120])
 
-        # Estratégia C: clipboard.readText()
+        # C: clipboard.readText()
         if not link_url or not link_url.startswith("http"):
             try:
                 link_url = await page.evaluate("navigator.clipboard.readText()")
@@ -380,7 +421,7 @@ async def fase1_assinar_link(
             except Exception as ce:
                 log.warning("CPF %s — clipboard.readText() falhou: %s", cpf, str(ce)[:100])
 
-        # Estratégia D: DOM anchor
+        # D: DOM anchor
         if not link_url or not link_url.startswith("http"):
             try:
                 link_url = await page.evaluate("""() => {
@@ -391,12 +432,37 @@ async def fase1_assinar_link(
                     );
                     return found ? found.href : null;
                 }""")
-                log.info("CPF %s — DOM anchor fallback: %s", cpf, repr(link_url)[:120])
+                log.info("CPF %s — DOM anchor: %s", cpf, repr(link_url)[:120])
+            except Exception:
+                pass
+
+        # E: scan DOM inteiro por qualquer URL https:// que possa ter aparecido
+        if not link_url or not link_url.startswith("http"):
+            try:
+                link_url = await page.evaluate("""() => {
+                    const all = document.querySelectorAll('*');
+                    for (const el of all) {
+                        for (const attr of ['value', 'href', 'data-url', 'data-href', 'title']) {
+                            const v = el.getAttribute ? el.getAttribute(attr) : el[attr];
+                            if (typeof v === 'string' && v.startsWith('https://') && v.length > 20) {
+                                if (v.includes('plurio') || v.includes('autorizac') || v.includes('assinar')) {
+                                    return v;
+                                }
+                            }
+                        }
+                        if (el.children.length === 0) {
+                            const t = (el.textContent || '').trim();
+                            if (t.startsWith('https://') && t.length > 20 && t.length < 500) return t;
+                        }
+                    }
+                    return null;
+                }""")
+                log.info("CPF %s — DOM scan URL: %s", cpf, repr(link_url)[:120])
             except Exception:
                 pass
 
         if not link_url or not link_url.startswith("http"):
-            log.error("CPF %s — FALHA: link de autorização não obtido. Todas estratégias falharam.", cpf)
+            log.error("CPF %s — FALHA: link não obtido. Todas estratégias falharam.", cpf)
             await _screenshot_on_error(page, f"fase1_sem_link_clipboard_{cpf.replace('.','').replace('-','')}")
             return "erro:não foi possível obter o link de autorização"
 
