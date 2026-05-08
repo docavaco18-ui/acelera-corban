@@ -26,6 +26,7 @@ class _Runtime:
     inflight: set[str] = field(default_factory=set)
     worker_tasks: list[asyncio.Task] = field(default_factory=list)
     run_task: asyncio.Task | None = None
+    stop_event: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 _runtimes: dict[str, _Runtime] = {}
@@ -158,7 +159,7 @@ async def start_bot(
 
                 async def _wrap(worker=w):
                     try:
-                        await worker.run(rt.queue)
+                        await worker.run(rt.queue, stop_event=rt.stop_event)
                     finally:
                         logger.info("vctex worker_%d encerrou", worker.worker_id)
                         # Se nenhum worker ativo restante, limpa inflight completamente
@@ -175,6 +176,7 @@ async def start_bot(
             refill = asyncio.create_task(_refill_queue())
             handle.tasks.append(refill)
             await refill
+            rt.stop_event.set()
             # Espera workers escoarem
             for t in rt.worker_tasks:
                 try:

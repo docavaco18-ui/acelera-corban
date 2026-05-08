@@ -187,8 +187,13 @@ class VCTexLeadWorker:
             log.error("vctex update failed | worker=%d cpf=%s updates=%s err=%s",
                       self.worker_id, cpf, list(clean.keys()), str(e)[:200])
 
-    async def run(self, queue: asyncio.Queue):
-        """Loop principal: pega leads da fila e processa."""
+    async def run(self, queue: asyncio.Queue, stop_event: asyncio.Event | None = None):
+        """Loop principal: pega leads da fila e processa.
+
+        Para quando stop_event é setado (sinalizado pelo bot_service após refill terminar)
+        OU após 5 minutos de fila vazia consecutiva (fallback de segurança).
+        Espelha o comportamento do V8Worker que só sai quando rt.running=False.
+        """
         if self.startup_delay > 0:
             await asyncio.sleep(self.startup_delay)
 
@@ -208,14 +213,18 @@ class VCTexLeadWorker:
 
                 empty_polls = 0
                 while True:
+                    # Verifica stop_event (bot_service sinalizou fim)
+                    if stop_event and stop_event.is_set() and queue.empty():
+                        log.info("Worker %d — stop_event setado e fila vazia, encerrando", self.worker_id)
+                        break
                     try:
                         record = await asyncio.wait_for(queue.get(), timeout=2.0)
                         empty_polls = 0
                     except asyncio.TimeoutError:
                         empty_polls += 1
-                        # Sai só após ~30s de fila vazia consecutiva (refill é a cada 5s)
-                        if empty_polls >= 15:
-                            log.info("Worker %d — fila vazia há ~30s, encerrando", self.worker_id)
+                        # Fallback: 5 minutos de fila vazia sem stop_event (150 × 2s)
+                        if empty_polls >= 150:
+                            log.info("Worker %d — fila vazia há ~5min, encerrando", self.worker_id)
                             break
                         continue
 
