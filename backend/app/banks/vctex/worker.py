@@ -142,6 +142,22 @@ class VCTexLeadWorker:
         "consult_id",  # caso futuro
     }
 
+    @staticmethod
+    def _parse_valor(v) -> float | None:
+        """Converte 'R$ 9.733,57' ou '9733.57' para float. Retorna None se inválido."""
+        if v is None:
+            return None
+        s = str(v).strip()
+        # Remove prefixo "R$" e espaços não-quebráveis
+        s = s.replace("R$", "").replace("\xa0", "").replace(" ", "").strip()
+        # Formato BR: 9.733,57 → 9733.57
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        try:
+            return float(s)
+        except (ValueError, TypeError):
+            return None
+
     @classmethod
     def _split_updates(cls, updates: dict) -> dict:
         """Filtra updates pra colunas que existem em vctex_leads.
@@ -150,7 +166,10 @@ class VCTexLeadWorker:
         extras: dict = {}
         for k, v in updates.items():
             if k in cls._ALLOWED_COLS:
-                clean[k] = v
+                if k == "valor_liberado":
+                    clean[k] = cls._parse_valor(v)
+                else:
+                    clean[k] = v
             else:
                 extras[k] = v
         if extras:
