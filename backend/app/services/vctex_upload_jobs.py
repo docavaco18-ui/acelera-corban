@@ -131,9 +131,11 @@ async def _run(job_id: str, content: bytes, owner_id: str, batch_id: str) -> Non
         batch = leads[i:i + BATCH_SIZE]
         try:
             def _upsert(b=batch):
+                # ignore_duplicates=False: se CPF já existe, atualiza batch_id+status
+                # (re-upload move os leads pra nova batch e reseta pra pendente)
                 return (
                     scoped(db(), "vctex_leads", owner_id)
-                    .upsert(b, on_conflict="owner_id,cpf", ignore_duplicates=True)
+                    .upsert(b, on_conflict="owner_id,cpf")
                     .execute()
                 )
             res = await loop.run_in_executor(None, _upsert)

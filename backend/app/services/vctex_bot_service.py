@@ -43,7 +43,20 @@ async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)
         return q.limit(limit).execute().data or []
-    return await asyncio.to_thread(_q)
+
+    rows = await asyncio.to_thread(_q)
+
+    # Fallback: se batch_id foi passado mas não tem leads nessa batch,
+    # processa TODOS os leads pendentes do user (evita fila vazia por batch vazia)
+    if not rows and batch_id is not None:
+        logger.warning("vctex batch %s vazia, buscando leads sem filtro de batch", batch_id)
+        def _q_all():
+            return scoped(db, "vctex_leads", user_id).select("*").in_(
+                "status", ["pendente", "fase0", "fase1", "fase2", "aguardando_autorizacao", "erro"]
+            ).limit(limit).execute().data or []
+        rows = await asyncio.to_thread(_q_all)
+
+    return rows
 
 
 async def start_bot(
