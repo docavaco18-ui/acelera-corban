@@ -84,11 +84,13 @@ class VCTexLeadWorker:
                 if status == "ja_existe":
                     fase = "fase1"
                     updates["status"] = "fase1"
+                    updates["erro"] = None  # limpa erro anterior ao reiniciar
                 elif status.startswith("erro"):
                     return {"status": "erro", "erro": status[5:]}
                 else:
                     fase = "fase1"
                     updates["status"] = "fase1"
+                    updates["erro"] = None  # limpa erro anterior ao reiniciar
                     log.info("Worker %d | CPF %s — aguardando portal indexar (30s)", self.worker_id, cpf)
                     await asyncio.sleep(30)
                     await human_delay_between_actions(2.0, 5.0)

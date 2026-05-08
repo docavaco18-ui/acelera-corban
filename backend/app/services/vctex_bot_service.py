@@ -38,7 +38,7 @@ async def _broadcast(redis, event: dict):
 async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None = None) -> list[dict]:
     def _q():
         q = scoped(db, "vctex_leads", user_id).select("*").in_(
-            "status", ["pendente", "fase0", "fase1", "fase2", "aguardando_autorizacao", "erro"]
+            "status", ["pendente", "fase1", "fase2", "aguardando_autorizacao", "erro"]
         )
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)
@@ -52,7 +52,7 @@ async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None
         logger.warning("vctex batch %s vazia, buscando leads sem filtro de batch", batch_id)
         def _q_all():
             return scoped(db, "vctex_leads", user_id).select("*").in_(
-                "status", ["pendente", "fase0", "fase1", "fase2", "aguardando_autorizacao", "erro"]
+                "status", ["pendente", "fase1", "fase2", "aguardando_autorizacao", "erro"]
             ).limit(limit).execute().data or []
         rows = await asyncio.to_thread(_q_all)
 
@@ -128,6 +128,11 @@ async def start_bot(
                     await rt.queue.put(lead)
                     added += 1
 
+                logger.info(
+                    "vctex refill[%s] fetched=%d added=%d queue=%d inflight=%d batch=%s",
+                    user_id, len(pendentes), added, rt.queue.qsize(), len(rt.inflight), batch_id,
+                )
+
                 if added == 0 and rt.queue.empty() and not rt.inflight:
                     idle_ticks += 1
                     if idle_ticks >= 3:
@@ -155,8 +160,13 @@ async def start_bot(
                     try:
                         await worker.run(rt.queue)
                     finally:
-                        # Quando worker termina (queue empty), libera inflight
-                        pass
+                        logger.info("vctex worker_%d encerrou", worker.worker_id)
+                        # Se nenhum worker ativo restante, limpa inflight completamente
+                        # para que o refill perceba idle e encerre sem CPFs presos
+                        active = [t for t in rt.worker_tasks if not t.done()]
+                        if len(active) <= 1:  # este task ainda está no finally
+                            rt.inflight.clear()
+                            logger.info("vctex todos workers encerraram; inflight limpo")
 
                 t = asyncio.create_task(_wrap())
                 rt.worker_tasks.append(t)
