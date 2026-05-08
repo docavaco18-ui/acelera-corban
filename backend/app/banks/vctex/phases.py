@@ -273,10 +273,24 @@ async def fase1_assinar_link(
             log.error("fase1 CPF %s — menu Ações não abriu com nenhuma estratégia", cpf)
             return "erro:menu Ações não abriu"
 
-        # 5. Interceptar clipboard antes de clicar no item
+        # 5. Log atributos do menu item antes de clicar (diagnóstico)
+        try:
+            item_meta = await page.evaluate("""() => {
+                const items = document.querySelectorAll('[role="menuitem"]');
+                return Array.from(items).map(el => ({
+                    text: el.textContent.trim().substring(0, 80),
+                    href: el.href || el.getAttribute('href') || null,
+                    dataUrl: el.dataset.url || el.dataset.href || null,
+                    html: el.innerHTML.substring(0, 200),
+                }));
+            }""")
+            log.info("CPF %s — menuitem attrs: %s", cpf, str(item_meta)[:400])
+        except Exception:
+            pass
+
+        # Intercepta clipboard + nova aba abertas pelo clique
         await page.evaluate("""
             window.__vctex_link = null;
-            // Intercepta navigator.clipboard.writeText
             try {
                 const orig = navigator.clipboard.writeText.bind(navigator.clipboard);
                 navigator.clipboard.writeText = async (text) => {
@@ -284,7 +298,6 @@ async def fase1_assinar_link(
                     try { return await orig(text); } catch(e) {}
                 };
             } catch(e) {}
-            // Intercepta document.execCommand('copy') — portais legados
             try {
                 const origExec = document.execCommand.bind(document);
                 document.execCommand = function(cmd, ...args) {
@@ -294,7 +307,6 @@ async def fase1_assinar_link(
                             if (sel && sel.toString().startsWith('http')) {
                                 window.__vctex_link = sel.toString();
                             }
-                            // Tenta ler de input/textarea selecionada
                             const active = document.activeElement;
                             if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA')) {
                                 const v = active.value || '';
@@ -325,14 +337,42 @@ async def fase1_assinar_link(
             log.info("CPF %s — 'Link Termo' ausente no menu; presumindo já assinado", cpf)
             return "aguardando_autorizacao"
 
+        # Registra listener de nova aba — portal pode abrir o link direto em vez de copiar
+        new_pages: list = []
+        def _capture_new_page(p):
+            new_pages.append(p)
+        page.context.on("page", _capture_new_page)
+
         log.info("CPF %s — clicando Link Termo...", cpf)
         await link_item.click()
-        await asyncio.sleep(2)  # aguarda async clipboard
+        await asyncio.sleep(2.5)  # aguarda clipboard async ou nova aba
 
-        # 7. Recuperar link — 3 estratégias
-        link_url: str | None = await page.evaluate("window.__vctex_link")
-        log.info("CPF %s — clipboard intercept: %s", cpf, repr(link_url)[:120])
+        page.context.remove_listener("page", _capture_new_page)
 
+        # 7. Recuperar link — 4 estratégias em ordem de prioridade
+
+        # Estratégia A: nova aba/popup abriu com o link
+        link_url: str | None = None
+        if new_pages:
+            np = new_pages[0]
+            await asyncio.sleep(0.5)
+            candidate = np.url
+            log.info("CPF %s — nova aba detectada: %s", cpf, candidate[:120])
+            if candidate and candidate.startswith("http") and "about:blank" not in candidate:
+                link_url = candidate
+                plurio_page = np  # reutiliza a aba já aberta
+            else:
+                try:
+                    await np.close()
+                except Exception:
+                    pass
+
+        # Estratégia B: intercept clipboard.writeText
+        if not link_url:
+            link_url = await page.evaluate("window.__vctex_link")
+            log.info("CPF %s — clipboard intercept: %s", cpf, repr(link_url)[:120])
+
+        # Estratégia C: clipboard.readText()
         if not link_url or not link_url.startswith("http"):
             try:
                 link_url = await page.evaluate("navigator.clipboard.readText()")
@@ -340,8 +380,8 @@ async def fase1_assinar_link(
             except Exception as ce:
                 log.warning("CPF %s — clipboard.readText() falhou: %s", cpf, str(ce)[:100])
 
+        # Estratégia D: DOM anchor
         if not link_url or not link_url.startswith("http"):
-            # Fallback DOM: procura âncora com URL do Plurio/autorização
             try:
                 link_url = await page.evaluate("""() => {
                     const anchors = Array.from(document.querySelectorAll('a[href]'));
@@ -362,9 +402,10 @@ async def fase1_assinar_link(
 
         log.info("CPF %s — link obtido: %s", cpf, link_url[:60])
 
-        # 7. Abrir nova aba com o link do Plurio
-        plurio_page = await page.context.new_page()
-        await plurio_page.goto(link_url, timeout=cfg.timeout_auth)
+        # 8. Usar aba já aberta (nova aba) ou abrir manualmente
+        if plurio_page is None:
+            plurio_page = await page.context.new_page()
+            await plurio_page.goto(link_url, timeout=cfg.timeout_auth)
         await plurio_page.wait_for_load_state("networkidle", timeout=cfg.timeout_auth)
         await asyncio.sleep(1)
 
