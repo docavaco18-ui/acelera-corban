@@ -112,7 +112,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             except Exception:
                 pass
 
-        db.table("broadcast_numbers").upsert(record).execute()
+        db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
         updated.append(phone_id)
 
     return {"updated": updated}
