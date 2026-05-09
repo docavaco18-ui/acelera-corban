@@ -20,7 +20,7 @@ async def websocket_events(ws: WebSocket, token: str = ""):
     _connections.setdefault(user.user_id, set()).add(ws)
     redis = await get_redis()
     pubsub = redis.pubsub()
-    await pubsub.subscribe("bot:events")
+    await pubsub.subscribe("bot:events", "broadcast:events")
     try:
         async for message in pubsub.listen():
             if message["type"] != "message":
@@ -37,5 +37,5 @@ async def websocket_events(ws: WebSocket, token: str = ""):
         pass
     finally:
         _connections.get(user.user_id, set()).discard(ws)
-        await pubsub.unsubscribe("bot:events")
+        await pubsub.unsubscribe("bot:events", "broadcast:events")
         await pubsub.aclose()
