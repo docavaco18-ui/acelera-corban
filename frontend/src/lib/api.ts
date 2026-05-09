@@ -215,3 +215,38 @@ export const chatwootApi = {
     api.get<{ leads: any[]; limit: number; offset: number }>("/api/chatwoot/leads", { params }).then((r) => r.data),
   labels: () => api.get<{ labels: { label: string; count: number }[] }>("/api/chatwoot/labels").then((r) => r.data.labels),
 };
+
+const broadcastAxios = axios.create({ baseURL: BASE_URL });
+
+// Auth interceptor only — no bankPrefix
+broadcastAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const broadcastApi = {
+  getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
+  saveCredentials: (data: { email: string; password: string; meta_token?: string }) =>
+    broadcastAxios.post("/api/broadcast/credentials", data),
+  listNumbers: () => broadcastAxios.get("/api/broadcast/numbers"),
+  refreshNumbers: () => broadcastAxios.post("/api/broadcast/numbers/refresh"),
+  analyzeCSV: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return broadcastAxios.post("/api/broadcast/analyze", form);
+  },
+  confirmDispatch: (data: { dispatch_id: string; assignments: any[] }) =>
+    broadcastAxios.post("/api/broadcast/dispatch", data),
+  listDispatches: () => broadcastAxios.get("/api/broadcast/dispatches"),
+  getDispatch: (id: string) => broadcastAxios.get(`/api/broadcast/dispatches/${id}`),
+  pauseDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/pause`),
+  resumeDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/resume`),
+  revokeDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/revoke`),
+  getAnalytics: () => broadcastAxios.get("/api/broadcast/analytics"),
+  getAlerts: () => broadcastAxios.get("/api/broadcast/alerts"),
+};
