@@ -1,79 +1,52 @@
 from __future__ import annotations
 
-import json
 from typing import Any
-
-import anthropic
-
-SYSTEM_PROMPT = """Você é um especialista em disparos WhatsApp Business. Dado um conjunto de números e o total de leads, você decide como distribuir os leads entre os números disponíveis para maximizar entrega e minimizar risco de bloqueio.
-
-Regras:
-- Excluir números com quality_rating=RED ou is_paused=True, salvo se não houver alternativas
-- Preferir números GREEN sobre YELLOW
-- Respeitar daily_limit de cada número
-- Distribuir proporcionalmente ao daily_limit quando múltiplos números disponíveis
-- Nunca distribuir mais leads do que o total disponível
-- Fornecer justificativa e riscos identificados"""
-
-PROPOSE_SPLIT_TOOL = {
-    "name": "propose_split",
-    "description": "Propõe a divisão de leads entre números WhatsApp disponíveis",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "assignments": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "phone_id": {"type": "string"},
-                        "planned_count": {"type": "integer"},
-                        "reason": {"type": "string"},
-                    },
-                    "required": ["phone_id", "planned_count", "reason"],
-                },
-            },
-            "justification": {"type": "string"},
-            "risks": {"type": "string"},
-        },
-        "required": ["assignments", "justification", "risks"],
-    },
-}
 
 
 async def advise_split(
     numbers: list[dict],
     total_leads: int,
-    api_key: str,
+    api_key: str = "",
 ) -> dict[str, Any]:
     """
+    Split leads proportionally by daily_limit.
+    Excludes RED/paused numbers when alternatives exist.
     numbers: [{phone_id, quality_rating, messaging_tier, daily_limit, is_paused}]
-    Returns: {assignments: [{phone_id, planned_count, reason}], justification, risks}
     """
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    active = [n for n in numbers if not n.get("is_paused") and n.get("quality_rating") != "RED"]
+    if not active:
+        active = numbers  # fallback: use all if none qualify
 
-    user_message = json.dumps({
-        "total_leads": total_leads,
-        "numbers": numbers,
-    }, ensure_ascii=False)
+    total_capacity = sum(n.get("daily_limit", 1000) for n in active)
+    remaining = total_leads
+    assignments = []
 
-    response = await client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=[
-            {
-                "type": "text",
-                "text": SYSTEM_PROMPT,
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
-        tools=[PROPOSE_SPLIT_TOOL],
-        tool_choice={"type": "tool", "name": "propose_split"},
-        messages=[{"role": "user", "content": user_message}],
-    )
+    for i, n in enumerate(active):
+        limit = n.get("daily_limit", 1000)
+        if i == len(active) - 1:
+            planned = remaining
+        else:
+            planned = min(round(total_leads * limit / total_capacity), remaining, limit)
+        remaining -= planned
+        quality = n.get("quality_rating", "UNKNOWN")
+        assignments.append({
+            "phone_id": n["phone_id"],
+            "planned_count": planned,
+            "reason": f"Qualidade {quality}, limite diário {limit}",
+        })
 
-    for block in response.content:
-        if block.type == "tool_use" and block.name == "propose_split":
-            return block.input
+    risks = []
+    red = [n for n in numbers if n.get("quality_rating") == "RED"]
+    paused = [n for n in numbers if n.get("is_paused")]
+    if red:
+        risks.append(f"{len(red)} número(s) com qualidade RED excluído(s)")
+    if paused:
+        risks.append(f"{len(paused)} número(s) pausado(s) excluído(s)")
+    if total_leads > total_capacity:
+        risks.append(f"Total de leads ({total_leads}) excede capacidade diária ({total_capacity})")
 
-    raise ValueError("Claude did not call propose_split tool")
+    return {
+        "assignments": assignments,
+        "justification": f"Distribuição proporcional ao limite diário entre {len(active)} número(s) ativo(s).",
+        "risks": "; ".join(risks) if risks else "Nenhum risco identificado.",
+    }

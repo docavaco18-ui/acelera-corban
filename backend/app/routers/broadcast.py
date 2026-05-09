@@ -120,9 +120,6 @@ async def analyze_csv(
 ):
     db = get_db()
 
-    if not settings.anthropic_api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY não configurado")
-
     csv_bytes = await file.read()
     total_leads = max(0, csv_bytes.count(b"\n") - 1)  # rough count minus header
 
