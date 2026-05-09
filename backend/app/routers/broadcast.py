@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import io
 import uuid
+from datetime import datetime, timezone
 from typing import Any, Optional
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -100,7 +102,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
                 "quality_rating": q["quality_rating"],
                 "messaging_tier": q["messaging_tier"],
                 "daily_limit": q["daily_limit"],
-                "last_meta_check_at": "now()",
+                "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
             }).execute()
             updated.append(phone_id)
         except Exception:
@@ -155,9 +157,8 @@ async def analyze_csv(
     }).execute()
 
     # Store csv bytes temporarily in Redis
-    import redis as syncredis
-    r = syncredis.from_url(settings.redis_url)
-    r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
+    r = aioredis.from_url(settings.redis_url)
+    await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
 
     return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split}
 
@@ -196,9 +197,8 @@ async def confirm_dispatch(
     password = decrypt(creds.data["password_enc"])
     vendeai = VendeAIClient(email, password)
 
-    import redis as syncredis
-    r = syncredis.from_url(settings.redis_url)
-    csv_bytes = r.get(f"broadcast:csv:{body.dispatch_id}")
+    r = aioredis.from_url(settings.redis_url)
+    csv_bytes = await r.get(f"broadcast:csv:{body.dispatch_id}")
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou. Faça upload novamente.")
 
@@ -233,7 +233,7 @@ async def confirm_dispatch(
 
     db.table("broadcast_dispatches").update({
         "status": "running",
-        "started_at": "now()",
+        "started_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", body.dispatch_id).execute()
 
     return {"ok": True, "mailing_ids": mailing_ids}
@@ -342,7 +342,7 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
         .eq("dispatch_id", dispatch_id).eq("owner_id", user_id).execute()
     db.table("broadcast_dispatches").update({
         "status": "revoked",
-        "finished_at": "now()",
+        "finished_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
     return {"ok": True}
 
