@@ -6,6 +6,8 @@ import Records from "./pages/Records";
 import Login from "./pages/Login";
 import Admin from "./pages/Admin";
 import CRM from "./pages/CRM";
+import Chatwoot from "./pages/Chatwoot";
+import Disparo from "./pages/Disparo";
 import { useSession } from "./hooks/useSession";
 import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
@@ -56,6 +58,8 @@ function TopBar() {
         ["/", "Higienização"],
         ["/dashboard", "Dashboard"],
         ["/crm", "CRM"],
+        ["/chatwoot", "CRM Chatwoot"],
+        ["/disparo", "Disparo WhatsApp"],
         ["/registros", "Registros"],
         ["/configuracoes", "Configurações"],
         ...(isAdmin ? [["/admin", "Admin"] as const] : []),
@@ -113,6 +117,8 @@ export default function App() {
                 <Route path="/dashboard" element={<DashboardAgregado />} />
                 <Route path="/configuracoes" element={<Configuracoes />} />
                 <Route path="/crm" element={<CRM />} />
+                <Route path="/chatwoot" element={<Chatwoot />} />
+                <Route path="/disparo" element={<Disparo />} />
                 <Route path="/registros" element={<Records />} />
                 <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
               </Routes>
