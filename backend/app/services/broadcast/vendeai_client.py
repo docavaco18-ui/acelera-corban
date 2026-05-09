@@ -42,6 +42,18 @@ class VendeAIClient:
     async def list_inboxes(self) -> list[dict]:
         token = await self._ensure_token()
         async with httpx.AsyncClient() as client:
+            # Try official API first, fall back to BFF
+            try:
+                r = await client.post(
+                    "https://app.vendeaitecnologia.com.br/api/message-handler/mailing/inboxes/",
+                    headers=self._headers(token),
+                    timeout=15,
+                )
+                r.raise_for_status()
+                data = r.json()
+                return data if isinstance(data, list) else data.get("results", [])
+            except Exception:
+                pass
             r = await client.get(
                 f"{BASE_URL}/api/bff/broadcast/inboxes/",
                 headers=self._headers(token),
