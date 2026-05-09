@@ -42,6 +42,7 @@ export default function Configuracoes() {
   const [metaToken, setMetaToken] = useState('');
   const [savingBroadcast, setSavingBroadcast] = useState(false);
   const [broadcastSaved, setBroadcastSaved] = useState(false);
+  const [broadcastError, setBroadcastError] = useState('');
 
   // CRM password state
   const [hasCrmPassword, setHasCrmPassword] = useState(false);
@@ -52,6 +53,7 @@ export default function Configuracoes() {
 
   const handleSaveBroadcast = async () => {
     setSavingBroadcast(true);
+    setBroadcastError('');
     try {
       await broadcastApi.saveCredentials({
         email: vendeaiEmail,
@@ -60,8 +62,8 @@ export default function Configuracoes() {
       });
       setBroadcastSaved(true);
       setTimeout(() => setBroadcastSaved(false), 3000);
-    } catch {
-      // silent
+    } catch (e: any) {
+      setBroadcastError(e?.response?.data?.detail || e?.message || 'Erro ao salvar');
     } finally {
       setSavingBroadcast(false);
     }
@@ -375,6 +377,9 @@ export default function Configuracoes() {
           >
             {broadcastSaved ? 'Salvo!' : savingBroadcast ? 'Salvando...' : 'Salvar'}
           </button>
+          {broadcastError && (
+            <p style={{ color: '#ff4444', fontSize: 13, margin: '8px 0 0' }}>{broadcastError}</p>
+          )}
         </div>
       </div>
     </div>

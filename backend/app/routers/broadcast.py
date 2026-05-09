@@ -77,36 +77,43 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         raise HTTPException(400, "Configure credenciais primeiro")
 
     meta_token = decrypt(creds.data.get("meta_token_enc"))
-    if not meta_token:
-        raise HTTPException(400, "Meta token não configurado")
-
     vendeai_email = decrypt(creds.data.get("email_enc"))
     vendeai_pass = decrypt(creds.data.get("password_enc"))
 
-    # Pull inboxes from VendeAI to discover phone_ids
     client = VendeAIClient(vendeai_email, vendeai_pass)
     inboxes = await client.list_inboxes()
 
-    meta = MetaClient(meta_token)
+    meta = MetaClient(meta_token) if meta_token else None
     updated = []
     for inbox in inboxes:
         phone_id = str(inbox.get("phone_id") or inbox.get("id") or "")
         if not phone_id:
             continue
-        try:
-            q = await meta.get_phone_quality(phone_id)
-            db.table("broadcast_numbers").upsert({
-                "owner_id": user_id,
-                "phone_id": phone_id,
-                "display_phone": q["display_phone"] or inbox.get("inbox_phone", ""),
-                "quality_rating": q["quality_rating"],
-                "messaging_tier": q["messaging_tier"],
-                "daily_limit": q["daily_limit"],
-                "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
-            }).execute()
-            updated.append(phone_id)
-        except Exception:
-            pass
+
+        record: dict = {
+            "owner_id": user_id,
+            "phone_id": phone_id,
+            "display_phone": inbox.get("inbox_phone", "") or inbox.get("phone", "") or phone_id,
+            "quality_rating": "UNKNOWN",
+            "messaging_tier": None,
+            "daily_limit": 1000,
+        }
+
+        if meta:
+            try:
+                q = await meta.get_phone_quality(phone_id)
+                record.update({
+                    "display_phone": q["display_phone"] or record["display_phone"],
+                    "quality_rating": q["quality_rating"],
+                    "messaging_tier": q["messaging_tier"],
+                    "daily_limit": q["daily_limit"],
+                    "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
+                })
+            except Exception:
+                pass
+
+        db.table("broadcast_numbers").upsert(record).execute()
+        updated.append(phone_id)
 
     return {"updated": updated}
 
