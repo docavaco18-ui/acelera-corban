@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { credentialsApi, crmSettingsApi } from "../lib/api";
+import { credentialsApi, crmSettingsApi, broadcastApi } from "../lib/api";
 import { useBank } from "../hooks/useBank";
 import { useSession } from "../hooks/useSession";
 
@@ -36,12 +36,36 @@ export default function Configuracoes() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
+  // Disparo WhatsApp state
+  const [vendeaiEmail, setVendeaiEmail] = useState('');
+  const [vendeaiPassword, setVendeaiPassword] = useState('');
+  const [metaToken, setMetaToken] = useState('');
+  const [savingBroadcast, setSavingBroadcast] = useState(false);
+  const [broadcastSaved, setBroadcastSaved] = useState(false);
+
   // CRM password state
   const [hasCrmPassword, setHasCrmPassword] = useState(false);
   const [crmPwd, setCrmPwd] = useState("");
   const [crmPwdConfirm, setCrmPwdConfirm] = useState("");
   const [crmBusy, setCrmBusy] = useState(false);
   const [crmMsg, setCrmMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const handleSaveBroadcast = async () => {
+    setSavingBroadcast(true);
+    try {
+      await broadcastApi.saveCredentials({
+        email: vendeaiEmail,
+        password: vendeaiPassword,
+        meta_token: metaToken || undefined,
+      });
+      setBroadcastSaved(true);
+      setTimeout(() => setBroadcastSaved(false), 3000);
+    } catch {
+      // silent
+    } finally {
+      setSavingBroadcast(false);
+    }
+  };
 
   const load = async () => {
     try {
@@ -283,6 +307,76 @@ export default function Configuracoes() {
           </div>
         </div>
       )}
+
+      {/* Disparo WhatsApp */}
+      <div style={{
+        background: '#0d0d1f',
+        border: '1px solid #1e1e3a',
+        borderRadius: 12,
+        padding: 24,
+        marginTop: 24,
+        maxWidth: 760,
+      }}>
+        <h3 style={{ color: '#6366f1', marginBottom: 16, fontSize: 16, margin: '0 0 16px 0' }}>
+          Disparo WhatsApp
+        </h3>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <label style={{ color: '#94a3b8', fontSize: 13 }}>VendeAI E-mail</label>
+          <input
+            type="text"
+            value={vendeaiEmail}
+            onChange={e => setVendeaiEmail(e.target.value)}
+            placeholder="seu@email.com"
+            style={{
+              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
+              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
+            }}
+          />
+
+          <label style={{ color: '#94a3b8', fontSize: 13 }}>VendeAI Senha</label>
+          <input
+            type="password"
+            value={vendeaiPassword}
+            onChange={e => setVendeaiPassword(e.target.value)}
+            placeholder="Em branco = manter existente"
+            style={{
+              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
+              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
+            }}
+          />
+
+          <label style={{ color: '#94a3b8', fontSize: 13 }}>Meta Graph API Token</label>
+          <input
+            type="password"
+            value={metaToken}
+            onChange={e => setMetaToken(e.target.value)}
+            placeholder="EAAxxxxx..."
+            style={{
+              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
+              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
+            }}
+          />
+
+          <p style={{ color: '#475569', fontSize: 12, margin: 0 }}>
+            Credenciais Chatwoot: configure na seção CRM Chatwoot
+          </p>
+
+          <button
+            onClick={handleSaveBroadcast}
+            disabled={savingBroadcast}
+            style={{
+              background: broadcastSaved ? '#00ff88' : '#6366f1',
+              color: broadcastSaved ? '#080818' : '#fff',
+              border: 'none', borderRadius: 8, padding: '10px 20px',
+              cursor: 'pointer', fontWeight: 600, fontSize: 14,
+              alignSelf: 'flex-start', transition: 'all 0.2s',
+            }}
+          >
+            {broadcastSaved ? 'Salvo!' : savingBroadcast ? 'Salvando...' : 'Salvar'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
