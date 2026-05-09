@@ -61,7 +61,9 @@ class VendeAIClient:
             )
             r.raise_for_status()
             data = r.json()
-            return data if isinstance(data, list) else data.get("results", [])
+            if isinstance(data, list):
+                return data
+            return data.get("inboxes") or data.get("results") or []
 
     async def list_mailings(self, page: int = 1, page_size: int = 100) -> dict:
         token = await self._ensure_token()

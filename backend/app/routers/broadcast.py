@@ -93,7 +93,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         record: dict = {
             "owner_id": user_id,
             "phone_id": phone_id,
-            "display_phone": inbox.get("inbox_phone", "") or inbox.get("phone", "") or phone_id,
+            "display_phone": inbox.get("phone_number", "") or inbox.get("inbox_phone", "") or inbox.get("name", "") or phone_id,
             "quality_rating": "UNKNOWN",
             "messaging_tier": None,
             "daily_limit": 1000,
