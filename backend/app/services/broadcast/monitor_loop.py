@@ -47,9 +47,20 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
         return
 
     creds = creds_resp.data
-    email = decrypt(creds.get("email_enc"))
-    password = decrypt(creds.get("password_enc"))
-    meta_token = decrypt(creds.get("meta_token_enc"))
+
+    # Tolerate corrupted/empty encrypted fields — skip owner if core creds bad
+    try:
+        email = decrypt(creds.get("email_enc")) if creds.get("email_enc") else None
+        password = decrypt(creds.get("password_enc")) if creds.get("password_enc") else None
+    except Exception as e:
+        logger.warning(f"Decrypt VendeAI creds failed for {owner_id}: {e}")
+        return
+
+    try:
+        meta_token = decrypt(creds.get("meta_token_enc")) if creds.get("meta_token_enc") else None
+    except Exception as e:
+        logger.warning(f"Decrypt meta token failed for {owner_id}: {e}")
+        meta_token = None
 
     if not email or not password:
         return
@@ -153,10 +164,27 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
 
 
 async def run_monitor_loop(redis_client: aioredis.Redis) -> None:
-    logger.info("Broadcast monitor loop started")
+    """Leader-elected loop — only one worker runs monitor_tick at a time."""
+    import os
+    lock_key = "broadcast:monitor_lock"
+    worker_id = str(os.getpid())
+    logger.info(f"Monitor loop standby — worker {worker_id}")
+
     while True:
         try:
-            await monitor_tick(redis_client)
+            current = await redis_client.get(lock_key)
+            current_val = current.decode() if isinstance(current, bytes) else current
+
+            if current_val == worker_id:
+                # We are leader — refresh TTL and run
+                await redis_client.expire(lock_key, POLL_INTERVAL * 3)
+                await monitor_tick(redis_client)
+            elif current_val is None:
+                # No leader — try to claim
+                acquired = await redis_client.set(lock_key, worker_id, ex=POLL_INTERVAL * 3, nx=True)
+                if acquired:
+                    logger.info(f"Monitor leader elected: worker {worker_id}")
+                    await monitor_tick(redis_client)
         except Exception as e:
             logger.exception(f"Monitor tick error: {e}")
         await asyncio.sleep(POLL_INTERVAL)
