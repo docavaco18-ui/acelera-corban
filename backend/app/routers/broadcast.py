@@ -33,8 +33,8 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
 # ── Credentials ──────────────────────────────────────────────────────────────
 
 class CredentialsIn(BaseModel):
-    email: str
-    password: str
+    email: Optional[str] = None
+    password: Optional[str] = None
     meta_token: Optional[str] = None
 
 
@@ -43,14 +43,35 @@ async def save_credentials(
     body: CredentialsIn,
     user_id: str = Depends(_get_user_id),
 ):
+    """Partial update — campos vazios mantém valor existente.
+    Aceita strings vazias e None como 'não alterar'."""
     db = get_db()
-    db.table("vendeai_settings").upsert({
-        "owner_id": user_id,
-        "email_enc": encrypt(body.email),
-        "password_enc": encrypt(body.password),
-        "meta_token_enc": encrypt(body.meta_token) if body.meta_token else None,
-    }).execute()
-    return {"ok": True}
+
+    # Build patch only with fields that have actual values
+    patch: dict = {"owner_id": user_id}
+    if body.email and body.email.strip():
+        patch["email_enc"] = encrypt(body.email.strip())
+    if body.password and body.password.strip():
+        patch["password_enc"] = encrypt(body.password.strip())
+    if body.meta_token and body.meta_token.strip():
+        patch["meta_token_enc"] = encrypt(body.meta_token.strip())
+
+    if len(patch) == 1:  # só owner_id, sem nada pra atualizar
+        raise HTTPException(400, "Nenhum campo preenchido")
+
+    # Check if row exists — upsert if new, else update only the patched fields
+    existing = db.table("vendeai_settings").select("owner_id").eq("owner_id", user_id).execute()
+    if existing.data:
+        # Update partial — only fields in patch
+        patch.pop("owner_id")
+        db.table("vendeai_settings").update(patch).eq("owner_id", user_id).execute()
+    else:
+        # First insert — email and password required
+        if "email_enc" not in patch or "password_enc" not in patch:
+            raise HTTPException(400, "Email e senha obrigatórios na primeira gravação")
+        db.table("vendeai_settings").insert(patch).execute()
+
+    return {"ok": True, "updated_fields": [k for k in patch if k != "owner_id"]}
 
 
 @router.get("/credentials")
