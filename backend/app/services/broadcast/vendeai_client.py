@@ -10,9 +10,17 @@ BASE_URL = "https://bff.vendeaitecnologia.com.br"
 
 
 class VendeAIClient:
-    def __init__(self, email: str, password: str):
+    def __init__(
+        self,
+        email: str,
+        password: str,
+        account_id: Optional[str] = None,
+        crm_token: Optional[str] = None,
+    ):
         self.email = email
         self.password = password
+        self._account_id = account_id
+        self._crm_token = crm_token
         self._token: Optional[str] = None
         self._token_expires: float = 0.0
         self._lock = asyncio.Lock()
@@ -40,20 +48,29 @@ class VendeAIClient:
         return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
     async def list_inboxes(self) -> list[dict]:
-        token = await self._ensure_token()
+        """Returns list of WhatsApp inboxes with phone_number field."""
         async with httpx.AsyncClient() as client:
-            # Try official API first, fall back to BFF
-            try:
-                r = await client.post(
-                    "https://app.vendeaitecnologia.com.br/api/message-handler/mailing/inboxes/",
-                    headers=self._headers(token),
-                    timeout=15,
-                )
-                r.raise_for_status()
-                data = r.json()
-                return data if isinstance(data, list) else data.get("results", [])
-            except Exception:
-                pass
+            # IA API: uses account_id + crm_token directly (confirmed working)
+            if self._account_id and self._crm_token:
+                try:
+                    r = await client.post(
+                        "https://ia.vendeaitecnologia.com.br/api/message-handler/mailing/inboxes/",
+                        json={
+                            "account_id": self._account_id,
+                            "crm_api_access_token": self._crm_token,
+                        },
+                        timeout=15,
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                    inboxes = data.get("inboxes") or (data if isinstance(data, list) else [])
+                    if inboxes:
+                        return inboxes
+                except Exception:
+                    pass
+
+            # Fallback: BFF JWT
+            token = await self._ensure_token()
             r = await client.get(
                 f"{BASE_URL}/api/bff/broadcast/inboxes/",
                 headers=self._headers(token),
@@ -96,6 +113,7 @@ class VendeAIClient:
         skip_weekends: bool = True,
         skip_night: bool = True,
         dedup_window_hours: int = 24,
+        variable_mappings: dict | None = None,
     ) -> dict:
         token = await self._ensure_token()
         headers = {"Authorization": f"Bearer {token}"}
@@ -110,6 +128,9 @@ class VendeAIClient:
         }
         if campaign_name:
             data["campaign_name"] = campaign_name
+        if variable_mappings:
+            import json
+            data["variable_mappings"] = json.dumps(variable_mappings)
         files = {"file": (csv_filename, csv_bytes, "text/csv")}
         async with httpx.AsyncClient() as client:
             r = await client.post(
@@ -119,8 +140,25 @@ class VendeAIClient:
                 files=files,
                 timeout=30,
             )
-            r.raise_for_status()
+            if not r.is_success:
+                body = r.text[:500]
+                raise ValueError(f"VendeAI dispatch {r.status_code}: {body}")
             return r.json() if r.content else {"ok": True}
+
+    async def list_templates(self) -> list[dict]:
+        """Returns list of approved WhatsApp message templates."""
+        token = await self._ensure_token()
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{BASE_URL}/api/bff/broadcast/templates/",
+                headers=self._headers(token),
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            return data.get("results") or data.get("templates") or []
 
     async def pause(self, mailing_id: str) -> dict:
         token = await self._ensure_token()

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { AlertFeed } from '../components/disparo/AlertFeed';
+import { CampaignHistoryList } from '../components/disparo/CampaignHistoryList';
 import { CsvUploadWizard } from '../components/disparo/CsvUploadWizard';
 import { DispatchMetrics } from '../components/disparo/DispatchMetrics';
+import { MonitorPanel } from '../components/disparo/MonitorPanel';
 import { NumberQualityGrid } from '../components/disparo/NumberQualityGrid';
 import { useBroadcastWebSocket } from '../hooks/useBroadcastWebSocket';
 import { broadcastApi } from '../lib/api';
@@ -17,17 +19,19 @@ export default function Disparo() {
 
   const loadData = async () => {
     try {
-      const [numsResp, analyticsResp, alertsResp] = await Promise.all([
-        broadcastApi.listNumbers(),
-        broadcastApi.getAnalytics(),
-        broadcastApi.getAlerts(),
-      ]);
-      setNumbers(numsResp.data);
-      setAnalytics(analyticsResp.data);
-      setAlerts(alertsResp.data);
-    } catch {
-      // silent — WS will hydrate
+      const numsResp = await broadcastApi.listNumbers();
+      setNumbers(numsResp.data || []);
+    } catch (e) {
+      console.error('[Disparo] listNumbers falhou:', e);
     }
+    try {
+      const analyticsResp = await broadcastApi.getAnalytics();
+      setAnalytics(analyticsResp.data || []);
+    } catch { /* analytics não bloqueia */ }
+    try {
+      const alertsResp = await broadcastApi.getAlerts();
+      setAlerts(alertsResp.data || []);
+    } catch { /* alerts não bloqueia */ }
   };
 
   useEffect(() => {
@@ -71,7 +75,29 @@ export default function Disparo() {
         </button>
       </div>
 
-      {/* Panel 1 — Upload Wizard */}
+      {/* Panel 1 — Monitoramento em tempo real */}
+      <div style={{
+        background: '#0d0d1f', border: '1px solid #1e1e3a',
+        borderRadius: 12, padding: 24,
+      }}>
+        <h2 style={{ color: '#00ff88', fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 }}>
+          Monitoramento
+        </h2>
+        <MonitorPanel />
+      </div>
+
+      {/* Panel 2 — Histórico de campanhas */}
+      <div style={{
+        background: '#0d0d1f', border: '1px solid #1e1e3a',
+        borderRadius: 12, padding: 24,
+      }}>
+        <h2 style={{ color: '#6366f1', fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 }}>
+          Histórico de Disparos
+        </h2>
+        <CampaignHistoryList onRefresh={loadData} />
+      </div>
+
+      {/* Panel 3 — Novo disparo */}
       <div style={{
         background: '#0d0d1f', border: '1px solid #1e1e3a',
         borderRadius: 12, padding: 24,
@@ -82,7 +108,7 @@ export default function Disparo() {
         <CsvUploadWizard onDispatched={loadData} />
       </div>
 
-      {/* Panel 2 — Number Quality */}
+      {/* Panel 4 — Number Quality */}
       <div style={{
         background: '#0d0d1f', border: '1px solid #1e1e3a',
         borderRadius: 12, padding: 24,
@@ -93,7 +119,7 @@ export default function Disparo() {
         <NumberQualityGrid numbers={numbers} onResume={loadData} />
       </div>
 
-      {/* Panel 3 — Metrics + Alerts */}
+      {/* Panel 5 — Metrics + Alerts */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
         <div style={{
           background: '#0d0d1f', border: '1px solid #1e1e3a',

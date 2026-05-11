@@ -69,6 +69,29 @@ async def list_numbers(user_id: str = Depends(_get_user_id)):
     return resp.data or []
 
 
+class WabaIdsIn(BaseModel):
+    waba_ids: list[str]
+
+
+@router.post("/waba-ids")
+async def save_waba_ids(body: WabaIdsIn, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    db.table("vendeai_settings").upsert({
+        "owner_id": user_id,
+        "waba_ids": body.waba_ids,
+    }, on_conflict="owner_id").execute()
+    return {"ok": True, "waba_ids": body.waba_ids}
+
+
+@router.get("/waba-ids")
+async def get_waba_ids(user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    resp = db.table("vendeai_settings").select("waba_ids").eq("owner_id", user_id).execute()
+    if not resp.data:
+        return {"waba_ids": []}
+    return {"waba_ids": resp.data[0].get("waba_ids") or []}
+
+
 @router.post("/numbers/refresh")
 async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     db = get_db()
@@ -79,43 +102,67 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     meta_token = decrypt(creds.data.get("meta_token_enc"))
     vendeai_email = decrypt(creds.data.get("email_enc"))
     vendeai_pass = decrypt(creds.data.get("password_enc"))
+    account_id = creds.data.get("account_id")
+    crm_token = decrypt(creds.data.get("crm_token_enc")) if creds.data.get("crm_token_enc") else None
+    waba_ids: list[str] = creds.data.get("waba_ids") or []
 
-    client = VendeAIClient(vendeai_email, vendeai_pass)
-    inboxes = await client.list_inboxes()
+    if not meta_token:
+        raise HTTPException(400, "Token Meta não configurado")
+    if not waba_ids:
+        raise HTTPException(400, "Nenhum WABA ID configurado")
 
-    meta = MetaClient(meta_token) if meta_token else None
+    # 1. Fetch VendeAI/Chatwoot inboxes — build lookup: last10digits → inbox_id
+    chatwoot_map: dict[str, str] = {}
+    try:
+        va = VendeAIClient(vendeai_email, vendeai_pass, account_id=account_id, crm_token=crm_token)
+        inboxes = await va.list_inboxes()
+        for inbox in inboxes:
+            raw_phone = (
+                inbox.get("phone_number") or inbox.get("phone") or
+                inbox.get("name") or ""
+            )
+            digits = "".join(c for c in raw_phone if c.isdigit())
+            if len(digits) >= 8:
+                chatwoot_map[digits[-10:]] = str(inbox.get("id") or inbox.get("inbox_id") or "")
+    except Exception:
+        pass  # Chatwoot down não bloqueia refresh Meta
+
+    # 2. Fetch Meta numbers per WABA and cross-reference
+    meta = MetaClient(meta_token)
     updated = []
-    for inbox in inboxes:
-        phone_id = str(inbox.get("phone_id") or inbox.get("id") or "")
-        if not phone_id:
+
+    for waba_id in waba_ids:
+        try:
+            phones = await meta.get_all_phones(waba_id)
+        except Exception:
             continue
 
-        record: dict = {
-            "owner_id": user_id,
-            "phone_id": phone_id,
-            "display_phone": inbox.get("phone_number", "") or inbox.get("inbox_phone", "") or inbox.get("name", "") or phone_id,
-            "quality_rating": "UNKNOWN",
-            "messaging_tier": None,
-            "daily_limit": 1000,
-        }
+        for p in phones:
+            digits = "".join(c for c in p["display_phone"] if c.isdigit())
+            suffix = digits[-10:] if len(digits) >= 10 else digits
+            inbox_id = chatwoot_map.get(suffix)
 
-        if meta:
-            try:
-                q = await meta.get_phone_quality(phone_id)
-                record.update({
-                    "display_phone": q["display_phone"] or record["display_phone"],
-                    "quality_rating": q["quality_rating"],
-                    "messaging_tier": q["messaging_tier"],
-                    "daily_limit": q["daily_limit"],
-                    "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
-                })
-            except Exception:
-                pass
+            record = {
+                "owner_id": user_id,
+                "waba_id": waba_id,
+                "phone_id": p["phone_id"],
+                "display_phone": p["display_phone"],
+                "quality_rating": p["quality_rating"],
+                "throughput_level": p["throughput_level"],
+                "messaging_tier": p["messaging_tier"],
+                "daily_limit": p["daily_limit"],
+                "can_send": p["can_send"],
+                "name_status": p["name_status"],
+                "phone_status": p["phone_status"],
+                "restriction_codes": p["restriction_codes"],
+                "chatwoot_connected": inbox_id is not None,
+                "chatwoot_inbox_id": inbox_id,
+                "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
+            }
+            db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
+            updated.append(p["phone_id"])
 
-        db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
-        updated.append(phone_id)
-
-    return {"updated": updated}
+    return {"updated": updated, "total": len(updated), "chatwoot_inboxes_found": len(chatwoot_map)}
 
 
 # ── Analyze CSV ───────────────────────────────────────────────────────────────
@@ -128,7 +175,24 @@ async def analyze_csv(
     db = get_db()
 
     csv_bytes = await file.read()
+    # Strip UTF-8 BOM if present (Excel/Windows add it)
+    if csv_bytes.startswith(b"\xef\xbb\xbf"):
+        csv_bytes = csv_bytes[3:]
     total_leads = max(0, csv_bytes.count(b"\n") - 1)  # rough count minus header
+
+    # Extract CSV column headers
+    import csv, io
+    csv_columns: list[str] = []
+    try:
+        first_line = csv_bytes.decode("utf-8", errors="replace").splitlines()[0].lstrip("﻿")
+        for delim in [",", ";", "\t", "|"]:
+            if delim in first_line:
+                csv_columns = [c.strip().strip('"').lstrip("﻿") for c in first_line.split(delim)]
+                break
+        if not csv_columns:
+            csv_columns = [first_line.strip()]
+    except Exception:
+        csv_columns = []
 
     numbers_resp = db.table("broadcast_numbers").select("*").eq("owner_id", user_id).execute()
     numbers = numbers_resp.data or []
@@ -136,18 +200,31 @@ async def analyze_csv(
     if not numbers:
         raise HTTPException(400, "Nenhum número cadastrado. Configure e faça refresh.")
 
+    # Build lookup: phone_id → full number record
+    numbers_by_id = {n["phone_id"]: n for n in numbers}
+
     numbers_input = [
         {
             "phone_id": n["phone_id"],
             "quality_rating": n.get("quality_rating", "UNKNOWN"),
-            "messaging_tier": n.get("messaging_tier", "1K"),
-            "daily_limit": n.get("daily_limit", 1000),
+            "messaging_tier": n.get("messaging_tier", "—"),
+            "daily_limit": n.get("daily_limit", 0),
             "is_paused": n.get("is_paused", False),
+            "can_send": n.get("can_send", "UNKNOWN"),
+            "chatwoot_connected": n.get("chatwoot_connected", False),
         }
         for n in numbers
     ]
 
     split = await advise_split(numbers_input, total_leads, settings.anthropic_api_key)
+
+    # Enrich assignments with display info and pre-filled inbox_id
+    for asn in split.get("assignments", []):
+        rec = numbers_by_id.get(asn["phone_id"], {})
+        asn["display_phone"] = rec.get("display_phone", asn["phone_id"][-10:])
+        asn["inbox_id"] = rec.get("chatwoot_inbox_id") or ""
+        asn["can_send"] = rec.get("can_send", "UNKNOWN")
+        asn["waba_id"] = rec.get("waba_id") or ""
 
     # Store pending dispatch
     dispatch_id = str(uuid.uuid4())
@@ -164,14 +241,20 @@ async def analyze_csv(
     r = aioredis.from_url(settings.redis_url)
     await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
 
-    return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split}
+    return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split, "csv_columns": csv_columns}
 
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────
 
 class DispatchIn(BaseModel):
     dispatch_id: str
-    assignments: list[dict]  # [{phone_id, planned_count, inbox_id, template_id}]
+    assignments: list[dict]
+    phone_column: str = "telefone"
+    campaign_name: str = ""
+    cooldown_seconds: int = 5
+    skip_weekends: bool = True
+    skip_night: bool = True
+    dedup_window_hours: int = 24
 
 
 @router.post("/dispatch")
@@ -205,8 +288,23 @@ async def confirm_dispatch(
     csv_bytes = await r.get(f"broadcast:csv:{body.dispatch_id}")
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou. Faça upload novamente.")
+    # Strip BOM defensively (in case CSV was stored before the fix)
+    if csv_bytes.startswith(b"\xef\xbb\xbf"):
+        csv_bytes = csv_bytes[3:]
+
+    # Parse CSV once — slice rows per assignment so each number gets its own batch
+    import csv as csv_mod
+    csv_text = csv_bytes.decode("utf-8", errors="replace")
+    csv_lines = csv_text.splitlines()
+    header = csv_lines[0] if csv_lines else ""
+    data_rows = csv_lines[1:] if len(csv_lines) > 1 else []
+
+    def _slice_csv(rows: list[str], start: int, count: int) -> bytes:
+        chunk = [header] + rows[start: start + count]
+        return "\n".join(chunk).encode("utf-8")
 
     mailing_ids = []
+    row_offset = 0
     for asn in body.assignments:
         phone_id = asn["phone_id"]
         planned = asn.get("planned_count", 0)
@@ -216,14 +314,34 @@ async def confirm_dispatch(
         if not inbox_id or not template_id:
             raise HTTPException(400, f"inbox_id e template_id obrigatórios para {phone_id}")
 
-        resp = await vendeai.dispatch_csv(
-            csv_bytes=csv_bytes,
-            csv_filename=dispatch.data.get("csv_filename", "leads.csv"),
-            inbox_id=inbox_id,
-            template_id=template_id,
-        )
+        # Each number only receives its own slice of the CSV
+        slice_bytes = _slice_csv(data_rows, row_offset, planned) if planned > 0 else csv_bytes
+        row_offset += planned
+
+        variable_mappings: dict = asn.get("variable_mappings") or {}
+        try:
+            resp = await vendeai.dispatch_csv(
+                csv_bytes=slice_bytes,
+                csv_filename=dispatch.data.get("csv_filename", "leads.csv"),
+                inbox_id=inbox_id,
+                template_id=template_id,
+                phone_column=body.phone_column,
+                campaign_name=body.campaign_name,
+                cooldown_seconds=body.cooldown_seconds,
+                skip_weekends=body.skip_weekends,
+                skip_night=body.skip_night,
+                dedup_window_hours=body.dedup_window_hours,
+                variable_mappings=variable_mappings or None,
+            )
+        except Exception as exc:
+            raise HTTPException(502, f"Erro VendeAI para {phone_id}: {exc}")
 
         mailing_id = resp.get("id") or resp.get("mailing_id")
+
+        # Capture quality at dispatch time
+        num_rec = db.table("broadcast_numbers").select("quality_rating") \
+            .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
+        quality_at_start = (num_rec.data[0].get("quality_rating") if num_rec.data else None)
 
         db.table("broadcast_dispatch_assignments").insert({
             "dispatch_id": body.dispatch_id,
@@ -232,15 +350,49 @@ async def confirm_dispatch(
             "vendeai_mailing_id": mailing_id,
             "planned_count": planned,
             "status": "running",
+            "template_id": asn.get("template_id", ""),
+            "inbox_id": asn.get("inbox_id", ""),
+            "variable_mappings": asn.get("variable_mappings") or {},
+            "quality_at_start": quality_at_start,
+            "display_phone": asn.get("display_phone", ""),
         }).execute()
         mailing_ids.append(mailing_id)
 
     db.table("broadcast_dispatches").update({
         "status": "running",
         "started_at": datetime.now(timezone.utc).isoformat(),
+        "campaign_name": body.campaign_name,
+        "phone_column": body.phone_column,
+        "cooldown_seconds": body.cooldown_seconds,
+        "skip_weekends": body.skip_weekends,
+        "skip_night": body.skip_night,
+        "dedup_window_hours": body.dedup_window_hours,
     }).eq("id", body.dispatch_id).execute()
 
     return {"ok": True, "mailing_ids": mailing_ids}
+
+
+# ── Snapshot (bootstrap for monitoring panel) ─────────────────────────────────
+
+@router.get("/snapshot")
+async def get_snapshot(user_id: str = Depends(_get_user_id)):
+    """Returns current numbers + active dispatches with assignments for monitoring bootstrap."""
+    db = get_db()
+    numbers = db.table("broadcast_numbers").select("*").eq("owner_id", user_id).execute()
+    dispatches = db.table("broadcast_dispatches") \
+        .select("*, broadcast_dispatch_assignments(*)") \
+        .eq("owner_id", user_id) \
+        .in_("status", ["running", "paused"]) \
+        .order("created_at", desc=True) \
+        .execute()
+    alerts = db.table("broadcast_alerts") \
+        .select("*").eq("owner_id", user_id) \
+        .order("ts", desc=True).limit(20).execute()
+    return {
+        "numbers": numbers.data or [],
+        "active_dispatches": dispatches.data or [],
+        "alerts": alerts.data or [],
+    }
 
 
 # ── List / Detail Dispatches ──────────────────────────────────────────────────
@@ -249,10 +401,10 @@ async def confirm_dispatch(
 async def list_dispatches(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("broadcast_dispatches") \
-        .select("*") \
+        .select("*, broadcast_dispatch_assignments(*)") \
         .eq("owner_id", user_id) \
         .order("created_at", desc=True) \
-        .limit(20) \
+        .limit(30) \
         .execute()
     return resp.data or []
 
@@ -349,6 +501,47 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
     return {"ok": True}
+
+
+# ── Templates ─────────────────────────────────────────────────────────────────
+
+@router.get("/templates")
+async def list_templates(user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
+    if not creds.data:
+        raise HTTPException(400, "Configure credenciais primeiro")
+
+    meta_token = decrypt(creds.data.get("meta_token_enc") or "")
+    if not meta_token:
+        raise HTTPException(400, "Token Meta não configurado")
+
+    waba_ids: list[str] = creds.data.get("waba_ids") or []
+    if not waba_ids:
+        raise HTTPException(400, "Nenhum WABA ID configurado")
+
+    meta = MetaClient(meta_token)
+    # Return map: waba_id → list of templates (for per-number filtering in frontend)
+    result: dict[str, list] = {}
+
+    for wid in waba_ids:
+        try:
+            tpls = await meta.get_templates(wid)
+            result[wid] = sorted([
+                {
+                    "id": t.get("id", ""),
+                    "name": t.get("name", ""),
+                    "language": t.get("language", ""),
+                    "category": t.get("category", ""),
+                    "variables": t.get("variables", []),
+                    "body": t.get("body", ""),
+                }
+                for t in tpls
+            ], key=lambda t: t["name"])
+        except Exception:
+            result[wid] = []
+
+    return result
 
 
 # ── Analytics + Alerts ────────────────────────────────────────────────────────

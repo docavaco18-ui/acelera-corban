@@ -43,6 +43,10 @@ export default function Configuracoes() {
   const [savingBroadcast, setSavingBroadcast] = useState(false);
   const [broadcastSaved, setBroadcastSaved] = useState(false);
   const [broadcastError, setBroadcastError] = useState('');
+  const [wabaIds, setWabaIds] = useState('');
+  const [savingWaba, setSavingWaba] = useState(false);
+  const [wabaSaved, setWabaSaved] = useState(false);
+  const [wabaError, setWabaError] = useState('');
 
   // CRM password state
   const [hasCrmPassword, setHasCrmPassword] = useState(false);
@@ -50,6 +54,21 @@ export default function Configuracoes() {
   const [crmPwdConfirm, setCrmPwdConfirm] = useState("");
   const [crmBusy, setCrmBusy] = useState(false);
   const [crmMsg, setCrmMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+
+  const handleSaveWabaIds = async () => {
+    setSavingWaba(true);
+    setWabaError('');
+    try {
+      const ids = wabaIds.split(/\r?\n|,/).map(s => s.trim()).filter(Boolean);
+      await broadcastApi.saveWabaIds(ids);
+      setWabaSaved(true);
+      setTimeout(() => setWabaSaved(false), 3000);
+    } catch (e: any) {
+      setWabaError(e?.response?.data?.detail || e?.message || 'Erro ao salvar');
+    } finally {
+      setSavingWaba(false);
+    }
+  };
 
   const handleSaveBroadcast = async () => {
     setSavingBroadcast(true);
@@ -92,6 +111,10 @@ export default function Configuracoes() {
         setHasCrmPassword(cfg.has_crm_password);
       } catch { /* ignora */ }
     }
+    try {
+      const w = await broadcastApi.getWabaIds();
+      setWabaIds((w.data.waba_ids || []).join('\n'));
+    } catch { /* ignora */ }
   };
 
   // Recarrega ao trocar bank
@@ -360,10 +383,6 @@ export default function Configuracoes() {
             }}
           />
 
-          <p style={{ color: '#475569', fontSize: 12, margin: 0 }}>
-            Credenciais Chatwoot: configure na seção CRM Chatwoot
-          </p>
-
           <button
             onClick={handleSaveBroadcast}
             disabled={savingBroadcast}
@@ -380,6 +399,49 @@ export default function Configuracoes() {
           {broadcastError && (
             <p style={{ color: '#ff4444', fontSize: 13, margin: '8px 0 0' }}>{broadcastError}</p>
           )}
+        </div>
+      </div>
+
+      {/* WABA IDs — Meta quality fetching */}
+      <div style={{
+        background: '#0d0d1f',
+        border: '1px solid #1e1e3a',
+        borderRadius: 12,
+        padding: 24,
+        marginTop: 16,
+        maxWidth: 760,
+      }}>
+        <h3 style={{ color: '#6366f1', fontSize: 16, margin: '0 0 8px 0' }}>
+          WABA IDs (WhatsApp Business Account)
+        </h3>
+        <p style={{ color: '#475569', fontSize: 12, margin: '0 0 14px' }}>
+          Um WABA ID por linha. Usado para buscar qualidade e capacidade real de cada número no Meta.
+        </p>
+        <textarea
+          value={wabaIds}
+          onChange={e => setWabaIds(e.target.value)}
+          placeholder={"26833705632933404\n1530204361861055\n..."}
+          rows={6}
+          style={{
+            width: '100%', background: '#080818', border: '1px solid #1e1e3a',
+            borderRadius: 8, padding: '10px 14px', color: '#e2e8f0',
+            fontSize: 13, fontFamily: 'monospace', boxSizing: 'border-box', resize: 'vertical',
+          }}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
+          <button
+            onClick={handleSaveWabaIds}
+            disabled={savingWaba}
+            style={{
+              background: wabaSaved ? '#00ff88' : '#6366f1',
+              color: wabaSaved ? '#080818' : '#fff',
+              border: 'none', borderRadius: 8, padding: '10px 20px',
+              cursor: 'pointer', fontWeight: 600, fontSize: 14,
+            }}
+          >
+            {wabaSaved ? 'Salvo!' : savingWaba ? 'Salvando...' : 'Salvar WABA IDs'}
+          </button>
+          {wabaError && <span style={{ color: '#ff4444', fontSize: 13 }}>{wabaError}</span>}
         </div>
       </div>
     </div>

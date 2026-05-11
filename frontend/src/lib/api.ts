@@ -249,4 +249,8 @@ export const broadcastApi = {
   revokeDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/revoke`),
   getAnalytics: () => broadcastAxios.get("/api/broadcast/analytics"),
   getAlerts: () => broadcastAxios.get("/api/broadcast/alerts"),
+  getWabaIds: () => broadcastAxios.get("/api/broadcast/waba-ids"),
+  saveWabaIds: (waba_ids: string[]) => broadcastAxios.post("/api/broadcast/waba-ids", { waba_ids }),
+  getTemplates: () => broadcastAxios.get("/api/broadcast/templates"),
+  getSnapshot: () => broadcastAxios.get("/api/broadcast/snapshot"),
 };

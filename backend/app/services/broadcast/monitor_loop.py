@@ -82,18 +82,24 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
         try:
             meta = MetaClient(meta_token)
             numbers_resp = db.table("broadcast_numbers") \
-                .select("phone_id") \
+                .select("phone_id,quality_rating") \
                 .eq("owner_id", owner_id) \
                 .execute()
             for num in (numbers_resp.data or []):
                 try:
                     quality_data = await meta.get_phone_quality(num["phone_id"])
-                    db.table("broadcast_numbers").update({
+                    update_fields = {
                         "quality_rating": quality_data["quality_rating"],
                         "messaging_tier": quality_data["messaging_tier"],
                         "daily_limit": quality_data["daily_limit"],
+                        "can_send": quality_data["can_send"],
                         "last_meta_check_at": "now()",
-                    }).eq("owner_id", owner_id).eq("phone_id", num["phone_id"]).execute()
+                    }
+                    # Track previous quality for change detection
+                    if num.get("quality_rating") and num["quality_rating"] != quality_data["quality_rating"]:
+                        update_fields["quality_previous"] = num["quality_rating"]
+                    db.table("broadcast_numbers").update(update_fields) \
+                        .eq("owner_id", owner_id).eq("phone_id", num["phone_id"]).execute()
                 except Exception as e:
                     logger.warning(f"Meta poll failed for {num['phone_id']}: {e}")
         except Exception as e:
