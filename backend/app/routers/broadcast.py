@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.config import settings
-from app.credentials.crypto import decrypt, encrypt
+from app.credentials.crypto import decrypt, encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.claude_advisor import advise_split
 from app.services.broadcast.meta_client import MetaClient
@@ -99,11 +99,11 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     if not creds.data:
         raise HTTPException(400, "Configure credenciais primeiro")
 
-    meta_token = decrypt(creds.data.get("meta_token_enc"))
-    vendeai_email = decrypt(creds.data.get("email_enc"))
-    vendeai_pass = decrypt(creds.data.get("password_enc"))
+    meta_token = safe_decrypt(creds.data.get("meta_token_enc"))
+    vendeai_email = safe_decrypt(creds.data.get("email_enc"))
+    vendeai_pass = safe_decrypt(creds.data.get("password_enc"))
     account_id = creds.data.get("account_id")
-    crm_token = decrypt(creds.data.get("crm_token_enc")) if creds.data.get("crm_token_enc") else None
+    crm_token = safe_decrypt(creds.data.get("crm_token_enc"))
     waba_ids: list[str] = creds.data.get("waba_ids") or []
 
     if not meta_token:
@@ -280,8 +280,10 @@ async def confirm_dispatch(
     if not creds.data:
         raise HTTPException(400, "Configure credenciais VendeAI primeiro")
 
-    email = decrypt(creds.data["email_enc"])
-    password = decrypt(creds.data["password_enc"])
+    email = safe_decrypt(creds.data.get("email_enc"))
+    password = safe_decrypt(creds.data.get("password_enc"))
+    if not email or not password:
+        raise HTTPException(400, "Credenciais VendeAI corrompidas. Re-salve em Configurações.")
     vendeai = VendeAIClient(email, password)
 
     r = aioredis.from_url(settings.redis_url)
@@ -430,7 +432,11 @@ async def _get_vendeai_for_user(user_id: str) -> VendeAIClient:
     creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
     if not creds.data:
         raise HTTPException(400, "Credenciais não configuradas")
-    return VendeAIClient(decrypt(creds.data["email_enc"]), decrypt(creds.data["password_enc"]))
+    email = safe_decrypt(creds.data.get("email_enc"))
+    password = safe_decrypt(creds.data.get("password_enc"))
+    if not email or not password:
+        raise HTTPException(400, "Credenciais VendeAI corrompidas. Re-salve em Configurações.")
+    return VendeAIClient(email, password)
 
 
 @router.post("/dispatches/{dispatch_id}/pause")
@@ -512,9 +518,9 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
     if not creds.data:
         raise HTTPException(400, "Configure credenciais primeiro")
 
-    meta_token = decrypt(creds.data.get("meta_token_enc") or "")
+    meta_token = safe_decrypt(creds.data.get("meta_token_enc"))
     if not meta_token:
-        raise HTTPException(400, "Token Meta não configurado")
+        raise HTTPException(400, "Token Meta não configurado ou corrompido. Re-salve em Configurações.")
 
     waba_ids: list[str] = creds.data.get("waba_ids") or []
     if not waba_ids:

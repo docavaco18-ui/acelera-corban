@@ -7,7 +7,7 @@ import logging
 import redis.asyncio as aioredis
 
 from app.config import settings
-from app.credentials.crypto import decrypt
+from app.credentials.crypto import safe_decrypt as decrypt
 from app.database import get_db
 from app.services.broadcast.intervention import evaluate_and_intervene
 from app.services.broadcast.meta_client import MetaClient

@@ -30,3 +30,13 @@ def decrypt(ciphertext: str | bytes | None) -> str | None:
     if isinstance(ciphertext, str):
         ciphertext = ciphertext.encode("ascii")
     return _get_fernet().decrypt(ciphertext).decode("utf-8")
+
+
+def safe_decrypt(ciphertext: str | bytes | None) -> str | None:
+    """Like decrypt but returns None on InvalidToken (key changed/corrupted)."""
+    if not ciphertext:
+        return None
+    try:
+        return decrypt(ciphertext)
+    except Exception:
+        return None
