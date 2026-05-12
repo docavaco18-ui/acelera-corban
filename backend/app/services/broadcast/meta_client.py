@@ -80,15 +80,20 @@ class MetaClient:
         return _parse_phone(r.json())
 
     async def get_all_phones(self, waba_id: str) -> list[dict]:
+        all_phones: list[dict] = []
+        url: str | None = f"{META_BASE}/{waba_id}/phone_numbers"
+        params: dict = {"fields": PHONE_FIELDS, "access_token": self.access_token, "limit": 100}
+
         async with httpx.AsyncClient() as client:
-            r = await client.get(
-                f"{META_BASE}/{waba_id}/phone_numbers",
-                params={"fields": PHONE_FIELDS, "access_token": self.access_token},
-                timeout=15,
-            )
-            r.raise_for_status()
-            data = r.json()
-        return [_parse_phone(p) for p in data.get("data", [])]
+            while url:
+                r = await client.get(url, params=params, timeout=15)
+                r.raise_for_status()
+                data = r.json()
+                all_phones.extend(_parse_phone(p) for p in data.get("data", []))
+                url = (data.get("paging") or {}).get("next")
+                params = {}  # next URL already has all params embedded
+
+        return all_phones
 
     async def get_templates(self, waba_id: str) -> list[dict]:
         """Returns APPROVED message templates for a WABA with their variables."""

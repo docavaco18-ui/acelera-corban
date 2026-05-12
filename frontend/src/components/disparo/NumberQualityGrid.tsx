@@ -11,6 +11,7 @@ interface BroadcastNumber {
   restriction_codes: number[];
   chatwoot_connected: boolean;
   chatwoot_inbox_id: string | null;
+  waba_id: string | null;
   is_paused: boolean;
 }
 
@@ -119,9 +120,19 @@ export function NumberQualityGrid({ numbers, onResume }: Props) {
           >
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
-              <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>
-                {n.display_phone || n.phone_id}
-              </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <span style={{ color: '#e2e8f0', fontWeight: 600, fontSize: 14 }}>
+                  {n.display_phone || n.phone_id}
+                </span>
+                <span style={{ color: '#475569', fontSize: 10, fontFamily: 'monospace' }}>
+                  ID: {n.phone_id}
+                </span>
+                {n.waba_id && (
+                  <span style={{ color: '#334155', fontSize: 9, fontFamily: 'monospace' }}>
+                    WABA: {n.waba_id}
+                  </span>
+                )}
+              </div>
               <span style={{
                 background: qColor + '22',
                 color: qColor,

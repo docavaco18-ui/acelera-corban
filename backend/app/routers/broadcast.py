@@ -138,13 +138,15 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         va = VendeAIClient(vendeai_email, vendeai_pass, account_id=account_id, crm_token=crm_token)
         inboxes = await va.list_inboxes()
         for inbox in inboxes:
-            raw_phone = (
-                inbox.get("phone_number") or inbox.get("phone") or
-                inbox.get("name") or ""
-            )
+            raw_phone = inbox.get("phone_number") or inbox.get("phone") or ""
             digits = "".join(c for c in raw_phone if c.isdigit())
             if len(digits) >= 8:
-                chatwoot_map[digits[-10:]] = str(inbox.get("id") or inbox.get("inbox_id") or "")
+                key = digits[-10:]
+                chatwoot_map[key] = str(inbox.get("id") or inbox.get("inbox_id") or "")
+            # also index by inbox_id directly for fallback matching
+            inbox_id_str = str(inbox.get("id") or inbox.get("inbox_id") or "")
+            if inbox_id_str:
+                chatwoot_map[f"__id__{inbox_id_str}"] = inbox_id_str
     except Exception:
         pass  # Chatwoot down não bloqueia refresh Meta
 
