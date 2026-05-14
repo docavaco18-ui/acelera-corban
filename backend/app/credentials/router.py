@@ -7,8 +7,8 @@ from ..auth_deps import require_user, AuthUser
 from .service import CredentialService
 
 
-BankCode = Literal["v8", "vctex"]
-ALLOWED_BANKS: tuple[str, ...] = ("v8", "vctex")
+BankCode = Literal["v8", "vctex", "mercantil"]
+ALLOWED_BANKS: tuple[str, ...] = ("v8", "vctex", "mercantil")
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 

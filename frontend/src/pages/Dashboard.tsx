@@ -104,7 +104,7 @@ interface DashboardProps {
 
 export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: DashboardProps = {}) {
   const { bank } = useBank();
-  const bankLabel = bank === "vctex" ? "VCTex Bot" : "V8 Bot";
+  const bankLabel = bank === "vctex" ? "VCTex Bot" : bank === "mercantil" ? "Mercantil Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
   const [batchesList, setBatchesList] = useState<Batch[]>([]);
   const [batchDownloading, setBatchDownloading] = useState<string | null>(null);
@@ -117,7 +117,7 @@ export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: 
   const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
   const [leads, setLeads] = useState<Lead[]>([]);
   const [botStatus, setBotStatus] = useState<BotStatus>({ status: "idle", run_id: null });
-  const [workers, setWorkers] = useState(bank === "vctex" ? 2 : 6);
+  const [workers, setWorkers] = useState(bank === "vctex" ? 2 : bank === "mercantil" ? 1 : 6);
   const [loading, setLoading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);

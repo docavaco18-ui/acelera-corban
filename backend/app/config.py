@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     vctex_max_total_workers: int = 10
     vctex_portal_url: str = "https://portal.vctex.com.br/login"
 
+    # Mercantil (Playwright + SMS humano no login). Default 1 worker — login compartilha sessão
+    # via storage_state. Múltiplos workers triggar SMS múltiplas vezes; v1 fica em 1 worker.
+    mercantil_max_workers_per_user: int = 1
+    mercantil_max_total_workers: int = 4
+    mercantil_portal_url: str = "https://meu.bancomercantil.com.br/login"
+    mercantil_sms_timeout_seconds: int = 300
+    mercantil_sms_max_attempts: int = 3
+
     anthropic_api_key: str = ""
 
     @property

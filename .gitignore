@@ -7,3 +7,6 @@ frontend/dist/
 .gstack/
 PROGRESS.md
 .DS_Store
+# Playwright session state (Mercantil cookies persistidas por user)
+.bot_state/
+backend/.bot_state/

@@ -106,7 +106,7 @@ export const leadsApi = {
     const a = document.createElement("a");
     const date = new Date().toISOString().slice(0, 10);
     a.href = url;
-    a.download = filename ?? `v8-${status}-${date}.csv`;
+    a.download = filename ?? `${getBank()}-${status}-${date}.csv`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -143,9 +143,9 @@ interface BankSummary {
 export const credentialsApi = {
   list: () =>
     api
-      .get<Record<"v8" | "vctex", BankSummary | null>>("/api/credentials")
+      .get<Record<"v8" | "vctex" | "mercantil", BankSummary | null>>("/api/credentials")
       .then((r) => r.data),
-  upsert: (bank: "v8" | "vctex", body: { login: string; password?: string; proxies: string[] }) =>
+  upsert: (bank: "v8" | "vctex" | "mercantil", body: { login: string; password?: string; proxies: string[] }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
 };
 
@@ -228,6 +228,77 @@ broadcastAxios.interceptors.request.use(async (config) => {
   }
   return config;
 });
+
+// Mercantil SMS endpoints — bypass bankPrefix porque já tem /api/mercantil/* no path
+const mercantilAxios = axios.create({ baseURL: BASE_URL });
+mercantilAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const mercantilApi = {
+  submitSms: (run_id: string, code: string) =>
+    mercantilAxios
+      .post<{ status: string }>("/api/mercantil/bot/sms", { run_id, code })
+      .then((r) => r.data),
+  smsState: (run_id: string) =>
+    mercantilAxios
+      .get<{ status: string }>("/api/mercantil/bot/sms/state", { params: { run_id } })
+      .then((r) => r.data),
+
+  sessionStatus: () =>
+    mercantilAxios
+      .get<{ status: "valid" | "none" | "logging_in"; saved_at: string | null }>(
+        "/api/mercantil/bot/session-status"
+      )
+      .then((r) => r.data),
+
+  loginVisual: () =>
+    mercantilAxios
+      .post<{ status: string; run_id: string }>("/api/mercantil/bot/login-visual")
+      .then((r) => r.data),
+
+  botStart: (batchId?: string) =>
+    mercantilAxios
+      .post<{ status: string; run_id: string }>("/api/mercantil/bot/start", null, {
+        params: batchId ? { batch_id: batchId } : {},
+      })
+      .then((r) => r.data),
+
+  botStop: () =>
+    mercantilAxios.post("/api/mercantil/bot/stop").then((r) => r.data),
+
+  botStatus: () =>
+    mercantilAxios
+      .get<{ status: string; run_id: string | null }>("/api/mercantil/bot/status")
+      .then((r) => r.data),
+
+  uploadCsv: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return mercantilAxios
+      .post<{ job_id: string; batch_id: string }>("/api/mercantil/leads/upload", form)
+      .then((r) => r.data);
+  },
+
+  uploadStatus: (jobId: string) =>
+    mercantilAxios
+      .get<{ status: string; total: number; processed: number; inserted: number; error?: string }>(
+        `/api/mercantil/leads/upload/${jobId}`
+      )
+      .then((r) => r.data),
+
+  currentBatch: () =>
+    mercantilAxios
+      .get<{ id: string; name: string } | null>("/api/mercantil/batches/current")
+      .then((r) => r.data)
+      .catch(() => null),
+};
 
 export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),

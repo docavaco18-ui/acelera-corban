@@ -4,17 +4,20 @@ from .config import settings
 from .logging_config import setup_logging
 from .routers import leads, bot, stats, webhook, ws, admin, batches, crm, chatwoot
 from .routers import vctex as vctex_router
+from .routers import mercantil as mercantil_router
 from .routers import v8_proposals
 from .routers import broadcast as broadcast_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
+from .banks.mercantil.bot_pool import MercantilBotPool
 
 setup_logging(json_logs=True)
 
 app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
 app.state.v8_pool = V8BotPool()
 app.state.vctex_pool = VCTexBotPool()
+app.state.mercantil_pool = MercantilBotPool()
 
 
 @app.on_event("startup")
@@ -100,6 +103,7 @@ app.include_router(admin.router)
 app.include_router(credentials_router)
 app.include_router(batches.router)
 app.include_router(vctex_router.router)
+app.include_router(mercantil_router.router)
 app.include_router(crm.router)
 app.include_router(v8_proposals.router)
 app.include_router(chatwoot.router)

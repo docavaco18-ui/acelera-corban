@@ -73,7 +73,7 @@ function ResetPasswordModal({ user, onClose }: { user: SbUser; onClose: () => vo
 interface AdminRun {
   id: string;
   owner_id: string;
-  bank: "v8" | "vctex";
+  bank: "v8" | "vctex" | "mercantil";
   started_at: string;
   finished_at: string | null;
   status: string;
@@ -289,9 +289,22 @@ export function Admin() {
                   {runs.map(r => (
                     <tr key={r.id} style={{ color: "#ccc" }}>
                       <td style={td}>
-                        <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: ".7rem", background: r.bank === "v8" ? "rgba(99,102,241,.15)" : "rgba(0,191,255,.12)", color: r.bank === "v8" ? "#818cf8" : C.blue, border: `1px solid ${r.bank === "v8" ? "rgba(99,102,241,.3)" : "rgba(0,191,255,.25)"}` }}>
-                          {r.bank.toUpperCase()}
-                        </span>
+                        {(() => {
+                          const bg = r.bank === "v8" ? "rgba(99,102,241,.15)"
+                                  : r.bank === "vctex" ? "rgba(0,191,255,.12)"
+                                  : "rgba(34,197,94,.12)";
+                          const fg = r.bank === "v8" ? "#818cf8"
+                                  : r.bank === "vctex" ? C.blue
+                                  : "#22c55e";
+                          const bd = r.bank === "v8" ? "rgba(99,102,241,.3)"
+                                  : r.bank === "vctex" ? "rgba(0,191,255,.25)"
+                                  : "rgba(34,197,94,.3)";
+                          return (
+                            <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: ".7rem", background: bg, color: fg, border: `1px solid ${bd}` }}>
+                              {r.bank.toUpperCase()}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td style={{ ...td, fontSize: ".7rem", color: "#666", maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.owner_id.slice(0, 8)}…</td>
                       <td style={{ ...td, fontSize: ".72rem", color: "#666" }}>{fmtDate(r.started_at)}</td>

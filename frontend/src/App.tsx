@@ -8,20 +8,30 @@ import Admin from "./pages/Admin";
 import CRM from "./pages/CRM";
 import Chatwoot from "./pages/Chatwoot";
 import Disparo from "./pages/Disparo";
+import Mercantil from "./pages/Mercantil";
 import { useSession } from "./hooks/useSession";
 import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
+import MercantilSmsModal from "./components/MercantilSmsModal";
 
 function BankToggle() {
   const { bank, setBank } = useBank();
-  const reload = (b: "v8" | "vctex") => {
+  const reload = (b: "v8" | "vctex" | "mercantil") => {
     setBank(b);
-    // Força refetch das páginas que dependem do bank
-    window.location.reload();
+    if (b === "mercantil") {
+      window.location.href = "/mercantil";
+    } else {
+      window.location.reload();
+    }
+  };
+  const labels: Record<"v8" | "vctex" | "mercantil", string> = {
+    v8: "V8",
+    vctex: "VCTex",
+    mercantil: "Mercantil",
   };
   return (
     <div style={{ display: "flex", gap: 0, marginRight: 8, border: "1px solid #334155", borderRadius: 14, overflow: "hidden" }}>
-      {(["v8", "vctex"] as const).map(b => (
+      {(["v8", "vctex", "mercantil"] as const).map(b => (
         <button
           key={b}
           onClick={() => reload(b)}
@@ -36,7 +46,7 @@ function BankToggle() {
             textTransform: "uppercase",
           }}
         >
-          {b === "v8" ? "V8" : "VCTex"}
+          {labels[b]}
         </button>
       ))}
     </div>
@@ -52,7 +62,7 @@ function TopBar() {
       display: "flex", gap: 24, alignItems: "center",
     }}>
       <span style={{ color: "#6366f1", fontWeight: "bold", fontSize: 18 }}>
-        {bank === "vctex" ? "VCTex" : "V8"}
+        {bank === "vctex" ? "VCTex" : bank === "mercantil" ? "Mercantil" : "V8"}
       </span>
       {[
         ["/", "Higienização"],
@@ -111,6 +121,7 @@ export default function App() {
           element={
             <Protected>
               <TopBar />
+              <MercantilSmsModal />
               <Routes>
                 <Route path="/" element={<Higienizacao />} />
                 <Route path="/higienizacao" element={<Higienizacao />} />
@@ -119,6 +130,7 @@ export default function App() {
                 <Route path="/crm" element={<CRM />} />
                 <Route path="/chatwoot" element={<Chatwoot />} />
                 <Route path="/disparo" element={<Disparo />} />
+                <Route path="/mercantil" element={<Mercantil />} />
                 <Route path="/registros" element={<Records />} />
                 <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
               </Routes>
