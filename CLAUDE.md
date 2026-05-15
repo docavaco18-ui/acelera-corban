@@ -188,6 +188,43 @@ Plurio (`autorizacoesdigitais.*`) exige geolocation. Engine concede São Paulo (
 - ✅ Iniciar `<a>` tag corrigido, `.nth(0)`, poll 0.3s
 - ✅ Loop 34 CPFs sem parar
 
+### Run Real 14-15/05/2026 — Análise (commit 98cf155)
+
+**Resultado:** 865/5499 CPFs (15.7%) antes de reCAPTCHA Enterprise flagar correspondente
+
+| Status | Count | % |
+|--------|-------|---|
+| Elegível | 2 | 0.23% |
+| Inelegível | 541 | 62.5% |
+| Erro técnico | 322 | 37.2% |
+| Screenshots | 132 | — |
+
+**Elegíveis:**
+- `11018830650` → R$ 2.120,78
+- `09328160960` → R$ 4.140,53
+
+**Bugs corrigidos no `tmp_e2e_test.py`:**
+1. Var1 não escrevia no CSV (continue pulava `_write_result`)
+2. Var1 match no `body.innerText` inteiro → falso positivo cascade
+3. Print "R$ R$" duplicado cosmético
+4. Elegível sem screenshot
+5. Elegível sem captura de valor_parcela/prazo
+
+**Fixes aplicados:**
+- Var1 match restrito a `mat-snack-bar-container`, `mat-dialog-container`, `cdk-overlay-container`
+- Screenshot full-page em todo erro + elegível em `/tmp/mercantil_screenshots/`
+- Captura de `valor_parcela` (input[currencymask]) + `prazo` (input[type=number])
+- CSV ganha colunas `valor_parcela` e `prazo`
+- SMS via `/tmp/mercantil_sms.txt` (substitui `input()` interativo)
+
+**Bloqueadores operacionais:**
+1. **reCAPTCHA Enterprise** — flagou correspondente após ~700 CPFs. Cooldown 24h
+2. **Supabase egress quota excedida** — projeto restricted. Impede dashboard
+
+**Solução real:** rodar pelo dashboard produção (BFF Bridge bypassa reCAPTCHA — sem DOM interaction)
+
+---
+
 ### Integração Dashboard (2026-05-14 — commit eb7f1a3)
 
 **Página dedicada `/mercantil`** — separada de V8/VCTex. Dois painéis: Sessão + Leads.
