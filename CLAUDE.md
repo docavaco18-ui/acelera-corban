@@ -188,6 +188,33 @@ Plurio (`autorizacoesdigitais.*`) exige geolocation. Engine concede São Paulo (
 - ✅ Iniciar `<a>` tag corrigido, `.nth(0)`, poll 0.3s
 - ✅ Loop 34 CPFs sem parar
 
+### Integração Dashboard (2026-05-14 — commit eb7f1a3)
+
+**Página dedicada `/mercantil`** — separada de V8/VCTex. Dois painéis: Sessão + Leads.
+
+**Endpoints novos:**
+- `GET /api/mercantil/bot/session-status` → `{status: valid|none, saved_at}` checa `.bot_state/{user_id}.json`
+- `POST /api/mercantil/bot/login-visual` → Playwright headful, login+SMS, salva sessão. NÃO processa leads.
+
+**Fluxo:**
+1. User vai pra `/mercantil` → SessionPanel mostra status
+2. Clica **Login Visual** → Chrome abre visível, bot preenche login/senha, SMS modal aparece, user digita 6 dígitos → storage_state salvo → WS `session_saved`
+3. Upload CSV + **Rodar Bot** → headless processa CPFs, WS `lead_result` por CPF
+4. Sessão expira mid-run → worker tenta re-login headless 2x → falha → WS `session_expired` → banner frontend → user refaz Login Visual → resume automático
+
+**Worker session expiry detection:**
+- `_SESSION_ERROR_KEYWORDS = ("JWT_NOT_FOUND", "SessaoUsuarioInativa", "Unauthorized", ...)`
+- `_session_fail_count` por worker, reseta no sucesso
+- `_try_headless_relogin(engine, page, user_id)` → goto dashboard, checa `SEL_NOVA_PROPOSTA_BTN`
+- 2 falhas consecutivas → emit `session_expired` + break
+
+**Arquivos frontend novos:**
+- `pages/Mercantil.tsx`, `components/mercantil/{Session,Leads}Panel.tsx`
+- `hooks/useMercantilSession.ts` (poll 15s + WS listener)
+- `lib/api.ts` métodos: sessionStatus, loginVisual, botStart/Stop/Status, uploadCsv, uploadStatus, currentBatch
+
+**BankToggle:** quando bank=mercantil → `window.location.href = "/mercantil"` (não usa reload).
+
 ## Deploy
 
 Local: `docker compose build --no-cache backend frontend && docker compose up -d`
