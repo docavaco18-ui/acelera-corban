@@ -366,24 +366,27 @@ class MercantilEngine:
                                              timeout=self.cfg.timeout_page, state="visible")
                 await asyncio.sleep(1.0)
 
-                # Click + fill user via keyboard pra Angular detectar input/blur
+                # Fill via locator.fill() — não interpreta caracteres especiais (|, $, [, ~ etc)
                 user_input = page.locator(self.cfg.SEL_LOGIN_USER).first
                 await user_input.click()
                 await user_input.fill("")
-                await page.keyboard.type(self.login, delay=40)
+                await user_input.fill(self.login)
                 await page.keyboard.press("Tab")
                 await asyncio.sleep(0.3)
 
                 pass_input = page.locator(self.cfg.SEL_LOGIN_PASS).first
                 await pass_input.click()
                 await pass_input.fill("")
-                await page.keyboard.type(self.password, delay=40)
+                await pass_input.fill(self.password)
                 await page.keyboard.press("Tab")
                 await asyncio.sleep(0.5)
 
                 # Click Entrar — tenta normal + force fallback
                 btn = page.locator(self.cfg.SEL_LOGIN_BTN).first
                 await btn.wait_for(state="visible", timeout=5000)
+                user_val = await user_input.input_value()
+                pass_val = await pass_input.input_value()
+                logger.info("mercantil login pre-submit user_len=%d pass_len=%d", len(user_val), len(pass_val))
                 try:
                     await btn.click(timeout=5000)
                 except Exception:
