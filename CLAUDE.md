@@ -252,6 +252,36 @@ Plurio (`autorizacoesdigitais.*`) exige geolocation. Engine concede São Paulo (
 
 **BankToggle:** quando bank=mercantil → `window.location.href = "/mercantil"` (não usa reload).
 
+### Sessão 15-16/05/2026 — Modo BFF + Live Preview (commit 01b19a1)
+
+**Objetivo:** bypassar reCAPTCHA Enterprise via BFF Bridge puro mantendo modo DOM como fallback.
+
+**Implementado:**
+- `worker.py` aceita `mode="dom"|"bff"`. BFF chama `bff_bridge.consultar_cpf` direto. Cenário B faz Plurio DOM + reconsulta BFF.
+- `_live_screenshot_loop` 1.5s emit WS `live_frame` por CPF.
+- `phases._screenshot` emit WS `screenshot_saved` via contextvars.
+- `engine.new_context` lê env `MERCANTIL_PROXY_SERVER/PORTS/USER/PASS` (round-robin por user_id).
+- Akamai bot manager block agora opt-in via `MERCANTIL_BLOCK_AKAMAI=1` (default OFF — quebrava reCAPTCHA).
+- `_parse_csv` dedupa CPF (evita ON CONFLICT 21000).
+- Frontend: 2º botão "⚡ Rodar BFF" verde + painel Live img + coluna Estágio + Capturas thumbnails + zoom modal.
+
+**9 bugs corrigidos:** CSV dup, `creds.get()` AttributeError, asyncio task GC, Login Visual WS broadcast missing, Akamai block quebra reCAPTCHA, Plurio seletor legacy, BFF inelegível cenário forçado, fase3 fail sem cleanup, `creds[...]` subscript.
+
+**Bug pendente — `_fill_sms_and_verify` botão Verificar:** 15 variantes seletor falham, Enter não submete, bot vai pra attempt 2 → 5 → max_attempts. Instrumentação adicionada (screenshot `sms_no_verify_btn` + dump JSON botões visíveis). Próxima sessão: identificar selector real do Angular Material do portal.
+
+**Proxy IPv4:** `200.7.122.129` + 5 portas (TikTok residencial). Latência alta (40s engine.start) — bateu timeout dashboard. Env vars **comentadas no `.env`**, reativar = uncomment + restart.
+
+**Estado DB:** 321 pendentes (CSV 322 erros - 1 dup deduplicado) + 37 erro legado. Nenhum result BFF ainda.
+
+**Próxima sessão:**
+1. `docker compose exec -T redis redis-cli DEL "mercantil:login_visual:bc72f4c3-472d-4f1a-831f-5cda1c539b92"`
+2. Click Login Visual → digita SMS
+3. Se attempt 2 disparar: `docker cp` `/tmp/mercantil_sms_no_verify_btn.png` + grep logs "botões visíveis" → adicionar selector real em `engine._fill_sms_and_verify` button_variants
+4. Login OK → ⚡ Rodar BFF
+5. Validar live preview no LeadsPanel
+6. Escalar 5499 CPFs Janeiro
+7. Deploy VPS
+
 ## Deploy
 
 Local: `docker compose build --no-cache backend frontend && docker compose up -d`
