@@ -15,7 +15,14 @@ type LeadRow = {
   valor_liberado?: number | null;
   erro?: string | null;
   nome?: string | null;
+  stage?: string | null;
 };
+
+type ShotRef = { label: string; url: string };
+type LiveFrame = { cpf: string | null; url: string; ts: number };
+
+const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
+const apiUrl = (p: string) => `${API_BASE}${p}`;
 
 type BotStatusType = "idle" | "running" | "paused" | "stopped";
 
@@ -35,6 +42,10 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [liveFrame, setLiveFrame] = useState<LiveFrame | null>(null);
+  const [stages, setStages] = useState<Record<string, string>>({});
+  const [shotsByCpf, setShotsByCpf] = useState<Record<string, ShotRef[]>>({});
+  const [zoomShot, setZoomShot] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -97,6 +108,23 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
             setSessionExpired(true);
             setBotStatus("paused");
           }
+
+          if (ev.type === "live_frame" && ev.url) {
+            setLiveFrame({ cpf: ev.cpf ?? null, url: ev.url, ts: Date.now() });
+          }
+
+          if (ev.type === "status_update" && ev.cpf && ev.status) {
+            setStages((prev) => ({ ...prev, [ev.cpf]: ev.status }));
+          }
+
+          if (ev.type === "screenshot_saved" && ev.url) {
+            const k = ev.cpf || "_global";
+            setShotsByCpf((prev) => {
+              const arr = prev[k] ? [...prev[k]] : [];
+              arr.push({ label: ev.label || "shot", url: ev.url });
+              return { ...prev, [k]: arr };
+            });
+          }
         } catch {}
       };
       ws.onclose = () => {
@@ -137,7 +165,7 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
     }
   }, []);
 
-  const startBot = useCallback(async () => {
+  const startBot = useCallback(async (mode: "dom" | "bff" = "dom") => {
     if (!sessionValid) {
       alert("Faça o Login Visual primeiro para salvar a sessão.");
       return;
@@ -145,7 +173,7 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
     setLoading(true);
     setSessionExpired(false);
     try {
-      await mercantilApi.botStart(currentBatchId || undefined);
+      await mercantilApi.botStart(currentBatchId || undefined, mode);
       setBotStatus("running");
     } catch (e: any) {
       alert(e?.response?.data?.detail || "Erro ao iniciar bot");
@@ -183,15 +211,27 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
           </label>
 
           {!isRunning ? (
-            <button onClick={startBot} disabled={loading}
-              style={{
-                padding: "7px 14px", borderRadius: 8, border: "none",
-                background: loading ? C.border : C.purple,
-                color: loading ? C.muted : "#fff",
-                fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
-              }}>
-              {loading ? "…" : "▶ Rodar Bot"}
-            </button>
+            <>
+              <button onClick={() => startBot("dom")} disabled={loading}
+                style={{
+                  padding: "7px 14px", borderRadius: 8, border: "none",
+                  background: loading ? C.border : C.purple,
+                  color: loading ? C.muted : "#fff",
+                  fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                }}>
+                {loading ? "…" : "▶ Rodar Bot"}
+              </button>
+              <button onClick={() => startBot("bff")} disabled={loading}
+                title="Modo BFF: chama API direto, bypassa reCAPTCHA"
+                style={{
+                  padding: "7px 14px", borderRadius: 8, border: "none",
+                  background: loading ? C.border : C.green,
+                  color: loading ? C.muted : "#fff",
+                  fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                }}>
+                {loading ? "…" : "⚡ Rodar BFF"}
+              </button>
+            </>
           ) : (
             <button onClick={stopBot} disabled={loading}
               style={{
@@ -228,6 +268,27 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
         </div>
       )}
 
+      {liveFrame && (
+        <div style={{
+          background: C.bgDark, border: `1px solid ${C.border}`, borderRadius: 10,
+          padding: 10, marginBottom: 12,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+            <span style={{ fontSize: 12, color: C.muted }}>
+              🔴 Live — CPF {liveFrame.cpf ? liveFrame.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4") : "—"}
+              {liveFrame.cpf && stages[liveFrame.cpf] ? ` · ${stages[liveFrame.cpf]}` : ""}
+            </span>
+            <span style={{ fontSize: 11, color: C.muted }}>~1.5s</span>
+          </div>
+          <img
+            src={`${apiUrl(liveFrame.url)}?t=${liveFrame.ts}`}
+            alt="live"
+            style={{ width: "100%", borderRadius: 6, display: "block", cursor: "zoom-in" }}
+            onClick={() => setZoomShot(`${apiUrl(liveFrame.url)}?t=${liveFrame.ts}`)}
+          />
+        </div>
+      )}
+
       {progress.total > 0 && (
         <div style={{ marginBottom: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
@@ -250,44 +311,81 @@ export default function LeadsPanel({ sessionValid }: { sessionValid: boolean }) 
             <tr style={{ color: C.muted, textAlign: "left" }}>
               <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>CPF</th>
               <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>Nome</th>
+              <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>Estágio</th>
               <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>Status</th>
               <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>Valor Liberado</th>
+              <th style={{ padding: "6px 8px", borderBottom: `1px solid ${C.border}` }}>Capturas</th>
             </tr>
           </thead>
           <tbody>
             {leads.length === 0 && (
               <tr>
-                <td colSpan={4} style={{ padding: "24px 8px", textAlign: "center", color: C.muted }}>
+                <td colSpan={6} style={{ padding: "24px 8px", textAlign: "center", color: C.muted }}>
                   {isRunning ? "Processando…" : "Nenhum resultado ainda"}
                 </td>
               </tr>
             )}
-            {leads.map((l) => (
-              <tr key={l.cpf} style={{ borderBottom: `1px solid ${C.border}` }}>
-                <td style={{ padding: "6px 8px", color: C.text, fontFamily: "monospace" }}>
-                  {l.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
-                </td>
-                <td style={{ padding: "6px 8px", color: C.muted }}>{l.nome || "—"}</td>
-                <td style={{ padding: "6px 8px" }}>
-                  <span style={{
-                    color: l.status === "elegivel" ? C.green : l.status === "erro" ? C.yellow : C.red,
-                    fontWeight: 600,
-                  }}>
-                    {l.status === "elegivel" ? "✅ Elegível" :
-                     l.status === "inelegivel" ? "❌ Inelegível" :
-                     l.status === "erro" ? "⚠️ Erro" : l.status}
-                  </span>
-                </td>
-                <td style={{ padding: "6px 8px", color: C.text }}>
-                  {l.valor_liberado
-                    ? `R$ ${Number(l.valor_liberado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
-                    : l.erro || "—"}
-                </td>
-              </tr>
-            ))}
+            {leads.map((l) => {
+              const stage = stages[l.cpf];
+              const shots = shotsByCpf[l.cpf] || [];
+              return (
+                <tr key={l.cpf} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "6px 8px", color: C.text, fontFamily: "monospace" }}>
+                    {l.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4")}
+                  </td>
+                  <td style={{ padding: "6px 8px", color: C.muted }}>{l.nome || "—"}</td>
+                  <td style={{ padding: "6px 8px", color: C.muted, fontSize: 11 }}>
+                    {stage || "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <span style={{
+                      color: l.status === "elegivel" ? C.green : l.status === "erro" ? C.yellow : C.red,
+                      fontWeight: 600,
+                    }}>
+                      {l.status === "elegivel" ? "✅ Elegível" :
+                       l.status === "inelegivel" ? "❌ Inelegível" :
+                       l.status === "erro" ? "⚠️ Erro" : l.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: "6px 8px", color: C.text }}>
+                    {l.valor_liberado
+                      ? `R$ ${Number(l.valor_liberado).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}`
+                      : l.erro || "—"}
+                  </td>
+                  <td style={{ padding: "6px 8px" }}>
+                    <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                      {shots.map((s, i) => (
+                        <img
+                          key={i}
+                          src={apiUrl(s.url)}
+                          alt={s.label}
+                          title={s.label}
+                          style={{ width: 40, height: 24, objectFit: "cover", borderRadius: 3, cursor: "zoom-in", border: `1px solid ${C.border}` }}
+                          onClick={() => setZoomShot(apiUrl(s.url))}
+                        />
+                      ))}
+                      {shots.length === 0 && <span style={{ color: C.muted, fontSize: 11 }}>—</span>}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+
+      {zoomShot && (
+        <div
+          onClick={() => setZoomShot(null)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,.85)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            zIndex: 1000, cursor: "zoom-out", padding: 20,
+          }}
+        >
+          <img src={zoomShot} alt="zoom" style={{ maxWidth: "95vw", maxHeight: "95vh", borderRadius: 6 }} />
+        </div>
+      )}
     </div>
   );
 }

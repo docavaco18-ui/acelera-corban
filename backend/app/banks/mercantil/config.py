@@ -103,7 +103,7 @@ class MercantilConfig:
     SEL_PLURIO_CHECKBOX:     str = "input.mdc-checkbox__native-control"  # ID muda; classe é estável
     SEL_PLURIO_INICIAR:      str = "button:has-text('Iniciar')"
     SEL_PLURIO_AUTORIZAR:    str = "button:has-text('Autorizar')"
-    SEL_PLURIO_SUCESSO:      str = "div#sucesso, div.tela-finalizadora, text=/Finalizamos sua assinatura/i"
+    SEL_PLURIO_SUCESSO:      str = "div#sucesso, div.tela-finalizadora, :text-matches('Finalizamos sua assinatura', 'i')"
     SEL_PLURIO_DISABLED_CLASS: str = "mat-mdc-button-disabled"
 
     # ── Seletores: /simulacao/{UUID}/simulacao ────────────────────────────────

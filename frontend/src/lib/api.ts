@@ -263,10 +263,10 @@ export const mercantilApi = {
       .post<{ status: string; run_id: string }>("/api/mercantil/bot/login-visual")
       .then((r) => r.data),
 
-  botStart: (batchId?: string) =>
+  botStart: (batchId?: string, mode: "dom" | "bff" = "dom") =>
     mercantilAxios
       .post<{ status: string; run_id: string }>("/api/mercantil/bot/start", null, {
-        params: batchId ? { batch_id: batchId } : {},
+        params: { ...(batchId ? { batch_id: batchId } : {}), mode },
       })
       .then((r) => r.data),
 

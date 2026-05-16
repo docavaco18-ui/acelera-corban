@@ -88,7 +88,15 @@ def _parse_csv(content: bytes, owner_id: str, batch_id: str | None = None) -> li
         if batch_id is not None:
             lead["batch_id"] = batch_id
         leads.append(lead)
-    return leads
+    # Dedup by cpf — Postgres ON CONFLICT explode se mesmo CPF aparecer 2x na mesma batch
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for l in leads:
+        if l["cpf"] in seen:
+            continue
+        seen.add(l["cpf"])
+        deduped.append(l)
+    return deduped
 
 
 async def _create_batch(owner_id: str, file_name: str | None) -> str:

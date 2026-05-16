@@ -66,6 +66,7 @@ class MercantilLeadWorker:
         startup_delay: float = 0.0,
         batch_id: str | None = None,
         config: MercantilConfig | None = None,
+        mode: str = "dom",  # "dom" (clica botões) ou "bff" (chama API direto, bypassa reCAPTCHA)
     ):
         self.worker_id = worker_id
         self.user_id = user_id
@@ -76,6 +77,7 @@ class MercantilLeadWorker:
         self.startup_delay = startup_delay
         self.batch_id = batch_id
         self.cfg = config or MercantilConfig()
+        self.mode = mode if mode in ("dom", "bff") else "dom"
         self.engine = MercantilEngine(
             login=creds.login,
             password=creds.password,
@@ -108,6 +110,42 @@ class MercantilLeadWorker:
         cpf = record["cpf"]
         telefone = record.get("telefone")
 
+        # Injeta context pra _screenshot emitir WS com cpf+url
+        from .phases import set_emit_context
+        set_emit_context(lambda p: self.on_event(p) if self.on_event else None, cpf)
+
+        # Live screenshot loop (1.5s) pro frontend ver "browser ao vivo"
+        live_task = asyncio.create_task(self._live_screenshot_loop(page, cpf))
+        try:
+            return await self._process_cpf_inner(page, record)
+        finally:
+            live_task.cancel()
+            try:
+                await live_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    async def _live_screenshot_loop(self, page, cpf: str) -> None:
+        from pathlib import Path
+        name = f"mercantil_live_{self.user_id}.png"
+        path = f"/tmp/{name}"
+        url = f"/api/mercantil/screenshot/{name}"
+        try:
+            Path("/tmp").mkdir(exist_ok=True)
+            while True:
+                try:
+                    await page.screenshot(path=path, full_page=False, type="png")
+                    self._emit("live_frame", cpf=cpf, url=url)
+                except Exception:
+                    pass
+                await asyncio.sleep(1.5)
+        except asyncio.CancelledError:
+            return
+
+    async def _process_cpf_inner(self, page, record: dict) -> dict:
+        cpf = record["cpf"]
+        telefone = record.get("telefone")
+
         # Garante que estamos logados antes de cada CPF (session pode expirar mid-batch)
         ok = await self.engine.ensure_logged_in(
             page, user_id=self.user_id, run_id=self.run_id,
@@ -115,6 +153,10 @@ class MercantilLeadWorker:
         )
         if not ok:
             return {"status": "erro", "erro": "sessão expirou e relogin falhou"}
+
+        # MODO BFF — chama API direto, bypassa reCAPTCHA. Cenário B ainda usa Plurio (DOM).
+        if self.mode == "bff":
+            return await self._process_cpf_bff(page, cpf, telefone)
 
         # FASE 1 — consultar via DOM (simular-proposta → Consultar → Nova operação)
         self._emit("status_update", cpf=cpf, status="fase1_consulta")
@@ -179,6 +221,68 @@ class MercantilLeadWorker:
             pass
 
         return result
+
+    # ─── Modo BFF (bypassa reCAPTCHA) ─────────────────────────────────────────
+
+    async def _process_cpf_bff(self, page, cpf: str, telefone: str | None) -> dict:
+        from . import bff_bridge
+
+        self._emit("status_update", cpf=cpf, status="bff_consultar")
+        r = await bff_bridge.consultar_cpf(page, cpf,
+                                           poll_interval=self.cfg.poll_dataprev_interval_s,
+                                           poll_max=self.cfg.poll_dataprev_max_seconds)
+        status_bff = r.get("status")
+
+        # Resultado terminal direto do BFF — preserva schema sem forçar cenário em inelegível/erro
+        if status_bff in ("elegivel", "inelegivel", "erro"):
+            out = dict(r)
+            if status_bff == "elegivel" and "cenario" not in out:
+                out["cenario"] = "A"  # elegível terminal = Cenário A (não precisou DataPrev)
+            return out
+
+        # Cenário B — precisa autorizar DataPrev via Plurio (DOM, sem alternativa)
+        if status_bff == "aguardando_autorizacao":
+            uuid_portal = r.get("uuid_portal")
+            updates_base = {"uuid_portal": uuid_portal, "cenario": "B", "nome": r.get("nome")}
+
+            try:
+                await page.goto(
+                    f"https://meu.bancomercantil.com.br/solicitar-dataprev/{uuid_portal}",
+                    wait_until="domcontentloaded", timeout=self.cfg.timeout_page,
+                )
+            except Exception as e:
+                log.warning("mercantil BFF cenário B goto dataprev falhou cpf=%s url_atual=%s: %s",
+                            cpf, page.url, str(e)[:120])
+                # cleanup: tenta voltar pro dashboard pra próximo CPF não herdar estado
+                try:
+                    await voltar_para_dashboard(page, self.cfg)
+                except Exception:
+                    pass
+                return {**updates_base, "status": "erro", "erro": f"goto dataprev: {str(e)[:200]}"}
+
+            self._emit("status_update", cpf=cpf, status="fase3_dataprev")
+            r3 = await fase3_autorizar_dataprev(page, uuid_portal, telefone, self.cfg)
+            if r3.get("status") != "autorizado":
+                try:
+                    await voltar_para_dashboard(page, self.cfg)
+                except Exception:
+                    pass
+                return {**updates_base, "status": "erro",
+                        "erro": r3.get("erro", "fase3 falhou")}
+
+            # Volta ao BFF pra finalizar — agora token deve estar válido
+            self._emit("status_update", cpf=cpf, status="bff_reconsultar")
+            r2 = await bff_bridge.consultar_cpf(page, cpf,
+                                                poll_interval=self.cfg.poll_dataprev_interval_s,
+                                                poll_max=self.cfg.poll_dataprev_max_seconds)
+            # Detecta divergência uuid_portal (BFF poderia retornar outro id pós-autorização)
+            r2_uuid = r2.get("uuid_portal")
+            if r2_uuid and r2_uuid != uuid_portal:
+                log.warning("mercantil BFF reconsulta uuid divergente cpf=%s old=%s new=%s",
+                            cpf, uuid_portal, r2_uuid)
+            return {**updates_base, **r2, "cenario": "B"}
+
+        return {"status": "erro", "erro": f"BFF retornou status inesperado: {status_bff}"}
 
     # ─── Persistência ─────────────────────────────────────────────────────────
 

@@ -58,6 +58,10 @@ class _Runtime:
 
 _runtimes: dict[str, _Runtime] = {}
 
+# Keep strong refs to detached login_visual tasks — sem isso o GC pode coletar
+# a task antes dela rodar, matando o coroutine silenciosamente (Python 3.9+).
+_login_visual_tasks: set[asyncio.Task] = set()
+
 
 def get_session_status(user_id: str) -> dict:
     """Returns saved session state for the user."""
@@ -103,23 +107,64 @@ async def start_login_visual(
             logger.warning("login_visual: erro ao criar run no DB: %s", e)
 
     async def _login_task():
-        from ..banks.mercantil.engine import MercantilEngine
-        from ..banks.mercantil.config import MercantilConfig
-
-        engine = MercantilEngine(
-            login=creds["login"],
-            password=creds["password"],
-            config=MercantilConfig(),
-        )
+        logger.info("login_visual: _login_task entrou user=%s run_id=%s", user_id, run_id)
+        engine = None
         try:
+            logger.info("login_visual: importando MercantilEngine user=%s", user_id)
+            from ..banks.mercantil.engine import MercantilEngine
+            from ..banks.mercantil.config import MercantilConfig
+
+            login_val = getattr(creds, "login", None)
+            pass_val = getattr(creds, "password", None)
+            if not login_val or not pass_val:
+                # Last-resort: try dict-style (shouldn't happen, creds é BankCredentials)
+                try:
+                    login_val = login_val or creds["login"]
+                    pass_val = pass_val or creds["password"]
+                except Exception:
+                    pass
+            logger.info("login_visual: creds resolvidos user=%s login=%s has_pass=%s",
+                        user_id, login_val, bool(pass_val))
+
+            engine = MercantilEngine(
+                login=login_val,
+                password=pass_val,
+                config=MercantilConfig(),
+            )
+            logger.info("login_visual: chamando engine.start(headless=False) user=%s display=%s",
+                        user_id, _os.getenv("DISPLAY"))
             await engine.start(headless=False)
+            logger.info("login_visual: engine.start OK user=%s", user_id)
+
+            logger.info("login_visual: chamando engine.new_context user=%s", user_id)
             ctx = await engine.new_context(user_id)
+            logger.info("login_visual: new_context OK user=%s", user_id)
+
             page = await ctx.new_page()
+            logger.info("login_visual: new_page OK user=%s — iniciando login_with_sms", user_id)
+
+            # Captura redis pro broadcast WS (Login Visual precisa que sms_required chegue no front)
+            try:
+                redis_lv = await get_redis()
+            except Exception:
+                redis_lv = None
 
             def _emit(ev):
-                on_event({**ev, "user_id": user_id, "run_id": run_id, "bank": "mercantil"})
+                payload = {**ev, "user_id": user_id, "run_id": run_id, "bank": "mercantil"}
+                # Broadcast no canal Redis pro WS do frontend
+                if redis_lv is not None:
+                    try:
+                        asyncio.create_task(_broadcast(redis_lv, payload))
+                    except Exception:
+                        logger.exception("login_visual: broadcast falhou")
+                # Mantém callback local pro buffer in-process
+                try:
+                    on_event(payload)
+                except Exception:
+                    logger.exception("login_visual: on_event local crashou")
 
             success = await engine.login_with_sms(page, user_id, run_id, emit=_emit)
+            logger.info("login_visual: login_with_sms retornou success=%s user=%s", success, user_id)
 
             if success:
                 await engine._save_state(ctx, user_id)
@@ -140,19 +185,49 @@ async def start_login_visual(
                 logger.warning("login_visual: falha no login user=%s", user_id)
         except Exception as e:
             logger.exception("login_visual: erro inesperado user=%s: %s", user_id, e)
-            on_event({
-                "type": "session_failed",
-                "user_id": user_id,
-                "run_id": run_id,
-                "bank": "mercantil",
-                "error": str(e),
-            })
+            try:
+                on_event({
+                    "type": "session_failed",
+                    "user_id": user_id,
+                    "run_id": run_id,
+                    "bank": "mercantil",
+                    "error": str(e),
+                })
+            except Exception:
+                logger.exception("login_visual: on_event(session_failed) crashou user=%s", user_id)
         finally:
-            await engine.stop()
-            redis2 = await get_redis()
-            await redis2.delete(lv_key)
+            logger.info("login_visual: finally — parando engine user=%s", user_id)
+            if engine is not None:
+                try:
+                    await engine.stop()
+                except Exception:
+                    logger.exception("login_visual: engine.stop() crashou user=%s", user_id)
+            try:
+                redis2 = await get_redis()
+                await redis2.delete(lv_key)
+            except Exception:
+                logger.exception("login_visual: redis cleanup crashou user=%s", user_id)
+            logger.info("login_visual: _login_task encerrou user=%s", user_id)
 
-    asyncio.create_task(_login_task())
+    task = asyncio.create_task(_login_task(), name=f"mercantil_login_visual_{user_id}")
+    # CRÍTICO: manter ref forte — sem isso GC pode matar a task silenciosamente
+    _login_visual_tasks.add(task)
+    task.add_done_callback(_login_visual_tasks.discard)
+
+    def _log_task_result(t: asyncio.Task) -> None:
+        try:
+            exc = t.exception()
+            if exc is not None:
+                logger.error("login_visual: task done com exception user=%s exc=%r", user_id, exc)
+            else:
+                logger.info("login_visual: task done OK user=%s", user_id)
+        except asyncio.CancelledError:
+            logger.warning("login_visual: task CANCELLED user=%s", user_id)
+        except Exception:
+            logger.exception("login_visual: done_callback crashou user=%s", user_id)
+
+    task.add_done_callback(_log_task_result)
+    logger.info("login_visual: task agendada user=%s run_id=%s", user_id, run_id)
     return {"status": "started", "run_id": run_id}
 
 
@@ -188,6 +263,7 @@ async def start_bot(
     db: Any,
     on_event: Callable,
     batch_id: str | None = None,
+    mode: str = "dom",
 ):
     """Inicia bot Mercantil pra um user, opcionalmente escopado pra batch."""
     if user_id in _runtimes:
@@ -282,6 +358,7 @@ async def start_bot(
                     startup_delay=i * WORKER_STAGGER_SECONDS,
                     batch_id=batch_id,
                     config=cfg,
+                    mode=mode,
                 )
 
                 async def _wrap(worker=w):

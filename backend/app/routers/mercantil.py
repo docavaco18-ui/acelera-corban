@@ -10,8 +10,10 @@ import csv
 import io
 import re
 
+from pathlib import Path
+
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 
 from ..auth_deps import require_user, AuthUser
@@ -119,8 +121,12 @@ async def bot_start(
     request: Request,
     num_workers: int = 1,
     batch_id: str | None = None,
+    mode: str = "dom",
     user: AuthUser = Depends(require_user),
 ):
+    if mode not in ("dom", "bff"):
+        raise HTTPException(400, "mode deve ser 'dom' ou 'bff'")
+
     db = get_db()
     creds = get_mercantil_runtime_creds(user.user_id, db)
     pool = request.app.state.mercantil_pool
@@ -136,6 +142,7 @@ async def bot_start(
     return await mercantil_bot_service.start_bot(
         pool=pool, user_id=user.user_id, num_workers=num_workers,
         creds=creds, db=db, on_event=_on_event, batch_id=batch_id,
+        mode=mode,
     )
 
 
@@ -389,9 +396,13 @@ async def bot_login_visual(
     user: AuthUser = Depends(require_user),
 ):
     """Starts headful login (visible browser) for SMS capture only. Does NOT process leads."""
+    import logging as _log
+    _log.getLogger("mercantil.router").info(
+        "login_visual hit user=%s", user.user_id
+    )
     db = get_db()
     creds = get_mercantil_runtime_creds(user.user_id, db)
-    if not creds or not creds.get("login") or not creds.get("password"):
+    if not creds or not getattr(creds, "login", None) or not getattr(creds, "password", None):
         raise HTTPException(400, "Credenciais Mercantil não configuradas. Configure em Configurações.")
     return await mercantil_bot_service.start_login_visual(
         pool=request.app.state.mercantil_pool,
@@ -400,6 +411,22 @@ async def bot_login_visual(
         on_event=_on_event,
         db=db,
     )
+
+
+_SCREENSHOT_NAME_RE = re.compile(r"^[A-Za-z0-9_\-.]+\.png$")
+
+
+@router.get("/screenshot/{name}")
+def get_screenshot(name: str, _: AuthUser = Depends(require_user)):
+    """Serve PNG from /tmp/mercantil_*.png. Name validated to prevent path traversal."""
+    if not _SCREENSHOT_NAME_RE.match(name):
+        raise HTTPException(400, "invalid name")
+    path = Path("/tmp") / name
+    if not path.is_file():
+        raise HTTPException(404, "not found")
+    if not path.name.startswith("mercantil_"):
+        raise HTTPException(403, "forbidden")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/bot/runs")

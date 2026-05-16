@@ -7,16 +7,31 @@ mas aqui mantemos o CPF completo no log local porque é máquina do operador.
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from playwright.async_api import Page, BrowserContext, TimeoutError as PWTimeout
 
 from .config import MercantilConfig, gerar_celular_aleatorio
 
 log = logging.getLogger("mercantil.phases")
+
+# Context vars: worker injeta antes de chamar fases, _screenshot lê pra emitir WS
+_current_emit: contextvars.ContextVar[Callable | None] = contextvars.ContextVar(
+    "mercantil_emit", default=None
+)
+_current_cpf: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "mercantil_cpf", default=None
+)
+
+
+def set_emit_context(emit: Callable | None, cpf: str | None) -> None:
+    """Worker chama antes de cada CPF; _screenshot usa pra emitir WS."""
+    _current_emit.set(emit)
+    _current_cpf.set(cpf)
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
@@ -98,9 +113,21 @@ def _extract_uuid_from_url(url: str) -> str | None:
 async def _screenshot(page: Page, label: str) -> None:
     try:
         Path("/tmp").mkdir(exist_ok=True)
-        path = f"/tmp/mercantil_{label}.png"
+        name = f"mercantil_{label}.png"
+        path = f"/tmp/{name}"
         await page.screenshot(path=path, full_page=True)
         log.warning("mercantil screenshot saved %s", path)
+        emit = _current_emit.get()
+        if emit:
+            try:
+                emit({
+                    "type": "screenshot_saved",
+                    "cpf": _current_cpf.get(),
+                    "label": label,
+                    "url": f"/api/mercantil/screenshot/{name}",
+                })
+            except Exception:
+                pass
     except Exception:
         pass
 

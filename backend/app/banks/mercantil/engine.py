@@ -181,6 +181,28 @@ class MercantilEngine:
             },
         }
 
+        # Proxy opcional via env (MERCANTIL_PROXY_SERVER + USER + PASS).
+        # Rotação por porta: lista CSV em MERCANTIL_PROXY_PORTS pega round-robin.
+        proxy_server = os.getenv("MERCANTIL_PROXY_SERVER")
+        if proxy_server:
+            ports_csv = os.getenv("MERCANTIL_PROXY_PORTS", "").strip()
+            if ports_csv:
+                ports = [p.strip() for p in ports_csv.split(",") if p.strip()]
+                # Round-robin estável por user_id (mesmo user_id → mesma porta na sessão)
+                idx = abs(hash(user_id)) % len(ports)
+                server = f"{proxy_server.rstrip(':')}:{ports[idx]}"
+            else:
+                server = proxy_server
+            proxy_cfg: dict[str, Any] = {"server": server}
+            user = os.getenv("MERCANTIL_PROXY_USER")
+            pwd = os.getenv("MERCANTIL_PROXY_PASS")
+            if user:
+                proxy_cfg["username"] = user
+            if pwd:
+                proxy_cfg["password"] = pwd
+            kwargs["proxy"] = proxy_cfg
+            logger.info("mercantil proxy enabled server=%s user=%s", server, user or "(none)")
+
         # Carrega storage_state se existir → reusa sessão (evita SMS)
         if self.has_saved_state(user_id):
             kwargs["storage_state"] = str(self.storage_state_path(user_id))
@@ -250,17 +272,19 @@ class MercantilEngine:
             """
         )
 
-        # Bloqueia script Akamai Bot Manager no nível do contexto (antes de qualquer navegação).
-        # O script rb_bf86592ucl é o Bot Manager v3 — ele patcha addEventListener e
-        # cancela clicks de sessões detectadas como automação. Bloqueado aqui = nunca roda.
-        async def _block_bot_manager(route):
-            url = route.request.url
-            if "rb_bf86592ucl" in url or "/akam/" in url:
-                await route.fulfill(status=200, content_type="application/javascript", body="")
-            else:
-                await route.continue_()
-
-        await ctx.route("**/*", _block_bot_manager)
+        # Bot Manager Akamai blocking DESATIVADO — quebra dependência do reCAPTCHA
+        # ("Não foi possível conectar-se ao serviço reCAPTCHA"). Pra modo BFF é OK
+        # porque BFF não usa clicks DOM, então não importa se Bot Manager monitora.
+        # Pra modo DOM, Bot Manager pode cancelar clicks — mas reCAPTCHA é mais crítico.
+        if os.getenv("MERCANTIL_BLOCK_AKAMAI", "0") == "1":
+            async def _block_bot_manager(route):
+                url = route.request.url
+                if "rb_bf86592ucl" in url or "/akam/" in url:
+                    await route.fulfill(status=200, content_type="application/javascript", body="")
+                else:
+                    await route.continue_()
+            await ctx.route("**/*", _block_bot_manager)
+            logger.info("mercantil Akamai bot manager blocked (env MERCANTIL_BLOCK_AKAMAI=1)")
 
         return ctx
 
@@ -502,14 +526,23 @@ class MercantilEngine:
 
             await asyncio.sleep(0.8)
 
-            # Tenta múltiplas variantes do botão Verificar
+            # Tenta múltiplas variantes do botão Verificar (Angular Material)
             button_variants = [
                 "button:has-text('Verificar código')",
                 "button:has-text('Verificar')",
                 "button:has-text('VERIFICAR')",
+                "button:has-text('Continuar')",
+                "button:has-text('Confirmar')",
+                "button:has-text('Entrar')",
                 "button[type='submit']",
-                # Pode ser <a> ou outro elemento
+                "button.mat-mdc-button:has-text('Verificar')",
+                "button.mat-mdc-raised-button:has-text('Verificar')",
+                "button.mat-flat-button:has-text('Verificar')",
+                "mat-button:has-text('Verificar')",
                 "[role='button']:has-text('Verificar')",
+                "a:has-text('Verificar')",
+                "a.pcb-button:has-text('Verificar')",
+                "input[type='submit']",
             ]
             verify_clicked = False
             for sel in button_variants:
@@ -531,8 +564,25 @@ class MercantilEngine:
                     continue
 
             if not verify_clicked:
-                # Última tentativa: Enter no último input
-                logger.warning("mercantil _fill_sms: nenhum selector de botão funcionou, tentando Enter")
+                logger.warning("mercantil _fill_sms: nenhum selector de botão funcionou, tirando screenshot + Enter")
+                try:
+                    await self._screenshot(page, "sms_no_verify_btn")
+                except Exception:
+                    pass
+                # Dump dos botões visíveis pra diagnóstico
+                try:
+                    btns = await page.evaluate("""() => {
+                        const out = [];
+                        document.querySelectorAll('button, a, [role=button], input[type=submit]').forEach(el => {
+                            if (el.offsetParent !== null) {
+                                out.push({tag: el.tagName, text: (el.innerText||el.value||'').trim().substring(0,40), classes: el.className});
+                            }
+                        });
+                        return out.slice(0, 20);
+                    }""")
+                    logger.warning("mercantil _fill_sms: botões visíveis na tela: %s", btns)
+                except Exception:
+                    pass
                 await page.keyboard.press("Enter")
                 await asyncio.sleep(1)
 
