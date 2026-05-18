@@ -112,9 +112,38 @@ export default function SessionPanel() {
         Login Manual (eu insiro o SMS)
       </button>
 
+      <button
+        onClick={() => {
+          const js = `copy(JSON.stringify({url:location.href,cookies:document.cookie,localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))}))`;
+          navigator.clipboard?.writeText(js).catch(() => {});
+          alert(
+            "1) Loga no Chrome teu em meu.bancomercantil.com.br\n" +
+            "2) F12 → Console\n" +
+            "3) Cola o JS (já copiei pro teu clipboard) e Enter\n" +
+            "4) No terminal:\n   cd ~/projetos/ACELERA\\ CORBAN\n   python3 scripts/import_mercantil_session.py\n" +
+            "5) Cola o JSON, Enter, Ctrl+D"
+          );
+        }}
+        style={{
+          width: "100%",
+          marginTop: 8,
+          padding: "10px 16px",
+          borderRadius: 8,
+          background: "#0ea5e9",
+          color: "#fff",
+          border: "none",
+          fontSize: 14,
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        Importar sessão do meu Chrome
+      </button>
+
       <p style={{ margin: "12px 0 0", fontSize: 11, color: C.muted }}>
         <b>Auto-retry:</b> bot tenta login várias vezes, re-dispara SMS automaticamente.<br/>
-        <b>Manual:</b> bot só preenche login/senha, pede 1 SMS e para. Sem reenvios automáticos.
+        <b>Manual:</b> bot só preenche login/senha, pede 1 SMS e para.<br/>
+        <b>Importar:</b> copia sessão do teu Chrome (sem SMS, sem bloqueio).
       </p>
     </div>
   );
