@@ -42,6 +42,7 @@ class MercantilConfig:
     # ── SMS humano via WS bridge ──────────────────────────────────────────────
     sms_timeout_seconds: int = 600
     sms_max_attempts:    int = 5
+    sms_max_codes_per_login: int = 3  # códigos consecutivos antes de re-logar
 
     # ── Polling DataPrev (cenario B) ──────────────────────────────────────────
     poll_dataprev_max_seconds: int = 300

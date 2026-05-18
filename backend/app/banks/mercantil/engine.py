@@ -394,49 +394,92 @@ class MercantilEngine:
 
                 # Race: dashboard direto OU tela de SMS (timeout maior, SMS leva tempo)
                 outcome = await self._await_dashboard_or_sms(page, timeout_s=45)
+                logger.info("mercantil login post-submit outcome=%s url=%s attempt=%d",
+                            outcome, page.url, attempt)
 
                 if outcome == "dashboard":
                     logger.info("mercantil login direto (sem SMS) user=%s", user_id)
                     await self._save_state(page.context, user_id)
                     return True
 
-                if outcome == "sms":
-                    reason = "initial" if attempt == 1 else "wrong_code"
+                if outcome != "sms":
+                    # Outcome desconhecido → screenshot debug + próxima tentativa (re-login)
+                    logger.error("mercantil login outcome desconhecido url=%s", page.url)
+                    await self._screenshot(page, f"login_unknown_{user_id}")
+                    continue
+
+                # Loop interno SMS: tenta múltiplos códigos sem re-logar.
+                # Só sai pra próxima attempt (re-login) em timeout do bridge,
+                # fill failure persistente, OU outcome unknown pós-verify.
+                sms_max_codes = max(1, getattr(self.cfg, "sms_max_codes_per_login", 3))
+                relogin = False
+                for sms_try in range(1, sms_max_codes + 1):
+                    reason = "initial" if (attempt == 1 and sms_try == 1) else "wrong_code"
                     emit({"type": "sms_required", "reason": reason, "phone_hint": "-5744",
-                          "attempt": attempt})
-                    await sms_bridge.set_state(user_id, run_id, "waiting", ttl=self.cfg.sms_timeout_seconds + 30)
+                          "attempt": attempt, "sms_try": sms_try})
+                    await sms_bridge.set_state(user_id, run_id, "waiting",
+                                               ttl=self.cfg.sms_timeout_seconds + 30)
+                    logger.info("mercantil aguardando código SMS user=%s attempt=%d sms_try=%d",
+                                user_id, attempt, sms_try)
 
                     code = await sms_bridge.request_sms_code(
                         user_id, run_id, timeout=self.cfg.sms_timeout_seconds,
                     )
                     if not code:
-                        emit({"type": "sms_timeout", "attempt": attempt})
-                        logger.error("mercantil SMS timeout user=%s attempt=%d", user_id, attempt)
-                        continue  # próxima tentativa: re-submete user/pass
+                        emit({"type": "sms_timeout", "attempt": attempt, "sms_try": sms_try})
+                        logger.error("mercantil SMS timeout user=%s attempt=%d sms_try=%d",
+                                     user_id, attempt, sms_try)
+                        relogin = True
+                        break
 
                     ok = await self._fill_sms_and_verify(page, code)
                     if not ok:
-                        logger.warning("mercantil SMS preenchimento falhou — re-tentando", )
+                        logger.warning("mercantil SMS preenchimento falhou sms_try=%d", sms_try)
+                        try:
+                            await sms_bridge.discard_code(user_id, run_id)
+                        except Exception as e:
+                            logger.warning("mercantil discard_code falhou pós fill fail: %s", e)
+                        # Próximo código no mesmo loop (não re-loga ainda)
+                        if sms_try >= sms_max_codes:
+                            relogin = True
                         continue
 
-                    # Detecta resultado: dashboard (sucesso) ou volta pra SMS (código errado)
-                    final = await self._await_dashboard_or_sms(page, timeout_s=20)
+                    final = await self._await_dashboard_or_sms(page, timeout_s=60)
+                    logger.info("mercantil pós-SMS final=%s url=%s attempt=%d sms_try=%d",
+                                final, page.url, attempt, sms_try)
+
                     if final == "dashboard":
                         await sms_bridge.set_state(user_id, run_id, "done", ttl=5)
                         await sms_bridge.discard_code(user_id, run_id)
                         emit({"type": "sms_accepted"})
                         await self._save_state(page.context, user_id)
-                        logger.info("mercantil login OK user=%s attempt=%d", user_id, attempt)
+                        logger.info("mercantil login OK user=%s attempt=%d sms_try=%d",
+                                    user_id, attempt, sms_try)
                         return True
 
-                    # Voltou pra SMS → código errado
-                    emit({"type": "sms_wrong_code", "attempt": attempt})
-                    await sms_bridge.set_state(user_id, run_id, "wrong", ttl=10)
-                    continue
+                    if final == "sms":
+                        # Banco rejeitou código → permanece na tela SMS. Pede novo
+                        # código SEM re-logar (evita disparar SMS extras no celular).
+                        emit({"type": "sms_wrong_code", "attempt": attempt, "sms_try": sms_try})
+                        await sms_bridge.set_state(user_id, run_id, "wrong", ttl=10)
+                        # Descarta código consumido pra próximo BLPOP esperar novo
+                        try:
+                            await sms_bridge.discard_code(user_id, run_id)
+                        except Exception as e:
+                            logger.warning("mercantil discard_code falhou pós wrong_code: %s", e)
+                        continue
 
-                # Outcome desconhecido → screenshot debug
-                logger.error("mercantil login outcome desconhecido url=%s", page.url)
-                await self._screenshot(page, f"login_unknown_{user_id}")
+                    # final == "unknown": estado indefinido → re-loga pra zerar
+                    logger.error("mercantil pós-SMS unknown url=%s — re-login", page.url)
+                    await self._screenshot(page, f"post_sms_unknown_{user_id}")
+                    relogin = True
+                    break
+
+                if relogin:
+                    continue
+                # Esgotou sms_max_codes sem sucesso e sem flag relogin → próxima attempt
+                logger.warning("mercantil esgotou %d códigos sem sucesso — re-login",
+                               sms_max_codes)
 
             except Exception as e:
                 logger.exception("mercantil login attempt %d crash: %s", attempt, e)
