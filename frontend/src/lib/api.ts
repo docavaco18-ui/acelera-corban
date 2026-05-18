@@ -258,9 +258,13 @@ export const mercantilApi = {
       )
       .then((r) => r.data),
 
-  loginVisual: () =>
+  loginVisual: (opts?: { manual?: boolean }) =>
     mercantilAxios
-      .post<{ status: string; run_id: string }>("/api/mercantil/bot/login-visual")
+      .post<{ status: string; run_id: string }>(
+        "/api/mercantil/bot/login-visual",
+        null,
+        { params: opts?.manual ? { manual: 1 } : {} },
+      )
       .then((r) => r.data),
 
   botStart: (batchId?: string, mode: "dom" | "bff" = "dom") =>

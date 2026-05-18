@@ -165,6 +165,24 @@ export function useMercantilSmsBridge(): SmsBridgeApi {
           return;
         }
 
+        if (ev.type === "assist_failed") {
+          const reasonMap: Record<string, string> = {
+            sms_timeout: "Você não digitou o código em 10 min. Inicie o login de novo.",
+            wrong_code: "Código incorreto. Inicie o login de novo.",
+            fill_failed: "Não foi possível preencher o código no portal. Inicie o login de novo.",
+            unknown_outcome: "Portal não respondeu como esperado após o login. Tente de novo.",
+            post_sms_unknown: "Banco não chegou ao dashboard após o código. Tente de novo.",
+            exception: "Erro inesperado no bot. Tente de novo.",
+          };
+          setState((s) => ({
+            ...s,
+            pending: false,
+            submitting: false,
+            errorMessage: reasonMap[ev.reason] ?? `Falha: ${ev.reason ?? "desconhecida"}`,
+          }));
+          return;
+        }
+
         if (ev.type === "bot_status" && ev.status === "idle") {
           setState((s) =>
             s.pending && s.runId === ev.run_id

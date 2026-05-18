@@ -393,12 +393,16 @@ def session_status(user: AuthUser = Depends(require_user)):
 @router.post("/bot/login-visual", status_code=202)
 async def bot_login_visual(
     request: Request,
+    manual: int = 0,
     user: AuthUser = Depends(require_user),
 ):
-    """Starts headful login (visible browser) for SMS capture only. Does NOT process leads."""
+    """Starts headful login (visible browser) for SMS capture only. Does NOT process leads.
+
+    Query param `manual=1` ativa modo assistido: bot só preenche login/senha,
+    pede 1 código SMS e para. Sem retries automáticos."""
     import logging as _log
     _log.getLogger("mercantil.router").info(
-        "login_visual hit user=%s", user.user_id
+        "login_visual hit user=%s manual=%d", user.user_id, manual
     )
     db = get_db()
     creds = get_mercantil_runtime_creds(user.user_id, db)
@@ -410,6 +414,7 @@ async def bot_login_visual(
         creds=creds,
         on_event=_on_event,
         db=db,
+        manual_sms=bool(manual),
     )
 
 

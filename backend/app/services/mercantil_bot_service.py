@@ -85,6 +85,7 @@ async def start_login_visual(
     creds: dict,
     on_event,
     db=None,
+    manual_sms: bool = False,
 ) -> dict:
     """Starts headful Playwright browser for login+SMS only. Does NOT process leads.
     Emits session_saved on success, session_failed on failure."""
@@ -170,8 +171,13 @@ async def start_login_visual(
                 except Exception:
                     logger.exception("login_visual: on_event local crashou")
 
-            success = await engine.login_with_sms(page, user_id, run_id, emit=_emit)
-            logger.info("login_visual: login_with_sms retornou success=%s user=%s", success, user_id)
+            if manual_sms:
+                logger.info("login_visual: modo MANUAL (assist) user=%s", user_id)
+                success = await engine.login_assist(page, user_id, run_id, emit=_emit)
+                logger.info("login_visual: login_assist retornou success=%s user=%s", success, user_id)
+            else:
+                success = await engine.login_with_sms(page, user_id, run_id, emit=_emit)
+                logger.info("login_visual: login_with_sms retornou success=%s user=%s", success, user_id)
 
             if success:
                 await engine._save_state(ctx, user_id)

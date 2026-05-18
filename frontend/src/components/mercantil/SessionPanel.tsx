@@ -76,7 +76,7 @@ export default function SessionPanel() {
       )}
 
       <button
-        onClick={session.startLoginVisual}
+        onClick={() => session.startLoginVisual()}
         disabled={btnDisabled}
         style={{
           width: "100%",
@@ -90,11 +90,31 @@ export default function SessionPanel() {
           cursor: btnDisabled ? "not-allowed" : "pointer",
         }}
       >
-        {session.status === "logging_in" ? "Aguardando SMS…" : "Login Visual"}
+        {session.status === "logging_in" ? "Aguardando SMS…" : "Login Visual (auto-retry)"}
+      </button>
+
+      <button
+        onClick={() => session.startLoginVisual({ manual: true })}
+        disabled={btnDisabled}
+        style={{
+          width: "100%",
+          marginTop: 8,
+          padding: "10px 16px",
+          borderRadius: 8,
+          background: btnDisabled ? C.border : C.green,
+          color: btnDisabled ? C.muted : "#fff",
+          border: "none",
+          fontSize: 14,
+          fontWeight: 700,
+          cursor: btnDisabled ? "not-allowed" : "pointer",
+        }}
+      >
+        Login Manual (eu insiro o SMS)
       </button>
 
       <p style={{ margin: "12px 0 0", fontSize: 11, color: C.muted }}>
-        Abre o Chrome, preenche login/senha automaticamente e aguarda você inserir o SMS. Sessão fica salva para o Rodar Bot.
+        <b>Auto-retry:</b> bot tenta login várias vezes, re-dispara SMS automaticamente.<br/>
+        <b>Manual:</b> bot só preenche login/senha, pede 1 SMS e para. Sem reenvios automáticos.
       </p>
     </div>
   );

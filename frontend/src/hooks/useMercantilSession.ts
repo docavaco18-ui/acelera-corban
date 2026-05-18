@@ -93,10 +93,10 @@ export function useMercantilSession() {
     };
   }, [refresh]);
 
-  const startLoginVisual = useCallback(async () => {
+  const startLoginVisual = useCallback(async (opts?: { manual?: boolean }) => {
     setState((s) => ({ ...s, isStartingLogin: true, error: null }));
     try {
-      await mercantilApi.loginVisual();
+      await mercantilApi.loginVisual(opts);
       setState((s) => ({ ...s, status: "logging_in" }));
     } catch (e: any) {
       const msg = e?.response?.data?.detail || "Erro ao iniciar login visual";

@@ -497,6 +497,133 @@ class MercantilEngine:
         self._drop_state(user_id)
         return False
 
+    async def login_assist(
+        self,
+        page: Page,
+        user_id: str,
+        run_id: str,
+        emit: Callable[[dict], None] | None = None,
+    ) -> bool:
+        """Modo assistido: bot preenche login/senha e clica Entrar. Pede UM código
+        SMS ao usuário via modal. Sem retries, sem re-login. Em caso de falha,
+        emite assist_failed com motivo + screenshot."""
+
+        def _emit(payload: dict) -> None:
+            if emit:
+                try:
+                    emit({**payload, "user_id": user_id, "run_id": run_id, "bank": "mercantil"})
+                except Exception:
+                    logger.exception("mercantil login_assist emit falhou payload=%s", payload)
+
+        # Reaproveita sessão se válida
+        try:
+            await page.goto(self.cfg.dashboard_url, wait_until="domcontentloaded",
+                            timeout=self.cfg.timeout_page)
+            await asyncio.sleep(3.0)
+            nova = page.locator(self.cfg.SEL_NOVA_PROPOSTA_BTN).first
+            if await nova.count() > 0 and await nova.is_visible():
+                logger.info("mercantil assist: sessão reaproveitada user=%s", user_id)
+                await self._save_state(page.context, user_id)
+                return True
+        except Exception:
+            pass
+
+        try:
+            await page.goto(self.cfg.portal_url, wait_until="domcontentloaded",
+                            timeout=self.cfg.timeout_page)
+            await page.wait_for_selector(self.cfg.SEL_LOGIN_USER,
+                                         timeout=self.cfg.timeout_page, state="visible")
+            await asyncio.sleep(1.0)
+
+            user_input = page.locator(self.cfg.SEL_LOGIN_USER).first
+            await user_input.click()
+            await user_input.fill("")
+            await user_input.fill(self.login)
+            await page.keyboard.press("Tab")
+            await asyncio.sleep(0.3)
+
+            pass_input = page.locator(self.cfg.SEL_LOGIN_PASS).first
+            await pass_input.click()
+            await pass_input.fill("")
+            await pass_input.fill(self.password)
+            await page.keyboard.press("Tab")
+            await asyncio.sleep(0.5)
+
+            btn = page.locator(self.cfg.SEL_LOGIN_BTN).first
+            await btn.wait_for(state="visible", timeout=5000)
+            user_val = await user_input.input_value()
+            pass_val = await pass_input.input_value()
+            logger.info("mercantil assist pre-submit user_len=%d pass_len=%d",
+                        len(user_val), len(pass_val))
+            try:
+                await btn.click(timeout=5000)
+            except Exception:
+                await btn.click(force=True, timeout=3000)
+
+            outcome = await self._await_dashboard_or_sms(page, timeout_s=45)
+            logger.info("mercantil assist post-submit outcome=%s url=%s", outcome, page.url)
+
+            if outcome == "dashboard":
+                await self._save_state(page.context, user_id)
+                return True
+
+            if outcome != "sms":
+                await self._screenshot(page, f"assist_unknown_{user_id}")
+                _emit({"type": "assist_failed", "reason": "unknown_outcome", "url": page.url})
+                return False
+
+            # Tela SMS detectada — pede código UMA VEZ ao usuário
+            _emit({"type": "sms_required", "reason": "initial", "phone_hint": "-5744",
+                   "attempt": 1, "sms_try": 1})
+            await sms_bridge.set_state(user_id, run_id, "waiting",
+                                       ttl=self.cfg.sms_timeout_seconds + 30)
+            logger.info("mercantil assist aguardando código SMS user=%s timeout=%ds",
+                        user_id, self.cfg.sms_timeout_seconds)
+
+            code = await sms_bridge.request_sms_code(
+                user_id, run_id, timeout=self.cfg.sms_timeout_seconds,
+            )
+            if not code:
+                _emit({"type": "assist_failed", "reason": "sms_timeout"})
+                await sms_bridge.set_state(user_id, run_id, "timeout", ttl=30)
+                return False
+
+            try:
+                await self._screenshot(page, f"assist_sms_screen_{user_id}")
+            except Exception:
+                pass
+
+            ok = await self._fill_sms_and_verify(page, code)
+            if not ok:
+                _emit({"type": "assist_failed", "reason": "fill_failed"})
+                await self._screenshot(page, f"assist_fill_failed_{user_id}")
+                return False
+
+            final = await self._await_dashboard_or_sms(page, timeout_s=90)
+            logger.info("mercantil assist pós-SMS final=%s url=%s", final, page.url)
+
+            if final == "dashboard":
+                await sms_bridge.set_state(user_id, run_id, "done", ttl=5)
+                await sms_bridge.discard_code(user_id, run_id)
+                _emit({"type": "sms_accepted"})
+                await self._save_state(page.context, user_id)
+                return True
+
+            # Não chegou ao dashboard → reporta e para
+            await self._screenshot(page, f"assist_post_sms_{final}_{user_id}")
+            reason = "wrong_code" if final == "sms" else "post_sms_unknown"
+            _emit({"type": "assist_failed", "reason": reason, "url": page.url})
+            return False
+
+        except Exception as e:
+            logger.exception("mercantil assist crash: %s", e)
+            try:
+                await self._screenshot(page, f"assist_crash_{user_id}")
+            except Exception:
+                pass
+            _emit({"type": "assist_failed", "reason": "exception", "error": str(e)})
+            return False
+
     async def _await_dashboard_or_sms(self, page: Page, timeout_s: int = 30) -> str:
         """Race entre URL = /dashboard e tela de SMS visível. Retorna 'dashboard' | 'sms' | 'unknown'."""
         deadline = asyncio.get_event_loop().time() + timeout_s
