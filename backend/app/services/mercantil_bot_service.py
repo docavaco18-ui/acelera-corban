@@ -62,6 +62,9 @@ _runtimes: dict[str, _Runtime] = {}
 # a task antes dela rodar, matando o coroutine silenciosamente (Python 3.9+).
 _login_visual_tasks: set[asyncio.Task] = set()
 
+# Pin pra evitar GC dos broadcasts emitidos pelo callback síncrono do engine.
+_broadcast_tasks: set[asyncio.Task] = set()
+
 
 def get_session_status(user_id: str) -> dict:
     """Returns saved session state for the user."""
@@ -154,7 +157,11 @@ async def start_login_visual(
                 # Broadcast no canal Redis pro WS do frontend
                 if redis_lv is not None:
                     try:
-                        asyncio.create_task(_broadcast(redis_lv, payload))
+                        t = asyncio.create_task(_broadcast(redis_lv, payload))
+                        _broadcast_tasks.add(t)
+                        t.add_done_callback(_broadcast_tasks.discard)
+                        logger.info("login_visual: broadcast publicado type=%s user=%s",
+                                    payload.get("type"), user_id)
                     except Exception:
                         logger.exception("login_visual: broadcast falhou")
                 # Mantém callback local pro buffer in-process

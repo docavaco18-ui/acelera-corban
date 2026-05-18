@@ -432,6 +432,11 @@ class MercantilEngine:
                         relogin = True
                         break
 
+                    # Screenshot diagnóstico da tela SMS antes de preencher
+                    try:
+                        await self._screenshot(page, f"sms_screen_{user_id}_try{sms_try}")
+                    except Exception:
+                        pass
                     ok = await self._fill_sms_and_verify(page, code)
                     if not ok:
                         logger.warning("mercantil SMS preenchimento falhou sms_try=%d", sms_try)
