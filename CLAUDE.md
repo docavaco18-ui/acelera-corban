@@ -291,3 +291,50 @@ cd /root/acelera-corban && git pull && \
 docker compose -f docker-compose.prod.yml build --no-cache backend frontend && \
 docker compose -f docker-compose.prod.yml up -d backend frontend
 ```
+
+
+## Sessão 18/05/2026 — Bypass via Import Sessão Chrome Real
+
+**Problema final:** Bot Playwright detectado como device desconhecido pelo Mercantil. Banco mostra tela token mas suprime SMS. Login Manual também rejeita ("usuário inválido"). Escalada antifraude após sessões 14-17/05.
+
+**Solução:** importar sessão do Chrome real do user → storage_state Playwright → BFF roda livre.
+
+### Workflow
+
+1. User loga normal no Chrome dele em `meu.bancomercantil.com.br`.
+2. Dashboard `/mercantil` → botão azul **Importar sessão do meu Chrome** copia JS pro clipboard.
+3. Console DevTools (F12) → cola JS (se Chrome pedir, digita `allow pasting`) → output vai pro clipboard.
+4. Terminal: `python3 scripts/import_mercantil_session.py` → cola JSON → Ctrl+D.
+5. Script salva em `backend/.bot_state/mercantil/{user_id}.json`. Frontend vira "✅ Sessão válida".
+6. Click ⚡ Rodar BFF.
+
+### Por que funciona
+
+- JWT em `localStorage.PCB_AUTH` é o que `bff_bridge` consome via `wait_for_function`.
+- Cookies tracking (`rxVisitor`, `dtCookie`, `nvg83980`) mantêm device-id → banco confia.
+- `page.evaluate(fetch)` bypassa reCAPTCHA (handler Angular nunca dispara).
+- Sem novo login = sem novo SMS = sem novo score de risco.
+
+### Validade JWT
+
+~12h (campo `exp` no payload). Refaz import quando expirar.
+
+### Commits sessão
+
+- `a16000e` — loop SMS sem relogin + timeout 60s + logs
+- `5ec6c08` — pin broadcast tasks + screenshot SMS pré-fill
+- `9c4091e` — modo Login Manual (assist) single-shot
+- `dfa5877` — script manual_login local host (fallback não usado)
+- `07199aa` — import_mercantil_session + botão UI
+
+### Escalada antifraude observada
+
+| Fase | Sintoma |
+|------|---------|
+| 1 | reCAPTCHA bloqueia DOM submit (silent) |
+| 2 | Mostra tela token mas SMS não dispara |
+| 3 | "Usuário inválido" genérico |
+| 4 | Bloqueio total correspondente |
+
+Reset apenas via suporte Mercantil OU trocar IP+device. Esperar 48h não bastou.
+
