@@ -390,6 +390,72 @@ def session_status(user: AuthUser = Depends(require_user)):
     return mercantil_bot_service.get_session_status(user.user_id)
 
 
+class ImportSessionBody(BaseModel):
+    url: str | None = None
+    cookies: str = ""
+    localStorage: dict | None = None
+    sessionStorage: dict | None = None
+
+
+@router.post("/bot/import-session")
+async def bot_import_session(
+    body: ImportSessionBody,
+    user: AuthUser = Depends(require_user),
+):
+    """Importa sessão do Chrome real do user (cookies+localStorage) e salva
+    como storage_state Playwright em backend/.bot_state/mercantil/{user_id}.json.
+    """
+    import json as _json
+    import os as _os
+    from urllib.parse import urlparse
+
+    url = body.url or "https://meu.bancomercantil.com.br/dashboard"
+    parsed = urlparse(url)
+    domain = parsed.hostname or "meu.bancomercantil.com.br"
+    origin = f"{parsed.scheme}://{parsed.hostname}"
+
+    cookies: list[dict] = []
+    for pair in (body.cookies or "").split(";"):
+        pair = pair.strip()
+        if not pair or "=" not in pair:
+            continue
+        name, _, value = pair.partition("=")
+        cookies.append({
+            "name": name.strip(),
+            "value": value.strip(),
+            "domain": domain,
+            "path": "/",
+            "expires": -1,
+            "httpOnly": False,
+            "secure": True,
+            "sameSite": "Lax",
+        })
+
+    local = body.localStorage or {}
+    storage_state = {
+        "cookies": cookies,
+        "origins": [{
+            "origin": origin,
+            "localStorage": [{"name": k, "value": str(v)} for k, v in local.items()],
+        }],
+    }
+
+    state_dir = Path(_os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_file = state_dir / f"{user.user_id}.json"
+    with open(state_file, "w") as f:
+        _json.dump(storage_state, f, ensure_ascii=False)
+
+    pcb = local.get("PCB_AUTH")
+    return {
+        "status": "ok",
+        "path": str(state_file),
+        "cookies_count": len(cookies),
+        "localStorage_keys": list(local.keys()),
+        "has_pcb_auth": bool(pcb),
+    }
+
+
 @router.post("/bot/login-visual", status_code=202)
 async def bot_login_visual(
     request: Request,

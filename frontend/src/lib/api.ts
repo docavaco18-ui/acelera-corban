@@ -267,6 +267,22 @@ export const mercantilApi = {
       )
       .then((r) => r.data),
 
+  importSession: (dump: {
+    url?: string;
+    cookies?: string;
+    localStorage?: Record<string, string>;
+    sessionStorage?: Record<string, string>;
+  }) =>
+    mercantilAxios
+      .post<{
+        status: string;
+        path: string;
+        cookies_count: number;
+        localStorage_keys: string[];
+        has_pcb_auth: boolean;
+      }>("/api/mercantil/bot/import-session", dump)
+      .then((r) => r.data),
+
   botStart: (batchId?: string, mode: "dom" | "bff" = "dom") =>
     mercantilAxios
       .post<{ status: string; run_id: string }>("/api/mercantil/bot/start", null, {

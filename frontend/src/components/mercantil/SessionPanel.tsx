@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { useMercantilSession } from "../../hooks/useMercantilSession";
+import { mercantilApi } from "../../lib/api";
 
 const C = {
   bg: "#1e293b",
@@ -13,6 +15,42 @@ const C = {
 
 export default function SessionPanel() {
   const session = useMercantilSession();
+  const [importing, setImporting] = useState(false);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+
+  async function handleImport() {
+    setImportMsg(null);
+    const raw = window.prompt(
+      "Cole aqui o JSON do console do Chrome.\n\n" +
+      "Como obter:\n" +
+      "1) Loga em meu.bancomercantil.com.br no Chrome\n" +
+      "2) F12 → Console → digita: allow pasting (se pedir)\n" +
+      "3) Cola este JS e aperta Enter:\n\n" +
+      "JSON.stringify({url:location.href,cookies:document.cookie,localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))})\n\n" +
+      "4) Copia o output (clica direito → Copy string contents) e cola aqui:"
+    );
+    if (!raw) return;
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e: any) {
+      setImportMsg("❌ JSON inválido: " + e.message);
+      return;
+    }
+    setImporting(true);
+    try {
+      const r = await mercantilApi.importSession(parsed);
+      setImportMsg(
+        `✅ Sessão importada. Cookies: ${r.cookies_count}, PCB_AUTH: ${r.has_pcb_auth ? "sim" : "não"}`
+      );
+      setTimeout(() => session.refresh(), 500);
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e.message || "erro";
+      setImportMsg("❌ " + msg);
+    } finally {
+      setImporting(false);
+    }
+  }
 
   const statusColor =
     session.status === "valid" ? C.green :
@@ -113,32 +151,29 @@ export default function SessionPanel() {
       </button>
 
       <button
-        onClick={() => {
-          const js = `copy(JSON.stringify({url:location.href,cookies:document.cookie,localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))}))`;
-          navigator.clipboard?.writeText(js).catch(() => {});
-          alert(
-            "1) Loga no Chrome teu em meu.bancomercantil.com.br\n" +
-            "2) F12 → Console\n" +
-            "3) Cola o JS (já copiei pro teu clipboard) e Enter\n" +
-            "4) No terminal:\n   cd ~/projetos/ACELERA\\ CORBAN\n   python3 scripts/import_mercantil_session.py\n" +
-            "5) Cola o JSON, Enter, Ctrl+D"
-          );
-        }}
+        onClick={handleImport}
+        disabled={importing}
         style={{
           width: "100%",
           marginTop: 8,
           padding: "10px 16px",
           borderRadius: 8,
-          background: "#0ea5e9",
-          color: "#fff",
+          background: importing ? C.border : "#0ea5e9",
+          color: importing ? C.muted : "#fff",
           border: "none",
           fontSize: 14,
           fontWeight: 700,
-          cursor: "pointer",
+          cursor: importing ? "not-allowed" : "pointer",
         }}
       >
-        Importar sessão do meu Chrome
+        {importing ? "Importando…" : "Importar sessão do meu Chrome"}
       </button>
+
+      {importMsg && (
+        <p style={{ marginTop: 8, fontSize: 12, color: importMsg.startsWith("✅") ? C.green : C.red }}>
+          {importMsg}
+        </p>
+      )}
 
       <p style={{ margin: "12px 0 0", fontSize: 11, color: C.muted }}>
         <b>Auto-retry:</b> bot tenta login várias vezes, re-dispara SMS automaticamente.<br/>
