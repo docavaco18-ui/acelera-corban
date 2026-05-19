@@ -5,8 +5,7 @@ import random
 from typing import Any, Callable
 
 from .engine import PresencaEngine
-from .phases import fase1_consultar, nova_consulta
-from .humanize import human_delay_between_actions
+from .phases import processar_cpf, nova_proposta
 from ...db_scoped import scoped
 from ...credentials.service import BankCredentials
 
@@ -65,11 +64,11 @@ class PresencaLeadWorker:
             if not await self._ensure_login(page):
                 return {"status": "erro", "erro": "Falha no login"}
 
-            self._emit("status_update", cpf=cpf, fase="fase1")
-            result = await fase1_consultar(page, cpf, self.engine.cfg)
+            self._emit("status_update", cpf=cpf, fase="dados_basicos")
+            result = await processar_cpf(page, record, self.engine.cfg)
 
-            # Volta ao estado de nova consulta para próximo CPF
-            await nova_consulta(page, self.engine.cfg)
+            # Volta ao create_url para próximo CPF
+            await nova_proposta(page, self.engine.cfg)
 
             return result
 

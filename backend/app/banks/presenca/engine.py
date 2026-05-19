@@ -84,14 +84,24 @@ class PresencaEngine:
     async def login_page(self, page: Page) -> bool:
         try:
             await page.goto(self.cfg.portal_url, wait_until="domcontentloaded", timeout=self.cfg.timeout_page)
+            await page.wait_for_load_state("networkidle", timeout=self.cfg.timeout_auth)
+
+            # Portal redireciona para /dashboards se sessão ativa
+            if "dashboard" in page.url or "propostas" in page.url:
+                log.info("presenca sessão já ativa user=%s url=%s", self.login, page.url)
+                return True
+
+            # Tela de login
             await page.wait_for_selector(self.cfg.SEL_LOGIN_USER, state="visible", timeout=self.cfg.timeout_page)
             await page.fill(self.cfg.SEL_LOGIN_USER, self.login)
             await page.fill(self.cfg.SEL_LOGIN_PASS, self.password)
             await page.click(self.cfg.SEL_LOGIN_BTN)
             await page.wait_for_load_state("networkidle", timeout=self.cfg.timeout_auth)
-            if "/login" in page.url:
-                log.error("presenca login falhou — ainda em /login após submit user=%s", self.login)
+
+            if "dashboard" not in page.url and "propostas" not in page.url:
+                log.error("presenca login falhou — url=%s user=%s", page.url, self.login)
                 return False
+
             log.info("presenca login OK user=%s url=%s", self.login, page.url)
             return True
         except Exception as e:
