@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Acelera Corban — Sessão Mercantil",
+  "version": "1.0.0",
+  "description": "Sincroniza automaticamente a sessão do Banco Mercantil com o dashboard Acelera Corban.",
+  "permissions": ["storage", "notifications", "alarms"],
+  "host_permissions": [
+    "https://meu.bancomercantil.com.br/*",
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://meu.bancomercantil.com.br/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Acelera Corban — Sessão Mercantil"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useMercantilSession } from "../../hooks/useMercantilSession";
 import { mercantilApi } from "../../lib/api";
 
@@ -15,41 +15,19 @@ const C = {
 
 export default function SessionPanel() {
   const session = useMercantilSession();
-  const [importing, setImporting] = useState(false);
-  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [extensionToken, setExtensionToken] = useState<string | null>(null);
+  const [tokenCopied, setTokenCopied] = useState(false);
+  const [showExtSetup, setShowExtSetup] = useState(false);
 
-  async function handleImport() {
-    setImportMsg(null);
-    const raw = window.prompt(
-      "Cole aqui o JSON do console do Chrome.\n\n" +
-      "Como obter:\n" +
-      "1) Loga em meu.bancomercantil.com.br no Chrome\n" +
-      "2) F12 → Console → digita: allow pasting (se pedir)\n" +
-      "3) Cola este JS e aperta Enter:\n\n" +
-      "JSON.stringify({url:location.href,cookies:document.cookie,localStorage:Object.fromEntries(Object.entries(localStorage)),sessionStorage:Object.fromEntries(Object.entries(sessionStorage))})\n\n" +
-      "4) Copia o output (clica direito → Copy string contents) e cola aqui:"
-    );
-    if (!raw) return;
-    let parsed: any;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e: any) {
-      setImportMsg("❌ JSON inválido: " + e.message);
-      return;
-    }
-    setImporting(true);
-    try {
-      const r = await mercantilApi.importSession(parsed);
-      setImportMsg(
-        `✅ Sessão importada. Cookies: ${r.cookies_count}, PCB_AUTH: ${r.has_pcb_auth ? "sim" : "não"}`
-      );
-      setTimeout(() => session.refresh(), 500);
-    } catch (e: any) {
-      const msg = e?.response?.data?.detail || e.message || "erro";
-      setImportMsg("❌ " + msg);
-    } finally {
-      setImporting(false);
-    }
+  useEffect(() => {
+    mercantilApi.getExtensionToken().then((r) => setExtensionToken(r.token)).catch(() => {});
+  }, []);
+
+  async function copyToken() {
+    if (!extensionToken) return;
+    await navigator.clipboard.writeText(extensionToken);
+    setTokenCopied(true);
+    setTimeout(() => setTokenCopied(false), 2000);
   }
 
   const statusColor =
@@ -150,35 +128,81 @@ export default function SessionPanel() {
         Login Manual (eu insiro o SMS)
       </button>
 
-      <button
-        onClick={handleImport}
-        disabled={importing}
-        style={{
-          width: "100%",
-          marginTop: 8,
-          padding: "10px 16px",
-          borderRadius: 8,
-          background: importing ? C.border : "#0ea5e9",
-          color: importing ? C.muted : "#fff",
-          border: "none",
-          fontSize: 14,
-          fontWeight: 700,
-          cursor: importing ? "not-allowed" : "pointer",
-        }}
-      >
-        {importing ? "Importando…" : "Importar sessão do meu Chrome"}
-      </button>
+      {/* Chrome Extension section */}
+      <div style={{
+        marginTop: 16,
+        background: "#0c1a2e",
+        border: `1px solid #1e3a5f`,
+        borderRadius: 10,
+        padding: 14,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8" }}>
+            ⚡ Extensão Chrome (recomendado)
+          </span>
+          <button
+            onClick={() => setShowExtSetup(!showExtSetup)}
+            style={{
+              background: "none", border: "none", color: C.muted,
+              fontSize: 11, cursor: "pointer", padding: "2px 6px",
+            }}
+          >
+            {showExtSetup ? "fechar ▲" : "como instalar ▼"}
+          </button>
+        </div>
 
-      {importMsg && (
-        <p style={{ marginTop: 8, fontSize: 12, color: importMsg.startsWith("✅") ? C.green : C.red }}>
-          {importMsg}
+        <p style={{ fontSize: 11, color: C.muted, margin: "0 0 10px" }}>
+          Instala 1x. A extensão renova a sessão automaticamente enquanto o banco estiver aberto no Chrome — sem F12, sem copiar/colar.
         </p>
-      )}
+
+        {extensionToken && (
+          <div>
+            <p style={{ fontSize: 11, color: C.muted, margin: "0 0 4px" }}>Seu token da extensão:</p>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input
+                readOnly
+                value={extensionToken.slice(0, 20) + "…"}
+                style={{
+                  flex: 1, padding: "6px 8px", borderRadius: 6,
+                  background: "#1e293b", border: "1px solid #334155",
+                  color: "#64748b", fontSize: 11, fontFamily: "monospace",
+                }}
+              />
+              <button
+                onClick={copyToken}
+                style={{
+                  padding: "6px 12px", borderRadius: 6,
+                  background: tokenCopied ? C.green : "#0ea5e9",
+                  color: "#fff", border: "none", fontSize: 11,
+                  fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                }}
+              >
+                {tokenCopied ? "✓ Copiado!" : "Copiar token"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showExtSetup && (
+          <div style={{
+            marginTop: 12, padding: 12,
+            background: "#0f2137", borderRadius: 8,
+            fontSize: 11, color: C.muted, lineHeight: 1.7,
+          }}>
+            <b style={{ color: C.text }}>Instalação (1x, ~3 minutos):</b><br/>
+            1. Baixe a pasta <code style={{ color: "#38bdf8" }}>chrome-extension/</code> do projeto<br/>
+            2. Chrome → <code>chrome://extensions</code> → ative <b>Modo do desenvolvedor</b><br/>
+            3. Clique <b>Carregar sem compactação</b> → selecione a pasta<br/>
+            4. Clique no ícone da extensão → cole a URL do backend e o token acima → Salvar<br/>
+            5. Acesse <a href="https://meu.bancomercantil.com.br" target="_blank" rel="noreferrer" style={{ color: "#38bdf8" }}>meu.bancomercantil.com.br</a> e faça login normalmente<br/>
+            <b style={{ color: C.green }}>✓ Pronto — extensão enviará a sessão automaticamente e renovará a cada mudança.</b>
+          </div>
+        )}
+      </div>
 
       <p style={{ margin: "12px 0 0", fontSize: 11, color: C.muted }}>
         <b>Auto-retry:</b> bot tenta login várias vezes, re-dispara SMS automaticamente.<br/>
-        <b>Manual:</b> bot só preenche login/senha, pede 1 SMS e para.<br/>
-        <b>Importar:</b> copia sessão do teu Chrome (sem SMS, sem bloqueio).
+        <b>Manual:</b> bot só preenche login/senha, pede 1 SMS e para.
       </p>
     </div>
   );

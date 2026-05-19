@@ -7,21 +7,46 @@ Endpoints SMS críticos:
 from __future__ import annotations
 
 import csv
+import hashlib
+import hmac
 import io
+import os
 import re
 
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Header
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
+from typing import Optional
 
 from ..auth_deps import require_user, AuthUser
+from ..config import settings
 from ..database import db as get_db
 from ..db_scoped import scoped
 from ..banks.mercantil.credentials_helper import get_mercantil_runtime_creds
 from ..banks.mercantil import sms_bridge
 from ..services import mercantil_upload_jobs, mercantil_bot_service
+
+
+def _extension_token_for(user_id: str) -> str:
+    """Deterministic API token for Chrome extension auth. Derived from user_id + secret."""
+    secret = (settings.app_encryption_key or "acelera-ext-fallback").encode()
+    return hmac.new(secret, user_id.encode(), hashlib.sha256).hexdigest()
+
+
+def _user_id_from_extension_token(token: str) -> str | None:
+    """Reverse lookup: scan known user sessions to find matching token. O(n) but n is small."""
+    state_dir = Path(os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"))
+    if not state_dir.exists():
+        return None
+    for f in state_dir.glob("*.json"):
+        uid = f.stem
+        if uid.endswith(".jwt"):
+            continue
+        if hmac.compare_digest(_extension_token_for(uid), token):
+            return uid
+    return None
 
 router = APIRouter(prefix="/api/mercantil", tags=["mercantil"])
 _events: list[dict] = []
@@ -390,6 +415,12 @@ def session_status(user: AuthUser = Depends(require_user)):
     return mercantil_bot_service.get_session_status(user.user_id)
 
 
+@router.get("/bot/extension-token")
+def get_extension_token(user: AuthUser = Depends(require_user)):
+    """Returns the API token the Chrome extension uses to authenticate import-session calls."""
+    return {"token": _extension_token_for(user.user_id)}
+
+
 class ImportSessionBody(BaseModel):
     url: str | None = None
     cookies: str = ""
@@ -399,14 +430,30 @@ class ImportSessionBody(BaseModel):
 
 @router.post("/bot/import-session")
 async def bot_import_session(
+    request: Request,
     body: ImportSessionBody,
-    user: AuthUser = Depends(require_user),
+    x_acelera_token: Optional[str] = Header(default=None, alias="X-Acelera-Token"),
 ):
+    # Support two auth paths: Bearer token (dashboard) OR X-Acelera-Token (extension)
+    actual_user_id: str | None = None
+
+    if x_acelera_token:
+        actual_user_id = _user_id_from_extension_token(x_acelera_token)
+        if not actual_user_id:
+            raise HTTPException(401, "Token da extensão inválido ou sessão não encontrada.")
+    else:
+        from ..auth_deps import require_user as _require_user
+        try:
+            auth_user = await _require_user(request)
+            actual_user_id = auth_user.user_id
+        except HTTPException:
+            raise HTTPException(401, "Autenticação necessária (Bearer token ou X-Acelera-Token).")
+
     """Importa sessão do Chrome real do user (cookies+localStorage) e salva
     como storage_state Playwright em backend/.bot_state/mercantil/{user_id}.json.
+    Aceita autenticação via sessão (dashboard) ou header X-Acelera-Token (extensão Chrome).
     """
     import json as _json
-    import os as _os
     from urllib.parse import urlparse
 
     url = body.url or "https://meu.bancomercantil.com.br/dashboard"
@@ -440,9 +487,9 @@ async def bot_import_session(
         }],
     }
 
-    state_dir = Path(_os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"))
+    state_dir = Path(os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"))
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"{user.user_id}.json"
+    state_file = state_dir / f"{actual_user_id}.json"
     with open(state_file, "w") as f:
         _json.dump(storage_state, f, ensure_ascii=False)
 

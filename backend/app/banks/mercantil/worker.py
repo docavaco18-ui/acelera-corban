@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from .engine import MercantilEngine
 from .config import MercantilConfig
+from . import bff_bridge
 from .phases import (
     fase1_consultar_cpf,
     fase1_consultar_cpf_api,
@@ -40,17 +41,33 @@ def _is_session_error(exc: BaseException) -> bool:
     return any(k.lower() in msg for k in _SESSION_ERROR_KEYWORDS)
 
 
-async def _try_headless_relogin(engine, page, user_id: str) -> bool:
-    """Navigate to dashboard using existing storage state. Returns True if still logged in."""
+import time as _time
+
+
+async def _try_extension_renewal(engine, user_id: str, timeout_seconds: int = 300) -> bool:
+    """Wait for Chrome extension to push a fresh session (up to timeout_seconds).
+    Returns True if a valid JWT appears in storage_state before timeout.
+    """
+    p = engine.storage_state_path(user_id)
     try:
-        await page.goto(engine.cfg.dashboard_url, wait_until="domcontentloaded", timeout=20000)
-        await asyncio.sleep(3)
-        nova = page.locator(engine.cfg.SEL_NOVA_PROPOSTA_BTN).first
-        if await nova.count() > 0 and await nova.is_visible():
-            await engine._save_state(page.context, user_id)
-            return True
-    except Exception as e:
-        log.warning("headless relogin check failed user=%s: %s", user_id, e)
+        old_mtime = p.stat().st_mtime if p.exists() else 0.0
+    except Exception:
+        old_mtime = 0.0
+
+    deadline = _time.monotonic() + timeout_seconds
+    log.info("mercantil extension_renewal: waiting up to %ds for Chrome extension push user=%s", timeout_seconds, user_id)
+    while _time.monotonic() < deadline:
+        await asyncio.sleep(5)
+        try:
+            new_mtime = p.stat().st_mtime if p.exists() else 0.0
+        except Exception:
+            continue
+        if new_mtime > old_mtime:
+            jwt = engine._read_jwt_from_storage_state(user_id)
+            if jwt:
+                log.info("mercantil extension_renewal: fresh JWT received user=%s", user_id)
+                return True
+    log.warning("mercantil extension_renewal: timeout after %ds user=%s", timeout_seconds, user_id)
     return False
 
 
@@ -225,19 +242,23 @@ class MercantilLeadWorker:
     # ─── Modo BFF (bypassa reCAPTCHA) ─────────────────────────────────────────
 
     async def _process_cpf_bff(self, page, cpf: str, telefone: str | None) -> dict:
-        from . import bff_bridge
-
         self._emit("status_update", cpf=cpf, status="bff_consultar")
-        r = await bff_bridge.consultar_cpf(page, cpf,
-                                           poll_interval=self.cfg.poll_dataprev_interval_s,
-                                           poll_max=self.cfg.poll_dataprev_max_seconds)
+
+        # page.evaluate(fetch) herda TLS fingerprint do Chromium → banco aceita.
+        # httpx Python tem TLS fingerprint diferente → banco retorna 401.
+        r = await bff_bridge.consultar_cpf(
+            page,
+            cpf,
+            poll_interval=self.cfg.poll_dataprev_interval_s,
+            poll_max=self.cfg.poll_dataprev_max_seconds,
+        )
         status_bff = r.get("status")
 
-        # Resultado terminal direto do BFF — preserva schema sem forçar cenário em inelegível/erro
+        # Resultado terminal direto do BFF
         if status_bff in ("elegivel", "inelegivel", "erro"):
             out = dict(r)
             if status_bff == "elegivel" and "cenario" not in out:
-                out["cenario"] = "A"  # elegível terminal = Cenário A (não precisou DataPrev)
+                out["cenario"] = "A"
             return out
 
         # Cenário B — precisa autorizar DataPrev via Plurio (DOM, sem alternativa)
@@ -253,7 +274,6 @@ class MercantilLeadWorker:
             except Exception as e:
                 log.warning("mercantil BFF cenário B goto dataprev falhou cpf=%s url_atual=%s: %s",
                             cpf, page.url, str(e)[:120])
-                # cleanup: tenta voltar pro dashboard pra próximo CPF não herdar estado
                 try:
                     await voltar_para_dashboard(page, self.cfg)
                 except Exception:
@@ -270,12 +290,14 @@ class MercantilLeadWorker:
                 return {**updates_base, "status": "erro",
                         "erro": r3.get("erro", "fase3 falhou")}
 
-            # Volta ao BFF pra finalizar — agora token deve estar válido
+            # Reconsulta via bff_bridge pós-DataPrev (page ainda em /solicitar-dataprev ou /consignado)
             self._emit("status_update", cpf=cpf, status="bff_reconsultar")
-            r2 = await bff_bridge.consultar_cpf(page, cpf,
-                                                poll_interval=self.cfg.poll_dataprev_interval_s,
-                                                poll_max=self.cfg.poll_dataprev_max_seconds)
-            # Detecta divergência uuid_portal (BFF poderia retornar outro id pós-autorização)
+            r2 = await bff_bridge.consultar_cpf(
+                page,
+                cpf,
+                poll_interval=self.cfg.poll_dataprev_interval_s,
+                poll_max=self.cfg.poll_dataprev_max_seconds,
+            )
             r2_uuid = r2.get("uuid_portal")
             if r2_uuid and r2_uuid != uuid_portal:
                 log.warning("mercantil BFF reconsulta uuid divergente cpf=%s old=%s new=%s",
@@ -379,27 +401,33 @@ class MercantilLeadWorker:
                         if _is_session_error(e):
                             self._session_fail_count += 1
                             log.warning(
-                                "mercantil Worker %d | CPF %s — session error %d/2: %s",
+                                "mercantil Worker %d | CPF %s — session error %d: %s",
                                 self.worker_id, cpf, self._session_fail_count, e,
                             )
-                            if self._session_fail_count < 2:
-                                # Try headless re-login before giving up
-                                ok = await _try_headless_relogin(self.engine, page, self.user_id)
-                                if ok:
-                                    log.info("mercantil Worker %d — headless relogin OK", self.worker_id)
-                                    try:
-                                        queue.put_nowait(record)
-                                    except Exception:
-                                        pass
-                                    continue
-                            # 2 consecutive session failures → stop and notify frontend
+                            # Notify frontend to open Chrome — extension will push fresh session
+                            self._emit(
+                                "session_expired",
+                                message="Sessão expirou. Abra o Banco Mercantil no Chrome — a extensão renovará automaticamente.",
+                            )
+                            # Wait up to 5 min for Chrome extension to push fresh session
+                            ok = await _try_extension_renewal(self.engine, self.user_id, timeout_seconds=300)
+                            if ok:
+                                log.info("mercantil Worker %d — sessão renovada via extensão Chrome", self.worker_id)
+                                self._session_fail_count = 0
+                                self._emit("session_renewed", message="Sessão renovada pela extensão Chrome. Retomando...")
+                                try:
+                                    queue.put_nowait(record)
+                                except Exception:
+                                    pass
+                                continue
+                            # Extension did not push in time → stop worker
                             log.error(
-                                "mercantil Worker %d — sessão expirou após %d tentativas, parando",
-                                self.worker_id, self._session_fail_count,
+                                "mercantil Worker %d — extensão não renovou sessão em 5min, parando",
+                                self.worker_id,
                             )
                             self._emit(
                                 "session_expired",
-                                message="Sessão expirou e re-login automático falhou. Faça Login Visual.",
+                                message="Extensão Chrome não detectada ou banco não aberto. Abra meu.bancomercantil.com.br no Chrome com a extensão instalada.",
                             )
                             try:
                                 queue.put_nowait(record)

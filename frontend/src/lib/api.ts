@@ -258,6 +258,11 @@ export const mercantilApi = {
       )
       .then((r) => r.data),
 
+  getExtensionToken: () =>
+    mercantilAxios
+      .get<{ token: string }>("/api/mercantil/bot/extension-token")
+      .then((r) => r.data),
+
   loginVisual: (opts?: { manual?: boolean }) =>
     mercantilAxios
       .post<{ status: string; run_id: string }>(
