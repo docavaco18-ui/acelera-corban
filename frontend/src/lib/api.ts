@@ -143,9 +143,9 @@ interface BankSummary {
 export const credentialsApi = {
   list: () =>
     api
-      .get<Record<"v8" | "vctex" | "mercantil", BankSummary | null>>("/api/credentials")
+      .get<Record<"v8" | "vctex" | "mercantil" | "presenca", BankSummary | null>>("/api/credentials")
       .then((r) => r.data),
-  upsert: (bank: "v8" | "vctex" | "mercantil", body: { login: string; password?: string; proxies: string[] }) =>
+  upsert: (bank: "v8" | "vctex" | "mercantil" | "presenca", body: { login: string; password?: string; proxies: string[] }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
 };
 
@@ -321,6 +321,56 @@ export const mercantilApi = {
   currentBatch: () =>
     mercantilAxios
       .get<{ id: string; name: string } | null>("/api/mercantil/batches/current")
+      .then((r) => r.data)
+      .catch(() => null),
+};
+
+// Presença Bank endpoints
+const presencaAxios = axios.create({ baseURL: BASE_URL });
+presencaAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const presencaApi = {
+  botStart: (batchId?: string, numWorkers = 2) =>
+    presencaAxios
+      .post<{ status: string; run_id: string }>("/api/presenca/bot/start", null, {
+        params: { ...(batchId ? { batch_id: batchId } : {}), num_workers: numWorkers },
+      })
+      .then((r) => r.data),
+
+  botStop: () =>
+    presencaAxios.post("/api/presenca/bot/stop").then((r) => r.data),
+
+  botStatus: () =>
+    presencaAxios
+      .get<{ status: string; run_id: string | null }>("/api/presenca/bot/status")
+      .then((r) => r.data),
+
+  uploadCsv: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return presencaAxios
+      .post<{ job_id: string; batch_id: string }>("/api/presenca/leads/upload", form)
+      .then((r) => r.data);
+  },
+
+  uploadStatus: (jobId: string) =>
+    presencaAxios
+      .get<{ status: string; total: number; processed: number; inserted: number; error?: string }>(
+        `/api/presenca/leads/upload/${jobId}`
+      )
+      .then((r) => r.data),
+
+  currentBatch: () =>
+    presencaAxios
+      .get<{ id: string; name: string } | null>("/api/presenca/batches/current")
       .then((r) => r.data)
       .catch(() => null),
 };

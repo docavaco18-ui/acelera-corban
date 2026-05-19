@@ -24,11 +24,12 @@ interface BankSummary {
 export default function Configuracoes() {
   const { bank } = useBank();
   const { isAdmin } = useSession();
-  const bankLabel = bank === "vctex" ? "VCTex" : bank === "mercantil" ? "Mercantil" : "V8";
-  const bankIcon = bank === "vctex" ? "🌐" : bank === "mercantil" ? "🏛️" : "🏦";
+  const bankLabel = bank === "vctex" ? "VCTex" : bank === "mercantil" ? "Mercantil" : bank === "presenca" ? "Presença" : "V8";
+  const bankIcon = bank === "vctex" ? "🌐" : bank === "mercantil" ? "🏛️" : bank === "presenca" ? "🏦" : "🏦";
   const loginLabel =
     bank === "vctex" ? "Login (CPF / usuário do portal)"
     : bank === "mercantil" ? "Login (usuário do portal Mercantil)"
+    : bank === "presenca" ? "Login (usuário do portal Presença Bank)"
     : "Login (e-mail V8)";
 
   const [current, setCurrent] = useState<BankSummary | null | undefined>(undefined);
@@ -184,6 +185,7 @@ export default function Configuracoes() {
             placeholder={
               bank === "vctex" ? "usuário do portal"
               : bank === "mercantil" ? "ex: 35275CF.GABRIEL"
+              : bank === "presenca" ? "usuário do portal Presença"
               : "seu@email.com"
             }
             style={inputStyle}

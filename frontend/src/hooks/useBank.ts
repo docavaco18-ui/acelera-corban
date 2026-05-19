@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 
-export type Bank = "v8" | "vctex" | "mercantil";
+export type Bank = "v8" | "vctex" | "mercantil" | "presenca";
 const KEY = "selected_bank";
 const DEFAULT: Bank = "v8";
 
@@ -10,7 +10,7 @@ function notify() { listeners.forEach(fn => fn()); }
 function read(): Bank {
   try {
     const v = localStorage.getItem(KEY);
-    if (v === "vctex" || v === "mercantil" || v === "v8") return v;
+    if (v === "vctex" || v === "mercantil" || v === "v8" || v === "presenca") return v;
     return DEFAULT;
   } catch { return DEFAULT; }
 }
@@ -43,5 +43,6 @@ export function bankPrefix(bank: Bank, path: string): string {
   if (bank === "v8") return path;
   if (bank === "vctex") return path.replace(/^\/api\/(leads|bot|stats|batches)/, "/api/vctex/$1");
   if (bank === "mercantil") return path.replace(/^\/api\/(leads|bot|stats|batches)/, "/api/mercantil/$1");
+  if (bank === "presenca") return path.replace(/^\/api\/(leads|bot|stats|batches)/, "/api/presenca/$1");
   return path;
 }

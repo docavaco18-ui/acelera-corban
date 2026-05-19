@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     mercantil_sms_timeout_seconds: int = 300
     mercantil_sms_max_attempts: int = 3
 
+    # Presença Bank (Playwright click bot, sem SMS)
+    presenca_max_workers_per_user: int = 2
+    presenca_max_total_workers: int = 8
+
     anthropic_api_key: str = ""
 
     @property
