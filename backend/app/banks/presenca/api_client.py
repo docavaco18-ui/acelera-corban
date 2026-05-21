@@ -76,7 +76,7 @@ class PresencaApiClient:
     def login(self) -> str:
         """Autentica e armazena JWT. Retorna token."""
         cpf_fmt = _fmt_cpf(self._login_cpf)
-        r = self._client.post("/login", json={"cpf": cpf_fmt, "password": self._password})
+        r = self._client.post("/login", json={"login": cpf_fmt, "senha": self._password})
         r.raise_for_status()
         data = r.json()
         token = data.get("token") or data.get("access_token") or data.get("jwt") or ""
