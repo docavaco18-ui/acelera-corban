@@ -118,9 +118,9 @@ class PresencaApiClient:
         return digits if len(digits) == 11 else ""
 
     def _telefone_fallback_cpf(self, cpf: str) -> str:
-        """Gera telefone único derivado do CPF para evitar colisão de termos."""
-        d = _strip_digits(cpf)[-9:]
-        return f"11{d}"  # 11 + 9 dígitos do CPF = 11 dígitos
+        """Gera telefone único derivado do CPF. Formato: DDD11 + 9 + 8 dígitos do CPF."""
+        d = _strip_digits(cpf)[-8:]
+        return f"119{d}"  # 11 + 9 + 8 dígitos = 11 dígitos, 3º dígito = 9 (celular válido)
 
     def gerar_termo(self, cpf: str, nome: str, telefone: str) -> str:
         """POST /consultas/termo-inss — retorna autorizacaoId."""
