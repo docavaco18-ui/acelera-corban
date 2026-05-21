@@ -111,24 +111,36 @@ class PresencaApiClient:
 
         return r
 
+    def _normalizar_telefone(self, telefone: str) -> str:
+        digits = _strip_digits(telefone) or ""
+        if len(digits) in (12, 13) and digits.startswith("55"):
+            digits = digits[2:]
+        return digits if len(digits) == 11 else ""
+
+    def _telefone_fallback_cpf(self, cpf: str) -> str:
+        """Gera telefone único derivado do CPF para evitar colisão de termos."""
+        d = _strip_digits(cpf)[-9:]
+        return f"11{d}"  # 11 + 9 dígitos do CPF = 11 dígitos
+
     def gerar_termo(self, cpf: str, nome: str, telefone: str) -> str:
         """POST /consultas/termo-inss — retorna autorizacaoId."""
-        digits = _strip_digits(telefone) or "11999999999"
-        # API exige 11 dígitos — remove prefixo 55 do Brasil se presente
-        if len(digits) == 13 and digits.startswith("55"):
-            digits = digits[2:]
-        elif len(digits) == 12 and digits.startswith("55"):
-            digits = digits[2:]
-        if len(digits) != 11:
-            digits = "11999999999"
-        r = self._request("POST", "/consultas/termo-inss", json={
-            "cpf": _strip_digits(cpf),
-            "nome": nome or "Cliente",
-            "telefone": digits,
-            "produtoId": 28,
-        })
-        if r.status_code not in (200, 201):
-            raise RuntimeError(f"gerar_termo {r.status_code}: {r.text[:200]}")
+        digits = self._normalizar_telefone(telefone) or self._telefone_fallback_cpf(cpf)
+
+        for tentativa, tel in enumerate([digits, self._telefone_fallback_cpf(cpf)]):
+            r = self._request("POST", "/consultas/termo-inss", json={
+                "cpf": _strip_digits(cpf),
+                "nome": nome or "Cliente",
+                "telefone": tel,
+                "produtoId": 28,
+            })
+            if r.status_code in (200, 201):
+                break
+            body = r.text
+            # telefone já usado → tenta com fallback derivado do CPF
+            if r.status_code == 400 and "Telefone já utilizado" in body and tentativa == 0:
+                log.warning("presenca gerar_termo telefone já usado cpf=%s, tentando fallback", cpf)
+                continue
+            raise RuntimeError(f"gerar_termo {r.status_code}: {body[:300]}")
         data = r.json()
         aid = data.get("autorizacaoId") or data.get("id") or ""
         if not aid:
@@ -156,11 +168,18 @@ class PresencaApiClient:
         Retorna lista de vínculos elegíveis, ou None se sem vínculo eSocial.
         400 em ~15s = sem dados eSocial = inelegível.
         """
-        r = self._request(
-            "POST", "/v3/operacoes/consignado-privado/consultar-vinculos",
-            json={"cpf": _strip_digits(cpf)},
-            timeout=VINCULOS_TIMEOUT,
-        )
+        for attempt in range(3):
+            r = self._request(
+                "POST", "/v3/operacoes/consignado-privado/consultar-vinculos",
+                json={"cpf": _strip_digits(cpf)},
+                timeout=VINCULOS_TIMEOUT,
+            )
+            if r.status_code == 429:
+                wait = 30 + attempt * 15
+                log.warning("presenca vinculos 429 rate limit cpf=%s — aguardando %ds", cpf, wait)
+                time.sleep(wait)
+                continue
+            break
         if r.status_code == 400:
             log.info("presenca vinculos 400 (sem eSocial) cpf=%s", cpf)
             return None
