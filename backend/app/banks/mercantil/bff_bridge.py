@@ -87,8 +87,9 @@ async ({method, url, body}) => {
 
     try {
         const resp = await fetch(url, opts);
+        const text = await resp.text();
         let data;
-        try { data = await resp.json(); } catch(e) { data = await resp.text(); }
+        try { data = JSON.parse(text); } catch(e) { data = text; }
         return {ok: resp.ok, status: resp.status, data, jwt, sessaoId, mbData};
     } catch(e) {
         return {ok: false, status: 0, error: String(e), jwt, sessaoId, mbData};
@@ -178,15 +179,33 @@ async def load_mte_convenio(page: Page) -> dict | None:
     """Busca GET /Convenios/Publicos e retorna o convênio MTE."""
     try:
         r = await _bff_call(page, "GET", "Convenios")
-        convenios = r["data"]
+        raw = r["data"]
+        log.info("bff_bridge Convenios response type=%s keys=%s",
+                 type(raw).__name__,
+                 list(raw.keys()) if isinstance(raw, dict) else f"list[{len(raw)}]" if isinstance(raw, list) else str(raw)[:100])
+        # Pode ser lista direta ou dict com chave de lista
+        if isinstance(raw, dict):
+            for key in ("data", "convenios", "content", "items", "result"):
+                if isinstance(raw.get(key), list):
+                    convenios = raw[key]
+                    break
+            else:
+                convenios = list(raw.values())[0] if raw else []
+        else:
+            convenios = raw
         if isinstance(convenios, list):
             for c in convenios:
-                nome = (c.get("nome") or c.get("descricao") or "").upper()
-                if "MINISTERIO DO TRABALHO" in nome:
+                nome = (c.get("nome") or c.get("descricao") or c.get("nomeConvenio") or "").upper()
+                log.debug("bff_bridge convenio id=%s nome=%s", c.get("id"), nome[:60])
+                if "MINISTERIO DO TRABALHO" in nome or "MTE" in nome.split():
                     log.info("bff_bridge MTE convenio: id=%s nome=%s modalidade=%s",
                              c.get("id"), c.get("nome"), c.get("modalidadeConvenio"))
                     return c
-        log.warning("bff_bridge MTE não encontrado em %d convenios", len(convenios or []))
+            log.warning("bff_bridge MTE não encontrado em %d convenios. Nomes: %s",
+                        len(convenios),
+                        [((c.get("nome") or c.get("descricao") or "")[:40]) for c in convenios[:5]])
+        else:
+            log.warning("bff_bridge Convenios inesperado: %s", str(convenios)[:200])
     except BffBridgeError as e:
         log.error("bff_bridge load_mte_convenio err: %s", e)
     return None

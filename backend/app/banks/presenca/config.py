@@ -19,9 +19,9 @@ class PresencaConfig:
     cpf_jitter_max: float = field(default_factory=lambda: float(os.getenv("PRESENCA_CPF_JITTER_MAX", "20")))
 
     # ── Login ─────────────────────────────────────────────────────────────────
-    SEL_LOGIN_USER: str = "input[type='email']:visible, input[placeholder='Login']:visible, input[type='text']:visible"
-    SEL_LOGIN_PASS: str = "input[type='password']:visible"
-    SEL_LOGIN_BTN:  str = "button[type='submit']:visible"
+    SEL_LOGIN_USER: str = "input[type='email'], input[placeholder='Login'], input[type='text']"
+    SEL_LOGIN_PASS: str = "input[type='password']"
+    SEL_LOGIN_BTN:  str = "button:has-text('Entrar'), button[type='submit']"
     # Elemento presente após login bem-sucedido (qualquer item de nav)
     SEL_LOGGED_IN:  str = ".fuse-horizontal-navigation-item-title"
 

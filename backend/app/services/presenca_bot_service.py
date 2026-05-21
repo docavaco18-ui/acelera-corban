@@ -9,6 +9,7 @@ from typing import Any, Callable
 from ..redis_client import get_redis
 from ..db_scoped import scoped
 from ..banks.presenca.worker import PresencaLeadWorker
+from ..banks.presenca.api_worker import PresencaApiWorker
 from ..banks.presenca.bot_pool import PresencaBotPool, PresencaRunHandle
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ async def start_bot(
     db: Any,
     on_event: Callable,
     batch_id: str | None = None,
+    mode: str = "api",
 ):
     if user_id in _runtimes:
         return {"status": "already_running"}
@@ -76,7 +78,8 @@ async def start_bot(
     redis = await get_redis()
     await _broadcast(redis, {
         "type": "bot_status", "status": "running", "user_id": user_id,
-        "bank": "presenca", "full_workers": handle.num_workers, "batch_id": batch_id,
+        "bank": "presenca", "full_workers": handle.num_workers,
+        "batch_id": batch_id, "mode": mode,
     })
 
     if batch_id is not None:
@@ -144,8 +147,10 @@ async def start_bot(
 
     async def _run():
         try:
+            WorkerClass = PresencaApiWorker if mode == "api" else PresencaLeadWorker
+            logger.info("presenca start_bot mode=%s workers=%d", mode, handle.num_workers)
             for i in range(handle.num_workers):
-                w = PresencaLeadWorker(
+                w = WorkerClass(
                     worker_id=i, user_id=user_id, creds=creds, db=db,
                     on_event=on_event_wrapper,
                     startup_delay=i * WORKER_STAGGER_SECONDS,

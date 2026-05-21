@@ -55,7 +55,7 @@ async def _fill_masked(page: Page, selector: str, value: str, timeout: int = 10_
     loc = page.locator(selector).first
     await loc.wait_for(state="visible", timeout=timeout)
     await loc.click()
-    await loc.triple_click()
+    await loc.click(click_count=3)
     await page.keyboard.press("Control+a")
     await loc.type(value, delay=60)
 
@@ -65,7 +65,7 @@ async def _fill_label(page: Page, label_text: str, value: str, timeout: int = 10
     loc = page.get_by_label(label_text).first
     await loc.wait_for(state="visible", timeout=timeout)
     await loc.click()
-    await loc.triple_click()
+    await loc.click(click_count=3)
     await loc.type(value, delay=60)
 
 
@@ -195,7 +195,7 @@ async def fase4_tomador(page: Page, cpf: str, cfg: PresencaConfig | None = None)
     email_field = page.locator(cfg.SEL_EMAIL_INPUT).first
     try:
         await email_field.wait_for(state="visible", timeout=cfg.timeout_page)
-        await email_field.triple_click()
+        await email_field.click(click_count=3)
         await email_field.fill(cfg.default_email)
     except Exception as e:
         log.warning("presenca fase4: e-mail não encontrado cpf=%s: %s", cpf, e)
@@ -241,7 +241,7 @@ async def fase5_dados_bancarios(page: Page, cpf: str, cfg: PresencaConfig | None
         try:
             field = page.locator(sel).first
             if await field.count() > 0:
-                await field.triple_click()
+                await field.click(click_count=3)
                 await field.fill(val)
                 await asyncio.sleep(0.2)
         except Exception as e:

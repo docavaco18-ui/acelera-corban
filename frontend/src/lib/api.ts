@@ -341,7 +341,7 @@ export const presencaApi = {
   botStart: (batchId?: string, numWorkers = 2) =>
     presencaAxios
       .post<{ status: string; run_id: string }>("/api/presenca/bot/start", null, {
-        params: { ...(batchId ? { batch_id: batchId } : {}), num_workers: numWorkers },
+        params: { ...(batchId ? { batch_id: batchId } : {}), num_workers: numWorkers, mode: "api" },
       })
       .then((r) => r.data),
 
@@ -373,6 +373,33 @@ export const presencaApi = {
       .get<{ id: string; name: string } | null>("/api/presenca/batches/current")
       .then((r) => r.data)
       .catch(() => null),
+
+  listBatches: () =>
+    presencaAxios
+      .get<{ data: Array<{ id: string; name: string; status: string; created_at: string; total_processed?: number; total_elegiveis?: number; total_liberado?: number }> }>("/api/presenca/batches/")
+      .then((r) => r.data.data)
+      .catch(() => [] as any[]),
+
+  statsDashboard: (batchId?: string) =>
+    presencaAxios
+      .get<{ total: number; elegiveis: number; inelegiveis: number; pendentes: number; erros: number; processados: number; total_liberado: number }>(
+        "/api/presenca/stats/dashboard",
+        { params: batchId ? { batch_id: batchId } : {} }
+      )
+      .then((r) => r.data)
+      .catch(() => null),
+
+  retryErrors: (batchId?: string) =>
+    presencaAxios
+      .post<{ resetados: number }>("/api/presenca/leads/retry-errors", null, {
+        params: batchId ? { batch_id: batchId } : {},
+      })
+      .then((r) => r.data),
+
+  exportCsvUrl: (status = "elegivel") => {
+    const base = (import.meta.env.VITE_API_URL || "") + "/api/presenca/leads/export";
+    return `${base}?status=${status}`;
+  },
 };
 
 export const broadcastApi = {

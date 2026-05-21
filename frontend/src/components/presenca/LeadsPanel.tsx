@@ -25,7 +25,7 @@ const WS_BASE = (() => {
   return `${proto}://${window.location.host}/ws/events`;
 })();
 
-export default function PresencaLeadsPanel() {
+export default function PresencaLeadsPanel({ onStatsRefresh }: { onStatsRefresh?: () => void }) {
   const [botStatus, setBotStatus] = useState<BotStatusType>("idle");
   const [progress, setProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   const [leads, setLeads] = useState<LeadRow[]>([]);
@@ -89,6 +89,7 @@ export default function PresencaLeadsPanel() {
           if (ev.type === "bot_status") {
             setBotStatus(ev.status as BotStatusType);
             if (ev.total) setProgress((p) => ({ ...p, total: ev.total }));
+            if (ev.status === "idle") onStatsRefresh?.();
           }
         } catch {}
       };

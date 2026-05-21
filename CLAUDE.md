@@ -338,3 +338,66 @@ docker compose -f docker-compose.prod.yml up -d backend frontend
 
 Reset apenas via suporte Mercantil OU trocar IP+device. Esperar 48h não bastou.
 
+## Presença Bank (4º banco — 2026-05-19)
+
+### Decisão de arquitetura: API REST (sem browser)
+
+Click bot Playwright foi implementado mas arquivado como fallback (4 bugs, 8 riscos, seletores frágeis Angular SPA).
+API REST é 4x mais rápida, mais confiável, retorna mais dados.
+
+### Arquivos-chave
+- `backend/app/banks/presenca/api_client.py` — `PresencaApiClient` (httpx, verify=False)
+- `backend/app/banks/presenca/api_worker.py` — `PresencaApiWorker` (mesma interface que PresencaLeadWorker)
+- `backend/app/banks/presenca/worker.py` — click bot (fallback — não usar)
+- `backend/app/services/presenca_bot_service.py` — `start_bot(mode="api")` default
+- `backend/app/routers/presenca.py` — `/api/presenca/*`, `?mode=api` ou `?mode=bot`
+
+### Fluxo API (5 passos para higienização)
+
+```
+POST /login                                                    → JWT (~10h)
+POST /consultas/termo-inss                                     → autorizacaoId
+PUT  /consultas/termo-inss/{id}                               → assina (device fake)
+POST /v3/operacoes/consignado-privado/consultar-vinculos       → vínculos eSocial (400/15s = inelegível)
+POST /v3/operacoes/consignado-privado/consultar-margem         → margem + extras
+```
+
+**Step 6 (simulação):** `POST /v5/operacoes/simulacao/disponiveis` → ❌ "Prazo não permitido para o originador" — requer configuração de prazos pelo Presença Bank support para conta `072.751.201-35`.
+
+### Endpoints API
+
+**Base:** `https://presenca-bank-api.azurewebsites.net`
+
+### Payloads críticos
+
+**Gerar termo:** `{"cpf": "DIGITS_ONLY", "nome": "...", "telefone": "DIGITS_ONLY", "produtoId": 28}`
+
+**Assinar termo (PUT):** `{"userAgent": "Mozilla/5.0", "OperationalSystem": "Android", "DeviceModel": "Samsung Galaxy", "DeviceName": "samsung", "DeviceType": "mobile", "GeoLocation": {"Latitude": "-23.5505", "Longitude": "-46.6333"}}`
+
+**Consultar vínculos:** `{"cpf": "DIGITS_ONLY"}`
+
+**Consultar margem:** `{"cpf": "DIGITS_ONLY", "matricula": "...", "cnpj": "..."}` — matricula/cnpj vêm da resposta de vínculos (`matricula` e `numeroInscricaoEmpregador`)
+
+### Resposta vinculos (CPF elegível)
+```json
+{"id": [{"matricula": "...", "numeroInscricaoEmpregador": "...", "elegivel": true, "cpf": "..."}]}
+```
+
+### Resposta margem (CPF elegível)
+Campos: `valorMargemDisponivel`, `valorMargemBase`, `registroEmpregaticio`, `cnpjEmpregador`, `dataAdmissao`, `dataNascimento`, `nomeMae`, `sexo`
+
+Extras ficam em coluna `payload` JSON no lead (além de `valor_liberado` = `valorMargemDisponivel`).
+
+### Atenção
+- API retorna HTTP 500 (não 401) para credenciais inválidas
+- `produtoId: 28` = consignado privado — sempre fixo
+- `consultar-vinculos` leva até 15s para CPFs sem eSocial (é timeout normal do DataPrev)
+- Rate limit: 30 req/min → jitter 10-20s entre CPFs (PRESENCA_CPF_JITTER_MIN/MAX)
+
+### Status (2026-05-20)
+- ✅ api_client.py + api_worker.py implementados
+- ✅ presenca_bot_service mode="api" default
+- ✅ Container importa + valida corretamente
+- ❌ Login 500 — senha no Supabase expirou. Atualizar em Configurações → Presença Bank
+- ❌ Simulação bloqueada por prazos — contatar suporte Presença
+

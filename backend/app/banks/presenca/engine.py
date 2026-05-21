@@ -82,23 +82,109 @@ class PresencaEngine:
         return ctx
 
     async def login_page(self, page: Page) -> bool:
-        try:
-            await page.goto(self.cfg.portal_url, wait_until="domcontentloaded", timeout=self.cfg.timeout_page)
-            await page.wait_for_load_state("networkidle", timeout=self.cfg.timeout_auth)
+        import asyncio as _asyncio
+        from urllib.parse import urlparse
 
-            # Portal redireciona para /dashboards se sessão ativa
-            if "dashboard" in page.url or "propostas" in page.url:
+        try:
+            # Angular SPA: usa load + sleep para aguardar hidratação
+            await page.goto(self.cfg.portal_url, wait_until="load", timeout=self.cfg.timeout_page)
+            await _asyncio.sleep(5)
+
+            path = urlparse(page.url).path
+
+            # Portal redireciona para /dashboards se sessão já ativa
+            if path.startswith("/dashboard") or path.startswith("/propostas"):
                 log.info("presenca sessão já ativa user=%s url=%s", self.login, page.url)
                 return True
 
-            # Tela de login
-            await page.wait_for_selector(self.cfg.SEL_LOGIN_USER, state="visible", timeout=self.cfg.timeout_page)
-            await page.fill(self.cfg.SEL_LOGIN_USER, self.login)
-            await page.fill(self.cfg.SEL_LOGIN_PASS, self.password)
-            await page.click(self.cfg.SEL_LOGIN_BTN)
-            await page.wait_for_load_state("networkidle", timeout=self.cfg.timeout_auth)
+            # Screenshot da tela de login para debug
+            try:
+                await page.screenshot(path="/tmp/presenca_login_screen.png", full_page=True)
+                log.info("presenca screenshot login: /tmp/presenca_login_screen.png")
+            except Exception:
+                pass
 
-            if "dashboard" not in page.url and "propostas" not in page.url:
+            # Fuse Angular usa input[formcontrolname] — tenta múltiplos seletores
+            user_sels = [
+                "input[formcontrolname='email']",
+                "input[formcontrolname='username']",
+                "input[formcontrolname='cpf']",
+                "input[formcontrolname='login']",
+                "input[type='email']",
+                "input[name='email']",
+                "input[placeholder*='CPF'], input[placeholder*='cpf']",
+                "input[placeholder*='Login'], input[placeholder*='login']",
+                "input[placeholder*='Usuário'], input[placeholder*='usuario']",
+            ]
+            pass_sels = [
+                "input[formcontrolname='password']",
+                "input[type='password']",
+                "input[name='password']",
+            ]
+
+            # Aguarda qualquer input ficar visível (Angular precisa de tempo)
+            try:
+                await page.wait_for_selector("input", state="visible", timeout=15_000)
+            except Exception:
+                log.warning("presenca login: nenhum input visível após 15s")
+
+            filled_user = False
+            for sel in user_sels:
+                try:
+                    loc = page.locator(sel).first
+                    if await loc.count() > 0:
+                        await loc.fill(self.login)
+                        filled_user = True
+                        log.info("presenca login: preencheu usuário com seletor=%s", sel)
+                        break
+                except Exception:
+                    continue
+
+            if not filled_user:
+                # Fallback: primeiro input visível
+                inputs = page.locator("input:not([type='hidden'])").first
+                if await inputs.count() > 0:
+                    await inputs.fill(self.login)
+                    log.info("presenca login: fallback primeiro input")
+
+            await _asyncio.sleep(0.3)
+
+            filled_pass = False
+            for sel in pass_sels:
+                try:
+                    loc = page.locator(sel).first
+                    if await loc.count() > 0:
+                        await loc.fill(self.password)
+                        filled_pass = True
+                        break
+                except Exception:
+                    continue
+
+            if not filled_pass:
+                log.error("presenca login: campo senha não encontrado url=%s", page.url)
+                return False
+
+            await _asyncio.sleep(0.3)
+            # Clica botão Entrar — locator suporta múltiplos seletores com vírgula
+            btn_entrar = page.locator(self.cfg.SEL_LOGIN_BTN).first
+            await btn_entrar.wait_for(state="visible", timeout=10_000)
+            await btn_entrar.click()
+
+            # Aguarda sair do sign-in
+            try:
+                await page.wait_for_url(
+                    lambda url: "sign-in" not in url and "login" not in url,
+                    timeout=self.cfg.timeout_auth,
+                )
+            except Exception:
+                pass
+
+            path_after = urlparse(page.url).path
+            if "sign-in" in path_after or "login" in path_after:
+                try:
+                    await page.screenshot(path="/tmp/presenca_login_failed.png", full_page=True)
+                except Exception:
+                    pass
                 log.error("presenca login falhou — url=%s user=%s", page.url, self.login)
                 return False
 

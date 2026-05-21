@@ -161,6 +161,56 @@ class MercantilEngine:
         except Exception:
             pass
 
+    def _read_jwt_from_storage_state(self, user_id: str) -> str | None:
+        """Lê PCB_AUTH JWT diretamente do arquivo storage_state (sem browser/page.evaluate).
+        Usa regex para extrair o token (evita json.loads que falha com control chars do
+        JWT Mercantil que usa CRLF no payload). Extrai 'exp' via regex nos bytes brutos.
+        Retorna access_token string se válido e não expirado, None caso contrário."""
+        import re as _re, base64 as _b64, time as _time
+        try:
+            p = self.storage_state_path(user_id)
+            if not p.is_file():
+                return None
+            content = p.read_text(encoding="utf-8", errors="replace")
+            # Encontra bloco PCB_AUTH e extrai JWT (base64 padrão: inclui +, /, = além de url-safe)
+            idx = content.find("PCB_AUTH")
+            if idx < 0:
+                logger.warning("mercantil _read_jwt_from_storage_state: PCB_AUTH ausente user=%s", user_id)
+                return None
+            sub = content[idx: idx + 2000]
+            m = _re.search(r"(eyJ[A-Za-z0-9+/=_.\-]+)", sub)
+            if not m:
+                logger.warning("mercantil _read_jwt_from_storage_state: JWT eyJ não encontrado user=%s", user_id)
+                return None
+            raw = m.group(1).rstrip(".")
+            parts = raw.split(".")
+            if len(parts) < 2:
+                logger.warning("mercantil _read_jwt_from_storage_state: JWT malformado user=%s", user_id)
+                return None
+            token = ".".join(parts[:3]) if len(parts) >= 3 else raw
+            # Extrai exp via regex nos bytes brutos do payload (evita json.loads com control chars)
+            payload_seg = parts[1]
+            pad = "=" * (-len(payload_seg) % 4)
+            try:
+                payload_bytes = _b64.b64decode(payload_seg + pad)
+            except Exception:
+                payload_bytes = _b64.urlsafe_b64decode(payload_seg + pad)
+            exp_m = _re.search(rb'"exp"\s*:\s*(\d+)', payload_bytes)
+            if not exp_m:
+                logger.warning("mercantil _read_jwt_from_storage_state: exp ausente payload user=%s", user_id)
+                return None
+            exp = int(exp_m.group(1))
+            now = int(_time.time())
+            if exp > now:
+                logger.info("mercantil _read_jwt_from_storage_state: JWT válido exp=%d user=%s", exp, user_id)
+                return token
+            logger.warning("mercantil _read_jwt_from_storage_state: JWT EXPIRADO exp=%d now=%d user=%s",
+                           exp, now, user_id)
+            return None
+        except Exception as e:
+            logger.warning("mercantil _read_jwt_from_storage_state: err %s user=%s", e, user_id)
+            return None
+
     # ── Context com geolocation + stealth + sessão carregada ────────────────
 
     async def new_context(self, user_id: str) -> BrowserContext:
@@ -208,6 +258,36 @@ class MercantilEngine:
             kwargs["storage_state"] = str(self.storage_state_path(user_id))
 
         ctx = await self._browser.new_context(**kwargs)
+
+        # Proteção de JWT: Angular chama localStorage.removeItem/clear ao detectar
+        # sessão inválida (sem cookies HttpOnly), apagando PCB_AUTH que foi carregado
+        # do storage_state. Interceptamos Storage.prototype para preservar a chave.
+        jwt_for_guard = self._read_jwt_from_storage_state(user_id)
+        if jwt_for_guard:
+            import json as _json
+            pcb_json = _json.dumps(_json.dumps({"access_token": jwt_for_guard}))
+            await ctx.add_init_script(f"""
+(function() {{
+    var PCB_KEY = 'PCB_AUTH';
+    var JWT_VAL = {pcb_json};
+    // Garante que PCB_AUTH existe (storage_state pode falhar em carregar)
+    try {{ if (!localStorage.getItem(PCB_KEY)) localStorage.setItem(PCB_KEY, JWT_VAL); }} catch(e) {{}}
+    // Protege removeItem
+    var origRemove = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function(key) {{
+        if (this === localStorage && key === PCB_KEY) return;
+        return origRemove.call(this, key);
+    }};
+    // Protege clear — re-adiciona PCB_AUTH após limpeza
+    var origClear = Storage.prototype.clear;
+    Storage.prototype.clear = function() {{
+        if (this !== localStorage) return origClear.call(this);
+        origClear.call(this);
+        try {{ localStorage.setItem(PCB_KEY, JWT_VAL); }} catch(e) {{}}
+    }};
+}})();
+""")
+            logger.info("mercantil PCB_AUTH guard init_script injected user=%s", user_id)
 
         # Stealth: remove sinais óbvios de automação. Akamai checa muitos.
         await ctx.add_init_script(
@@ -310,6 +390,21 @@ class MercantilEngine:
                 except Exception:
                     logger.exception("mercantil emit failed payload=%s", payload)
 
+        # Verificação rápida: JWT válido no arquivo storage_state?
+        # Navega pro portal_url (página de login) pra garantir que a página está no domínio
+        # do banco — bff_bridge.consultar_cpf usa page.evaluate(fetch) que precisa de
+        # CORS origin correto (meu.bancomercantil.com.br). init_script guard protege PCB_AUTH
+        # do Angular (impede removeItem/clear).
+        jwt_from_file = self._read_jwt_from_storage_state(user_id)
+        if jwt_from_file:
+            logger.info("mercantil login_with_sms: JWT do arquivo válido — navega portal pra CORS user=%s", user_id)
+            try:
+                await page.goto(self.cfg.portal_url, wait_until="commit",
+                                timeout=self.cfg.timeout_page)
+            except Exception as e:
+                logger.warning("mercantil login_with_sms: goto portal falhou (BFF tenta assim mesmo): %s", e)
+            return True
+
         # 1ª tentativa: vai direto pro dashboard. Se sessão válida, fica lá.
         try:
             await page.goto(self.cfg.dashboard_url, wait_until="domcontentloaded",
@@ -346,6 +441,37 @@ class MercantilEngine:
                          user_id, url_now, body_snip[:100])
             emit({"type": "akamai_blocked", "url": url_now})
             return False
+
+        # Tem JWT válido no localStorage (sessão importada do Chrome do user)?
+        # Sem cookies HttpOnly do servidor banco redireciona pra /login MAS BFF só
+        # precisa do JWT como Bearer header — aceita sem precisar de DOM login.
+        try:
+            jwt = await page.evaluate(
+                "() => {"
+                " const a = localStorage.getItem('PCB_AUTH');"
+                " if (!a) return null;"
+                " try { const p = JSON.parse(a); return p.access_token || null; }"
+                " catch { return (a && a.startsWith && a.startsWith('ey')) ? a : null; }"
+                "}"
+            )
+            if jwt and isinstance(jwt, str) and jwt.count(".") == 2:
+                import base64 as _b64, json as _json, time as _time
+                payload_seg = jwt.split(".")[1]
+                pad = "=" * (-len(payload_seg) % 4)
+                payload = _json.loads(_b64.urlsafe_b64decode(payload_seg + pad).decode('utf-8', errors='replace'))
+                exp = int(payload.get("exp", 0))
+                if exp > int(_time.time()):
+                    logger.info(
+                        "mercantil login_with_sms: JWT importado válido (exp=%d) — pulando DOM login",
+                        exp,
+                    )
+                    return True
+                logger.warning(
+                    "mercantil login_with_sms: JWT importado EXPIRADO (exp=%d, now=%d) — re-importar sessão",
+                    exp, int(_time.time()),
+                )
+        except Exception as e:
+            logger.warning("mercantil login_with_sms: erro lendo JWT localStorage: %s", e)
 
         # Sem sessão válida → fluxo de login completo
         return await self._do_full_login(page, user_id, run_id, _emit)
@@ -493,8 +619,8 @@ class MercantilEngine:
 
         emit({"type": "sms_max_attempts"})
         await sms_bridge.set_state(user_id, run_id, "max_attempts", ttl=30)
-        # Drop estado salvo — pode estar corrompido
-        self._drop_state(user_id)
+        # NÃO dropa storage_state se foi importado do Chrome do user — ele ainda
+        # pode ter JWT válido pra BFF mesmo que DOM login falhou.
         return False
 
     async def login_assist(
@@ -780,11 +906,52 @@ class MercantilEngine:
         run_id: str,
         emit: Callable[[dict], None] | None = None,
     ) -> bool:
-        """Garante que estamos no dashboard. Se URL = /login, faz re-login completo.
-        Usar entre CPFs para detectar expiração de sessão mid-batch."""
+        """Garante que estamos logados. Se URL = /login mas há JWT válido no
+        localStorage (sessão importada do Chrome do user), aceita pra BFF rodar.
+        Caso contrário, faz re-login DOM completo (com SMS)."""
         if "/login" not in (page.url or ""):
             return True
-        # Sessão expirou; estado salvo provavelmente está stale
+
+        # Primeiro: verifica JWT direto no arquivo (Angular já pode ter limpo localStorage)
+        jwt_from_file = self._read_jwt_from_storage_state(user_id)
+        if jwt_from_file:
+            logger.info("mercantil ensure_logged_in: JWT do arquivo válido — BFF pode continuar user=%s", user_id)
+            return True
+
+        # Tem JWT válido no localStorage? Sessão importada não tem cookies HttpOnly
+        # do servidor → banco redireciona pra /login. Mas BFF só precisa do JWT.
+        try:
+            jwt = await page.evaluate(
+                "() => {"
+                " const a = localStorage.getItem('PCB_AUTH');"
+                " if (!a) return null;"
+                " try { const p = JSON.parse(a); return p.access_token || null; }"
+                " catch { return (a && a.startsWith && a.startsWith('ey')) ? a : null; }"
+                "}"
+            )
+            if jwt and isinstance(jwt, str) and jwt.count(".") == 2:
+                import base64 as _b64, json as _json, time as _time
+                try:
+                    payload_seg = jwt.split(".")[1]
+                    pad = "=" * (-len(payload_seg) % 4)
+                    payload = _json.loads(_b64.urlsafe_b64decode(payload_seg + pad).decode('utf-8', errors='replace'))
+                    exp = int(payload.get("exp", 0))
+                    if exp > int(_time.time()):
+                        logger.info(
+                            "mercantil ensure_logged_in: JWT importado válido (exp=%d), aceitando /login pra BFF",
+                            exp,
+                        )
+                        return True
+                    logger.warning(
+                        "mercantil ensure_logged_in: JWT importado expirado (exp=%d, now=%d)",
+                        exp, int(_time.time()),
+                    )
+                except Exception as e:
+                    logger.warning("mercantil ensure_logged_in: erro decodificando JWT: %s", e)
+        except Exception as e:
+            logger.warning("mercantil ensure_logged_in: erro lendo localStorage: %s", e)
+
+        # JWT ausente/inválido/expirado → estado stale, re-login DOM completo
         self._drop_state(user_id)
         return await self._do_full_login(page, user_id, run_id, lambda p: emit(p) if emit else None)
 

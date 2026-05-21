@@ -90,14 +90,17 @@ async def bot_start(
     request: Request,
     num_workers: int = 2,
     batch_id: str | None = None,
+    mode: str = "api",
     user: AuthUser = Depends(require_user),
 ):
+    if mode not in ("api", "bot"):
+        raise HTTPException(400, "mode deve ser 'api' ou 'bot'")
     db = get_db()
     creds = get_presenca_runtime_creds(user.user_id, db)
     pool = request.app.state.presenca_pool
     return await presenca_bot_service.start_bot(
         pool=pool, user_id=user.user_id, num_workers=num_workers,
-        creds=creds, db=db, on_event=_on_event, batch_id=batch_id,
+        creds=creds, db=db, on_event=_on_event, batch_id=batch_id, mode=mode,
     )
 
 

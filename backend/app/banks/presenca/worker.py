@@ -53,7 +53,9 @@ class PresencaLeadWorker:
             })
 
     async def _ensure_login(self, page) -> bool:
-        if "/login" in page.url or page.url == "about:blank":
+        from urllib.parse import urlparse
+        path = urlparse(page.url).path
+        if "sign-in" in path or "login" in path or page.url == "about:blank":
             return await self.engine.login_page(page)
         return True
 
