@@ -114,6 +114,13 @@ class PresencaApiClient:
     def gerar_termo(self, cpf: str, nome: str, telefone: str) -> str:
         """POST /consultas/termo-inss — retorna autorizacaoId."""
         digits = _strip_digits(telefone) or "11999999999"
+        # API exige 11 dígitos — remove prefixo 55 do Brasil se presente
+        if len(digits) == 13 and digits.startswith("55"):
+            digits = digits[2:]
+        elif len(digits) == 12 and digits.startswith("55"):
+            digits = digits[2:]
+        if len(digits) != 11:
+            digits = "11999999999"
         r = self._request("POST", "/consultas/termo-inss", json={
             "cpf": _strip_digits(cpf),
             "nome": nome or "Cliente",
