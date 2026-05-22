@@ -190,7 +190,10 @@ class PresencaApiClient:
                 continue
             break
         if r.status_code == 400:
-            log.info("presenca vinculos 400 (sem eSocial) cpf=%s", cpf)
+            body = r.text
+            if "Limite de consulta" in body or "limite" in body.lower():
+                raise RuntimeError(f"consultar_vinculos limite de consulta (rate limit do banco) cpf={cpf}: {body[:200]}")
+            log.info("presenca vinculos 400 (sem eSocial) cpf=%s body=%s", cpf, body[:200])
             return None
         if r.status_code not in (200, 201):
             raise RuntimeError(f"consultar_vinculos {r.status_code}: {r.text[:200]}")
