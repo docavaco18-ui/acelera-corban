@@ -10,6 +10,7 @@ import Chatwoot from "./pages/Chatwoot";
 import Disparo from "./pages/Disparo";
 import Mercantil from "./pages/Mercantil";
 import Presenca from "./pages/Presenca";
+import PowerHub from "./pages/PowerHub";
 import { useSession } from "./hooks/useSession";
 import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
@@ -17,25 +18,28 @@ import MercantilSmsModal from "./components/MercantilSmsModal";
 
 function BankToggle() {
   const { bank, setBank } = useBank();
-  const reload = (b: "v8" | "vctex" | "mercantil" | "presenca") => {
+  const reload = (b: "v8" | "vctex" | "mercantil" | "presenca" | "powerhub") => {
     setBank(b as any);
     if (b === "mercantil") {
       window.location.href = "/mercantil";
     } else if (b === "presenca") {
       window.location.href = "/presenca";
+    } else if (b === "powerhub") {
+      window.location.href = "/powerhub";
     } else {
       window.location.reload();
     }
   };
-  const labels: Record<"v8" | "vctex" | "mercantil" | "presenca", string> = {
+  const labels: Record<"v8" | "vctex" | "mercantil" | "presenca" | "powerhub", string> = {
     v8: "V8",
     vctex: "VCTex",
     mercantil: "Mercantil",
     presenca: "Presença",
+    powerhub: "PowerHub",
   };
   return (
     <div style={{ display: "flex", gap: 0, marginRight: 8, border: "1px solid #334155", borderRadius: 14, overflow: "hidden" }}>
-      {(["v8", "vctex", "mercantil", "presenca"] as const).map(b => (
+      {(["v8", "vctex", "mercantil", "presenca", "powerhub"] as const).map(b => (
         <button
           key={b}
           onClick={() => reload(b)}
@@ -136,6 +140,7 @@ export default function App() {
                 <Route path="/disparo" element={<Disparo />} />
                 <Route path="/mercantil" element={<Mercantil />} />
                 <Route path="/presenca" element={<Presenca />} />
+                <Route path="/powerhub" element={<PowerHub />} />
                 <Route path="/registros" element={<Records />} />
                 <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
               </Routes>

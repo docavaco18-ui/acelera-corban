@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 
-export type Bank = "v8" | "vctex" | "mercantil" | "presenca";
+export type Bank = "v8" | "vctex" | "mercantil" | "presenca" | "powerhub";
 const KEY = "selected_bank";
 const DEFAULT: Bank = "v8";
 
@@ -10,7 +10,7 @@ function notify() { listeners.forEach(fn => fn()); }
 function read(): Bank {
   try {
     const v = localStorage.getItem(KEY);
-    if (v === "vctex" || v === "mercantil" || v === "v8" || v === "presenca") return v;
+    if (v === "vctex" || v === "mercantil" || v === "v8" || v === "presenca" || v === "powerhub") return v;
     return DEFAULT;
   } catch { return DEFAULT; }
 }

@@ -143,9 +143,9 @@ interface BankSummary {
 export const credentialsApi = {
   list: () =>
     api
-      .get<Record<"v8" | "vctex" | "mercantil" | "presenca", BankSummary | null>>("/api/credentials")
+      .get<Record<"v8" | "vctex" | "mercantil" | "presenca" | "powerhub", BankSummary | null>>("/api/credentials")
       .then((r) => r.data),
-  upsert: (bank: "v8" | "vctex" | "mercantil" | "presenca", body: { login: string; password?: string; proxies: string[] }) =>
+  upsert: (bank: "v8" | "vctex" | "mercantil" | "presenca" | "powerhub", body: { login: string; password?: string; proxies: string[] }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
 };
 
@@ -399,6 +399,78 @@ export const presencaApi = {
   exportCsvUrl: (status = "elegivel") => {
     const base = (import.meta.env.VITE_API_URL || "") + "/api/presenca/leads/export";
     return `${base}?status=${status}`;
+  },
+};
+
+const powerhubAxios = axios.create({ baseURL: BASE_URL });
+powerhubAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const powerhubApi = {
+  botStart: (batchId?: string, numWorkers = 3) =>
+    powerhubAxios
+      .post<{ run_id: string; num_workers: number }>("/api/powerhub/bot/start", null, {
+        params: { ...(batchId ? { batch_id: batchId } : {}), num_workers: numWorkers },
+      })
+      .then((r) => r.data),
+
+  botStop: () =>
+    powerhubAxios.post("/api/powerhub/bot/stop").then((r) => r.data),
+
+  botStatus: () =>
+    powerhubAxios
+      .get<{ status: string; run_id: string | null }>("/api/powerhub/bot/status")
+      .then((r) => r.data),
+
+  botEvents: () =>
+    powerhubAxios.get<{ data: any[] }>("/api/powerhub/bot/events").then((r) => r.data.data),
+
+  uploadCsv: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return powerhubAxios
+      .post<{ job_id: string }>("/api/powerhub/leads/upload", form)
+      .then((r) => r.data);
+  },
+
+  uploadStatus: (jobId: string) =>
+    powerhubAxios
+      .get<{ status: string; total: number; inserted: number; batch_id?: string; error?: string }>(
+        `/api/powerhub/leads/upload/${jobId}`
+      )
+      .then((r) => r.data),
+
+  currentBatch: () =>
+    powerhubAxios
+      .get<{ id: string; file_name: string; total_leads: number; status: string } | null>("/api/powerhub/batches/current")
+      .then((r) => r.data)
+      .catch(() => null),
+
+  listBatches: () =>
+    powerhubAxios
+      .get<{ data: Array<{ id: string; file_name: string; total_leads: number; status: string; created_at: string }> }>("/api/powerhub/batches/")
+      .then((r) => r.data.data)
+      .catch(() => [] as any[]),
+
+  stats: (batchId?: string) =>
+    powerhubAxios
+      .get<{ total: number; pending: number; processing: number; found: number; not_found: number; error: number; total_phones: number }>(
+        "/api/powerhub/stats",
+        { params: batchId ? { batch_id: batchId } : {} }
+      )
+      .then((r) => r.data)
+      .catch(() => null),
+
+  exportCsvUrl: (batchId?: string) => {
+    const base = (import.meta.env.VITE_API_URL || "") + "/api/powerhub/leads/export";
+    return batchId ? `${base}?batch_id=${batchId}&status=found` : `${base}?status=found`;
   },
 };
 

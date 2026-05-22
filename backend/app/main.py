@@ -8,11 +8,13 @@ from .routers import mercantil as mercantil_router
 from .routers import presenca as presenca_router
 from .routers import v8_proposals
 from .routers import broadcast as broadcast_router
+from .routers import powerhub as powerhub_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
 from .banks.mercantil.bot_pool import MercantilBotPool
 from .banks.presenca.bot_pool import PresencaBotPool
+from .banks.powerhub.bot_pool import PowerHubBotPool
 
 setup_logging(json_logs=True)
 
@@ -21,6 +23,7 @@ app.state.v8_pool = V8BotPool()
 app.state.vctex_pool = VCTexBotPool()
 app.state.mercantil_pool = MercantilBotPool()
 app.state.presenca_pool = PresencaBotPool()
+app.state.powerhub_pool = PowerHubBotPool()
 
 
 @app.on_event("startup")
@@ -112,6 +115,7 @@ app.include_router(crm.router)
 app.include_router(v8_proposals.router)
 app.include_router(chatwoot.router)
 app.include_router(broadcast_router.router)
+app.include_router(powerhub_router.router)
 
 @app.get("/health")
 @app.get("/api/health")
