@@ -184,6 +184,7 @@ async def start_bot(
             logger.info(f"presenca bot run[{user_id}] cancelled")
         finally:
             rt.running = False
+            rt.inflight.clear()
             for t in rt.worker_tasks:
                 t.cancel()
             await asyncio.gather(*rt.worker_tasks, return_exceptions=True)
@@ -207,7 +208,12 @@ async def start_bot(
                         .eq("batch_id", batch_id)
                         .execute().data or []
                     )
-                    liberado = sum(float(r.get("valor_liberado") or 0) for r in rows if r["status"] == "elegivel")
+                    def _to_float(v):
+                        try:
+                            return float(v or 0)
+                        except (ValueError, TypeError):
+                            return 0.0
+                    liberado = sum(_to_float(r.get("valor_liberado")) for r in rows if r["status"] == "elegivel")
                     scoped(db, "presenca_batches", user_id).update({
                         "status": "concluida",
                         "finished_at": now_iso,

@@ -108,6 +108,8 @@ class PresencaApiClient:
             self.login()
             kw["headers"] = self._auth_headers()
             r = self._client.request(method, path, **kw)
+            if r.status_code == 401:
+                raise RuntimeError(f"presenca api 401 persiste após relogin: {r.text[:200]}")
 
         return r
 
@@ -127,12 +129,19 @@ class PresencaApiClient:
         digits = self._normalizar_telefone(telefone) or self._telefone_fallback_cpf(cpf)
 
         for tentativa, tel in enumerate([digits, self._telefone_fallback_cpf(cpf)]):
-            r = self._request("POST", "/consultas/termo-inss", json={
-                "cpf": _strip_digits(cpf),
-                "nome": nome or "Cliente",
-                "telefone": tel,
-                "produtoId": 28,
-            })
+            for rate_attempt in range(3):
+                r = self._request("POST", "/consultas/termo-inss", json={
+                    "cpf": _strip_digits(cpf),
+                    "nome": nome or "Cliente",
+                    "telefone": tel,
+                    "produtoId": 28,
+                })
+                if r.status_code == 429:
+                    wait = 30 + rate_attempt * 15
+                    log.warning("presenca gerar_termo 429 cpf=%s — aguardando %ds", cpf, wait)
+                    time.sleep(wait)
+                    continue
+                break
             if r.status_code in (200, 201):
                 break
             body = r.text
