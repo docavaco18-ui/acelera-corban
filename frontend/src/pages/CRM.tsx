@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { crmApi, crmSettingsApi, v8ProposalsApi } from "../lib/api";
 import { useSession } from "../hooks/useSession";
-import type { CrmProposta, CrmStats } from "../lib/types";
+import type { CrmProposta, CrmStats, CrmStatus } from "../lib/types";
 
 const C = {
   bg: "#080818",
@@ -18,7 +18,7 @@ const C = {
   muted: "#64748b",
 };
 
-const COLUNAS: { key: CrmProposta["status"]; label: string; cor: string }[] = [
+const COLUNAS: { key: CrmStatus; label: string; cor: string }[] = [
   { key: "propostas",  label: "💰 PAGOS",        cor: C.blue   },
   { key: "karol",      label: "👤 KAROL",        cor: "#ff69b4" },
   { key: "giovanna",   label: "👤 GIOVANNA",     cor: "#da70d6" },
@@ -34,7 +34,12 @@ const BANCOS = ["V8", "Zilli", "Novo Saque", "VCTex", "Pan", "Facta", "C6", "Mer
 const fmtMoeda = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-// Remove pontos de milhar e converte vírgula decimal → ponto antes de parsear
+const fmtMoedaCompacto = (v: number): string => {
+  if (v >= 1_000_000) return `R$${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000) return `R$${(v / 1_000).toFixed(0)}k`;
+  return fmtMoeda(v);
+};
+
 const parseMoney = (v: string): number => {
   const clean = v.replace(/\./g, "").replace(",", ".");
   const n = parseFloat(clean);
@@ -44,10 +49,48 @@ const parseMoney = (v: string): number => {
 const fmtCpf = (s: string) =>
   s.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
 
-const fmtData = (s: string) => {
-  const [y, m, d] = s.split("-");
+const fmtData = (s: string | null | undefined) => {
+  if (!s) return "—";
+  const parts = s.split("-");
+  if (parts.length !== 3) return s;
+  const [y, m, d] = parts;
   return `${d}/${m}/${y}`;
 };
+
+const diasAtras = (iso: string | null | undefined): string => {
+  if (!iso) return "";
+  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (diff === 0) return "hoje";
+  if (diff === 1) return "1d";
+  return `${diff}d`;
+};
+
+function computeStats(proposals: CrmProposta[], pendingCount: number): CrmStats {
+  const by_status: Record<string, number> = {};
+  const by_banco: Record<string, number> = {};
+  const by_vendedor: Record<string, number> = {};
+  let total_valor = 0;
+  for (const p of proposals) {
+    by_status[p.status] = (by_status[p.status] || 0) + 1;
+    by_banco[p.banco] = (by_banco[p.banco] || 0) + 1;
+    by_vendedor[p.nome_vendedor] = (by_vendedor[p.nome_vendedor] || 0) + (p.valor || 0);
+    total_valor += p.valor || 0;
+  }
+  const total = proposals.length;
+  const ranking = Object.entries(by_vendedor)
+    .map(([nome, tot]) => ({ nome, total: Math.round(tot * 100) / 100 }))
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 10);
+  return {
+    total,
+    total_valor: Math.round(total_valor * 100) / 100,
+    ticket_medio: total ? Math.round(total_valor / total * 100) / 100 : 0,
+    by_status,
+    by_banco,
+    ranking,
+    pending_count: pendingCount,
+  };
+}
 
 // ─── Modal de senha CRM ───────────────────────────────────────────────────────
 interface CrmPasswordModalProps {
@@ -105,9 +148,10 @@ interface ModalProps {
   onSaved: (p: CrmProposta) => void;
   editing?: CrmProposta | null;
   hasCrmPassword: boolean;
+  defaultStatus?: CrmStatus;
 }
 
-function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps) {
+function PropostaModal({ onClose, onSaved, editing, hasCrmPassword, defaultStatus }: ModalProps) {
   const [form, setForm] = useState({
     nome_vendedor: editing?.nome_vendedor ?? "",
     banco: editing?.banco ?? BANCOS[0],
@@ -118,7 +162,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
     prazo: editing?.prazo?.toString() ?? "",
     parcela: editing?.parcela?.toString() ?? "",
     codigo_proposta: editing?.codigo_proposta ?? "",
-    status: editing?.status ?? "propostas",
+    status: editing?.status ?? defaultStatus ?? "propostas",
     banco_custom: "",
   });
   const [bancoCustom, setBancoCustom] = useState(false);
@@ -150,7 +194,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
       ? crmApi.atualizar(editing.id, payload)
       : crmApi.criar(payload);
     call
-      .then(result => { onSaved(result); })
+      .then(result => { setBusy(false); onSaved(result); })
       .catch(e => { setErr(e?.response?.data?.detail ?? "Erro ao salvar"); setBusy(false); });
   };
 
@@ -161,7 +205,6 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
     if (!form.prazo || isNaN(parseInt(form.prazo))) { setErr("Prazo inválido"); return; }
     if (!form.parcela || parseMoney(form.parcela) <= 0) { setErr("Parcela inválida"); return; }
 
-    // Senha CRM só é pedida na criação (não em edições)
     if (!editing && hasCrmPassword) {
       setShowPwdModal(true);
     } else {
@@ -281,6 +324,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword }: ModalProps
 interface CardProps {
   proposta: CrmProposta;
   isAdmin: boolean;
+  isDragging?: boolean;
   onEdit: (p: CrmProposta) => void;
   onDelete: (id: string) => void;
   onApprove?: (id: string) => void;
@@ -288,9 +332,10 @@ interface CardProps {
   onDragEnd: () => void;
 }
 
-function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDragStart, onDragEnd }: CardProps) {
+function PropostaCard({ proposta: p, isAdmin, isDragging, onEdit, onDelete, onApprove, onDragStart, onDragEnd }: CardProps) {
   const cor = COLUNAS.find(c => c.key === p.status)?.cor ?? C.blue;
   const isPending = !p.approved;
+  const idade = diasAtras(p.updated_at);
 
   return (
     <div
@@ -303,7 +348,12 @@ function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDra
         borderLeft: `3px solid ${isPending ? C.gold : cor}`,
         borderRadius: 10, padding: "12px 14px", marginBottom: 8,
         cursor: p.approved ? "grab" : "default",
-        opacity: isPending ? 0.85 : 1,
+        opacity: isDragging ? 0.35 : (isPending ? 0.85 : 1),
+        transform: isDragging ? "scale(0.97)" : "scale(1)",
+        transition: "opacity .15s, transform .15s, box-shadow .15s",
+        boxShadow: isDragging ? "none" : "0 1px 4px rgba(0,0,0,.4)",
+        userSelect: "none",
+        WebkitUserSelect: "none",
       }}
     >
       {isPending && (
@@ -312,42 +362,51 @@ function PropostaCard({ proposta: p, isAdmin, onEdit, onDelete, onApprove, onDra
         </div>
       )}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.text, marginBottom: 4 }}>
+        <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.text, marginBottom: 4, flex: 1, marginRight: 6 }}>
           {p.nome_vendedor}
         </div>
-        <div style={{ display: "flex", gap: 5 }}>
+        <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
           {isAdmin && isPending && onApprove && (
             <button onClick={() => onApprove(p.id)}
               title="Aprovar proposta"
               style={{ background: "rgba(0,255,136,.12)", border: "1px solid rgba(0,255,136,.3)", color: C.green, cursor: "pointer", fontSize: ".72rem", borderRadius: 6, padding: "3px 8px", fontWeight: 700 }}>
-              ✓ Aprovar
+              ✓
             </button>
           )}
           <button onClick={() => onEdit(p)}
-            style={{ background: "rgba(255,255,255,.06)", border: `1px solid ${C.border}`, color: C.muted, cursor: "pointer", fontSize: ".78rem", borderRadius: 6, padding: "4px 10px" }}>
-            ✏️ Editar
+            style={{ background: "rgba(255,255,255,.06)", border: `1px solid ${C.border}`, color: C.muted, cursor: "pointer", fontSize: ".75rem", borderRadius: 6, padding: "3px 8px" }}>
+            ✏️
           </button>
           {isAdmin && (
             <button onClick={() => onDelete(p.id)}
-              style={{ background: "rgba(255,45,120,.08)", border: "1px solid rgba(255,45,120,.2)", color: C.red, cursor: "pointer", fontSize: ".78rem", borderRadius: 6, padding: "4px 8px" }}>
+              style={{ background: "rgba(255,45,120,.08)", border: "1px solid rgba(255,45,120,.2)", color: C.red, cursor: "pointer", fontSize: ".75rem", borderRadius: 6, padding: "3px 7px" }}>
               🗑
             </button>
           )}
         </div>
       </div>
-      <div style={{ fontSize: ".72rem", color: isPending ? C.gold : cor, fontWeight: 700, marginBottom: 4 }}>{p.banco}</div>
+      <div style={{ fontSize: ".72rem", color: isPending ? C.gold : cor, fontWeight: 700, marginBottom: 3 }}>{p.banco}</div>
       {p.cliente_nome && (
         <div style={{ fontSize: ".78rem", color: C.text, fontWeight: 600, marginBottom: 2 }}>{p.cliente_nome}</div>
       )}
-      <div style={{ fontSize: ".72rem", color: C.muted }}>{fmtCpf(p.cliente_cpf)}</div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
-        <span style={{ fontSize: ".78rem", color: C.green, fontWeight: 700 }}>{fmtMoeda(p.valor)}</span>
-        <span style={{ fontSize: ".72rem", color: C.muted }}>{p.prazo}x {fmtMoeda(p.parcela)}</span>
+      <div style={{ fontSize: ".7rem", color: C.muted }}>{fmtCpf(p.cliente_cpf)}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+        <span style={{ fontSize: ".82rem", color: C.green, fontWeight: 800 }}>{fmtMoeda(p.valor)}</span>
+        <span style={{ fontSize: ".7rem", color: C.muted }}>{p.prazo}x {fmtMoeda(p.parcela)}</span>
       </div>
-      {p.codigo_proposta && (
-        <div style={{ fontSize: ".68rem", color: C.muted, marginTop: 4 }}>#{p.codigo_proposta}</div>
-      )}
-      <div style={{ fontSize: ".68rem", color: C.muted, marginTop: 2 }}>{fmtData(p.data_venda)}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
+        {p.codigo_proposta ? (
+          <span style={{ fontSize: ".66rem", color: C.muted }}>#{p.codigo_proposta}</span>
+        ) : <span />}
+        <div style={{ display: "flex", gap: 8 }}>
+          <span style={{ fontSize: ".66rem", color: C.muted }}>{fmtData(p.data_venda)}</span>
+          {idade && (
+            <span style={{ fontSize: ".64rem", color: C.muted, background: "rgba(255,255,255,.06)", borderRadius: 4, padding: "1px 5px" }}>
+              {idade}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -423,25 +482,51 @@ function StatsSidebar({ stats, isAdmin }: { stats: CrmStats | null; isAdmin: boo
   );
 }
 
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function MoveToast({ msg }: { msg: string | null }) {
+  if (!msg) return null;
+  return (
+    <div style={{
+      position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
+      background: "#1a2940", border: `1px solid ${C.blue}55`, borderRadius: 20,
+      padding: "10px 22px", color: C.text, fontSize: ".85rem", fontWeight: 600,
+      zIndex: 20000, pointerEvents: "none",
+      boxShadow: "0 4px 24px rgba(0,0,0,.5)",
+      animation: "fadeInUp .2s ease",
+    }}>
+      {msg}
+    </div>
+  );
+}
+
 // ─── Página principal ─────────────────────────────────────────────────────────
 export default function CRM() {
   const { isAdmin } = useSession();
   const [propostas, setPropostas] = useState<CrmProposta[]>([]);
   const [pendentes, setPendentes] = useState<CrmProposta[]>([]);
-  const [stats, setStats] = useState<CrmStats | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
   const [hasCrmPassword, setHasCrmPassword] = useState(false);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<CrmProposta | null>(null);
+  const [addingToCol, setAddingToCol] = useState<CrmStatus | null>(null);
   const [bancFiltro, setBancFiltro] = useState<string>("todos");
   const [dataInicio, setDataInicio] = useState("");
   const [dataFim, setDataFim] = useState("");
+  const [search, setSearch] = useState("");
   const [dragId, setDragId] = useState<string | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [showTab, setShowTab] = useState<"kanban" | "pendentes">("kanban");
   const [syncStatus, setSyncStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [syncResult, setSyncResult] = useState<{ added: number; skipped: number; errors: number } | null>(null);
+  const [moveToast, setMoveToast] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setMoveToast(msg);
+    setTimeout(() => setMoveToast(null), 2000);
+  };
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -450,15 +535,14 @@ export default function CRM() {
       if (bancFiltro !== "todos") params.banco = bancFiltro;
       if (dataInicio) params.data_inicio = dataInicio;
       if (dataFim) params.data_fim = dataFim;
-      const [data, s, cfg] = await Promise.all([
+      const [data, cfg, statsCfg] = await Promise.all([
         crmApi.listar(params),
-        crmApi.stats(),
         crmSettingsApi.get(),
+        crmApi.stats(),
       ]);
-      // Aprovadas vão pro kanban; pendentes ficam separadas (admin vê tudo)
       setPropostas(data.filter(p => p.approved));
       setPendentes(data.filter(p => !p.approved));
-      setStats(s);
+      setPendingCount(statsCfg.pending_count);
       setHasCrmPassword(cfg.has_crm_password);
       setErr(null);
     } catch (e: any) {
@@ -468,31 +552,58 @@ export default function CRM() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // ID passado via dataTransfer — evita stale closure do React state
+  // Search filtro local — dim não-matches em vez de esconder
+  const filteredPropostas = useMemo(() => {
+    if (!search.trim()) return propostas;
+    const q = search.toLowerCase();
+    return propostas.filter(p =>
+      p.cliente_nome?.toLowerCase().includes(q) ||
+      p.cliente_cpf?.includes(q) ||
+      p.nome_vendedor?.toLowerCase().includes(q) ||
+      p.codigo_proposta?.toLowerCase().includes(q) ||
+      p.banco?.toLowerCase().includes(q)
+    );
+  }, [propostas, search]);
+
+  // Stats computadas a partir da view atual (inclui filtros)
+  const displayStats = useMemo(
+    () => computeStats(filteredPropostas, pendingCount),
+    [filteredPropostas, pendingCount]
+  );
+
   const handleDragStart = (e: React.DragEvent, id: string) => {
     e.dataTransfer.setData("text/plain", id);
     e.dataTransfer.effectAllowed = "move";
     setDragId(id);
   };
 
-  const handleDragEnd = () => setDragId(null);
+  const handleDragEnd = () => { setDragId(null); setDragOverCol(null); };
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
   };
 
-  // Colunas de vendedor fixo — arrastar pra cá troca o nome_vendedor também
-  const VENDOR_NAMES: Partial<Record<CrmProposta["status"], string>> = {
+  const handleDragEnterCol = (colKey: string) => setDragOverCol(colKey);
+
+  const handleDragLeaveCol = (e: React.DragEvent) => {
+    const related = e.relatedTarget as Node | null;
+    if (!related || !e.currentTarget.contains(related)) {
+      setDragOverCol(null);
+    }
+  };
+
+  const VENDOR_NAMES: Partial<Record<CrmStatus, string>> = {
     karol:    "KAROL",
     giovanna: "GIOVANNA",
     gabriel:  "GABRIEL/I.A",
   };
 
-  const handleDrop = async (e: React.DragEvent, targetStatus: CrmProposta["status"]) => {
+  const handleDrop = async (e: React.DragEvent, targetStatus: CrmStatus) => {
     e.preventDefault();
     const id = e.dataTransfer.getData("text/plain");
     setDragId(null);
+    setDragOverCol(null);
     if (!id) return;
     const proposta = propostas.find(p => p.id === id);
     if (!proposta || proposta.status === targetStatus) return;
@@ -502,11 +613,13 @@ export default function CRM() {
 
     // Optimistic update
     setPropostas(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+
+    const colLabel = COLUNAS.find(c => c.key === targetStatus)?.label ?? targetStatus;
     try {
       await crmApi.atualizar(id, updates);
+      showToast(`→ ${colLabel}`);
       refresh();
     } catch (ex: any) {
-      // Reverter optimistic update e exibir erro
       setErr(ex?.response?.data?.detail ?? "Erro ao mover proposta");
       refresh();
     }
@@ -546,36 +659,64 @@ export default function CRM() {
     }
     setShowModal(false);
     setEditing(null);
+    setAddingToCol(null);
     refresh();
   };
 
-  const handleEdit = (p: CrmProposta) => { setEditing(p); setShowModal(true); };
+  const handleEdit = (p: CrmProposta) => { setEditing(p); setAddingToCol(null); setShowModal(true); };
+
+  const openAddInCol = (colKey: CrmStatus) => {
+    setEditing(null);
+    setAddingToCol(colKey);
+    setShowModal(true);
+  };
 
   const handleSyncV8 = async () => {
     setSyncStatus("running");
     setSyncResult(null);
     try {
       await v8ProposalsApi.startSync();
-      // Polling a cada 4s até terminar
+      let cancelled = false;
       const poll = setInterval(async () => {
+        if (cancelled) return;
         const s = await v8ProposalsApi.syncStatus();
         if (s.status === "done") {
           clearInterval(poll);
-          setSyncStatus("done");
-          setSyncResult({ added: s.added ?? 0, skipped: s.skipped ?? 0, errors: s.errors ?? 0 });
-          refresh();
+          if (!cancelled) {
+            setSyncStatus("done");
+            setSyncResult({ added: s.added ?? 0, skipped: s.skipped ?? 0, errors: s.errors ?? 0 });
+            refresh();
+          }
         } else if (s.status === "error") {
           clearInterval(poll);
-          setSyncStatus("error");
+          if (!cancelled) setSyncStatus("error");
         }
       }, 4000);
+      return () => { cancelled = true; clearInterval(poll); };
     } catch {
       setSyncStatus("error");
     }
   };
 
-  const colunasPropostas = (status: CrmProposta["status"]) =>
+  const colunasPropostas = (status: CrmStatus) =>
     propostas.filter(p => p.status === status);
+
+  const isCardDimmed = (p: CrmProposta) => {
+    if (!search.trim()) return false;
+    const q = search.toLowerCase();
+    return !(
+      p.cliente_nome?.toLowerCase().includes(q) ||
+      p.cliente_cpf?.includes(q) ||
+      p.nome_vendedor?.toLowerCase().includes(q) ||
+      p.codigo_proposta?.toLowerCase().includes(q) ||
+      p.banco?.toLowerCase().includes(q)
+    );
+  };
+
+  const colTotal = (status: CrmStatus): string | null => {
+    const sum = propostas.filter(p => p.status === status).reduce((acc, p) => acc + (p.valor || 0), 0);
+    return sum > 0 ? fmtMoedaCompacto(sum) : null;
+  };
 
   const card: React.CSSProperties = {
     background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
@@ -585,8 +726,10 @@ export default function CRM() {
 
   return (
     <div style={{ padding: 20, color: C.text, fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", minHeight: "100vh", background: C.bg }}>
+      <style>{`@keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
+
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
         <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: 0 }}>📊 Acompanhamento de Propostas</h1>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           {isAdmin && (
@@ -608,7 +751,7 @@ export default function CRM() {
             </div>
           )}
           <button
-            onClick={() => { setEditing(null); setShowModal(true); }}
+            onClick={() => { setEditing(null); setAddingToCol(null); setShowModal(true); }}
             style={{ padding: "8px 18px", borderRadius: 20, background: `${C.green}22`, color: C.green, border: `1px solid ${C.green}44`, fontWeight: 700, fontSize: ".85rem", cursor: "pointer" }}>
             ➕ Nova Proposta
           </button>
@@ -616,7 +759,7 @@ export default function CRM() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
         <button
           onClick={() => setShowTab("kanban")}
           style={{ padding: "6px 18px", borderRadius: 12, border: `1px solid ${showTab === "kanban" ? C.blue : C.border}`, background: showTab === "kanban" ? `${C.blue}22` : "transparent", color: showTab === "kanban" ? C.blue : C.muted, fontWeight: 700, fontSize: ".8rem", cursor: "pointer" }}>
@@ -636,8 +779,27 @@ export default function CRM() {
         )}
       </div>
 
-      {/* Filtros */}
-      <div style={{ ...card, padding: "14px 18px", marginBottom: 18 }}>
+      {/* Filtros + busca */}
+      <div style={{ ...card, padding: "12px 16px", marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+          {/* Busca */}
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="🔍 Buscar por nome, CPF, banco, código…"
+            style={{
+              padding: "6px 12px", background: "#0a0a1e", border: `1px solid ${search ? C.blue + "88" : C.border}`,
+              borderRadius: 10, color: C.text, fontSize: ".82rem", outline: "none",
+              width: 280, transition: "border .15s",
+            }}
+          />
+          {search && (
+            <button onClick={() => setSearch("")}
+              style={{ padding: "4px 10px", borderRadius: 10, background: `${C.red}22`, color: C.red, border: `1px solid ${C.red}44`, fontSize: ".75rem", cursor: "pointer" }}>
+              ✕ Limpar busca
+            </button>
+          )}
+        </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: ".7rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700 }}>Banco:</span>
           {["todos", ...BANCOS].map(b => (
@@ -669,40 +831,74 @@ export default function CRM() {
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           {showTab === "kanban" && (
-            <div style={{ display: "flex", gap: 12, overflowX: "auto" }}>
-              {COLUNAS.map(col => (
-                <div
-                  key={col.key}
-                  onDragEnter={handleDragOver}
-                  onDragOver={handleDragOver}
-                  onDrop={e => handleDrop(e, col.key)}
-                  style={{ minWidth: 220, flex: 1, background: dragId ? "rgba(255,255,255,.04)" : "rgba(255,255,255,.02)", border: `1px solid ${dragId ? col.cor + "55" : C.border}`, borderRadius: 12, padding: 12, transition: "border .15s, background .15s" }}
-                >
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, paddingBottom: 10, borderBottom: `1px solid ${C.border}` }}>
-                    <span style={{ fontSize: ".78rem", fontWeight: 800, color: col.cor }}>{col.label}</span>
-                    <span style={{ fontSize: ".7rem", background: `${col.cor}22`, color: col.cor, padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>
-                      {colunasPropostas(col.key).length}
-                    </span>
-                  </div>
-                  {loading ? (
-                    <div style={{ color: C.muted, fontSize: ".8rem", textAlign: "center", padding: 20 }}>Carregando…</div>
-                  ) : colunasPropostas(col.key).length === 0 ? (
-                    <div style={{ color: C.muted, fontSize: ".75rem", textAlign: "center", padding: "24px 0", borderRadius: 8, border: `2px dashed ${C.border}` }}>
-                      Arraste aqui
+            <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
+              {COLUNAS.map(col => {
+                const cards = colunasPropostas(col.key);
+                const total = colTotal(col.key);
+                const isOver = dragOverCol === col.key;
+                return (
+                  <div
+                    key={col.key}
+                    onDragEnter={() => handleDragEnterCol(col.key)}
+                    onDragLeave={handleDragLeaveCol}
+                    onDragOver={handleDragOver}
+                    onDrop={e => handleDrop(e, col.key)}
+                    style={{
+                      minWidth: 210, flex: "0 0 210px",
+                      background: isOver ? `${col.cor}0d` : "rgba(255,255,255,.015)",
+                      border: `1px solid ${isOver ? col.cor + "99" : C.border}`,
+                      borderRadius: 12, padding: "10px 10px 4px",
+                      transition: "border .12s, background .12s",
+                    }}
+                  >
+                    {/* Column header */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: ".75rem", fontWeight: 800, color: col.cor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</div>
+                        {total && (
+                          <div style={{ fontSize: ".65rem", color: C.muted, marginTop: 1 }}>{total}</div>
+                        )}
+                      </div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
+                        <span style={{ fontSize: ".68rem", background: `${col.cor}22`, color: col.cor, padding: "2px 7px", borderRadius: 10, fontWeight: 700 }}>
+                          {cards.length}
+                        </span>
+                        <button
+                          onClick={() => openAddInCol(col.key)}
+                          title={`Adicionar em ${col.label}`}
+                          style={{ background: `${col.cor}18`, border: `1px solid ${col.cor}44`, color: col.cor, borderRadius: 6, width: 22, height: 22, cursor: "pointer", fontSize: ".9rem", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, lineHeight: 1 }}>
+                          +
+                        </button>
+                      </div>
                     </div>
-                  ) : (
-                    colunasPropostas(col.key).map(p => (
-                      <PropostaCard
-                        key={p.id} proposta={p} isAdmin={isAdmin}
-                        onEdit={handleEdit}
-                        onDelete={requestDelete}
-                        onDragStart={handleDragStart}
-                        onDragEnd={handleDragEnd}
-                      />
-                    ))
-                  )}
-                </div>
-              ))}
+
+                    {/* Cards area — scroll independente */}
+                    <div style={{ maxHeight: 520, overflowY: "auto", overflowX: "hidden", paddingRight: 2 }}>
+                      {loading ? (
+                        <div style={{ color: C.muted, fontSize: ".8rem", textAlign: "center", padding: 20 }}>Carregando…</div>
+                      ) : cards.length === 0 ? (
+                        <div style={{ color: C.muted, fontSize: ".72rem", textAlign: "center", padding: "20px 0", borderRadius: 8, border: `2px dashed ${isOver ? col.cor + "55" : C.border}` }}>
+                          {isOver ? "Soltar aqui" : "Arraste aqui"}
+                        </div>
+                      ) : (
+                        cards.map(p => (
+                          <div key={p.id} style={{ opacity: isCardDimmed(p) ? 0.3 : 1, transition: "opacity .15s" }}>
+                            <PropostaCard
+                              proposta={p}
+                              isAdmin={isAdmin}
+                              isDragging={dragId === p.id}
+                              onEdit={handleEdit}
+                              onDelete={requestDelete}
+                              onDragStart={handleDragStart}
+                              onDragEnd={handleDragEnd}
+                            />
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
 
@@ -730,16 +926,17 @@ export default function CRM() {
           )}
         </div>
 
-        <StatsSidebar stats={stats} isAdmin={isAdmin} />
+        <StatsSidebar stats={displayStats} isAdmin={isAdmin} />
       </div>
 
       {/* Modal cadastro */}
       {showModal && (
         <PropostaModal
-          onClose={() => { setShowModal(false); setEditing(null); }}
+          onClose={() => { setShowModal(false); setEditing(null); setAddingToCol(null); }}
           onSaved={handleSaved}
           editing={editing}
           hasCrmPassword={hasCrmPassword}
+          defaultStatus={addingToCol ?? undefined}
         />
       )}
 
@@ -751,6 +948,8 @@ export default function CRM() {
           onCancel={() => setDeleteTarget(null)}
         />
       )}
+
+      <MoveToast msg={moveToast} />
     </div>
   );
 }

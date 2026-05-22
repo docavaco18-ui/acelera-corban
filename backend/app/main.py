@@ -16,7 +16,7 @@ from .banks.presenca.bot_pool import PresencaBotPool
 
 setup_logging(json_logs=True)
 
-app = FastAPI(title="V8 CLT Higienização", version="1.0.0")
+app = FastAPI(title="Acelera Corban", version="1.0.0")
 app.state.v8_pool = V8BotPool()
 app.state.vctex_pool = VCTexBotPool()
 app.state.mercantil_pool = MercantilBotPool()

@@ -32,7 +32,7 @@ export function Login() {
         background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)",
         borderRadius: 16, padding: 32, width: "min(420px, 90vw)",
       }}>
-        <h1 style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: 6 }}>🤖 V8 Bot</h1>
+        <h1 style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: 6 }}>Acelera Corban</h1>
         <p style={{ color: "#666", fontSize: ".85rem", marginBottom: 24 }}>
           Acesso restrito. Faça login para continuar.
         </p>
