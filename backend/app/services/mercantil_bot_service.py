@@ -325,7 +325,9 @@ async def start_bot(
         pool.emit(user_id, event)
 
     def on_event_wrapper(event):
-        asyncio.create_task(on_event_async(event))
+        t = asyncio.create_task(on_event_async(event))
+        handle.tasks.append(t)
+        t.add_done_callback(handle.tasks.remove)
 
     cfg = MercantilConfig()
 

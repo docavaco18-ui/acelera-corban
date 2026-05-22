@@ -159,7 +159,9 @@ async def start_bot(
             logger.warning(f"persist live counts[{user_id}] falhou: {e}")
 
     def on_event_wrapper(event):
-        asyncio.create_task(on_event_async(event))
+        t = asyncio.create_task(on_event_async(event))
+        handle.tasks.append(t)
+        t.add_done_callback(handle.tasks.remove)
 
     async def _consume(worker_id: int, queue: asyncio.Queue, role: str, role_index: int):
         worker = LeadWorker(
