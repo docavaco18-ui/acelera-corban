@@ -37,11 +37,14 @@ async def monitor_tick(redis_client: aioredis.Redis) -> None:
 
 async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> None:
     # Load credentials
-    creds_resp = db.table("vendeai_settings") \
-        .select("email_enc, password_enc, meta_token_enc") \
-        .eq("owner_id", owner_id) \
-        .single() \
-        .execute()
+    try:
+        creds_resp = db.table("vendeai_settings") \
+            .select("email_enc, password_enc, meta_token_enc") \
+            .eq("owner_id", owner_id) \
+            .single() \
+            .execute()
+    except Exception:
+        return
 
     if not creds_resp.data:
         return

@@ -77,7 +77,8 @@ class PresencaApiClient:
         """Autentica e armazena JWT. Retorna token."""
         cpf_fmt = _fmt_cpf(self._login_cpf)
         r = self._client.post("/login", json={"login": cpf_fmt, "senha": self._password})
-        r.raise_for_status()
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"presenca login falhou status={r.status_code} (500=senha errada): {r.text[:200]}")
         data = r.json()
         token = data.get("token") or data.get("access_token") or data.get("jwt") or ""
         if not token:

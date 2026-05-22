@@ -105,6 +105,8 @@ async def _create_batch(owner_id: str, file_name: str | None) -> str:
         }).execute()
 
     res = await loop.run_in_executor(None, _insert)
+    if not res.data:
+        raise RuntimeError("presenca _create_batch: insert retornou vazio (batch já existe?)")
     return res.data[0]["id"]
 
 

@@ -75,4 +75,6 @@ class PresencaBotPool:
                 "status": "running",
             }).execute()
         )
+        if not resp.data:
+            raise RuntimeError("presenca _persist_run: insert retornou vazio (constraint violation?)")
         return resp.data[0]["id"]
