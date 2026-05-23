@@ -72,22 +72,28 @@ export default function PowerHub() {
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts++;
-        const s = await powerhubApi.uploadStatus(job_id);
-        if (s.status === "done") {
+        try {
+          const s = await powerhubApi.uploadStatus(job_id);
+          if (s.status === "done") {
+            clearInterval(poll);
+            setUploadMsg(`✅ ${s.inserted} CPFs importados`);
+            setUploading(false);
+            load();
+          } else if (s.status === "error") {
+            clearInterval(poll);
+            setUploadMsg(`❌ Erro: ${s.error}`);
+            setUploading(false);
+          } else if (attempts > 60) {
+            clearInterval(poll);
+            setUploadMsg("⚠️ Timeout no upload");
+            setUploading(false);
+          } else {
+            setUploadMsg(`Processando... ${s.inserted ?? 0}/${s.total ?? "?"}`);
+          }
+        } catch {
           clearInterval(poll);
-          setUploadMsg(`✅ ${s.inserted} CPFs importados`);
+          setUploadMsg("❌ Falha ao verificar status");
           setUploading(false);
-          load();
-        } else if (s.status === "error") {
-          clearInterval(poll);
-          setUploadMsg(`❌ Erro: ${s.error}`);
-          setUploading(false);
-        } else if (attempts > 60) {
-          clearInterval(poll);
-          setUploadMsg("⚠️ Timeout no upload");
-          setUploading(false);
-        } else {
-          setUploadMsg(`Processando... ${s.inserted ?? 0}/${s.total ?? "?"}`);
         }
       }, 1000);
     } catch {

@@ -75,6 +75,9 @@ class PowerHubApiWorker:
         self._emit("worker_started")
         log.info(f"{self.name} iniciado")
 
+        if self.worker_id == 0:
+            await asyncio.to_thread(self._reset_stuck)
+
         try:
             while True:
                 pending = await asyncio.to_thread(self._fetch_pending)
@@ -113,6 +116,12 @@ class PowerHubApiWorker:
             self._client.close()
             self._emit("worker_stopped")
             log.info(f"{self.name} encerrado")
+
+    def _reset_stuck(self) -> None:
+        q = scoped(self.db, "powerhub_leads", self.user_id).update({"status": "pending"}).eq("status", "processing")
+        if self.batch_id:
+            q = q.eq("batch_id", self.batch_id)
+        q.execute()
 
     def _fetch_pending(self, limit: int = 10) -> list[dict]:
         q = scoped(self.db, "powerhub_leads", self.user_id).select("id,cpf,nome")

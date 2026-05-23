@@ -401,3 +401,36 @@ Extras ficam em coluna `payload` JSON no lead (além de `valor_liberado` = `valo
 - ❌ Login 500 — senha no Supabase expirou. Atualizar em Configurações → Presença Bank
 - ❌ Simulação bloqueada por prazos — contatar suporte Presença
 
+## PowerHub (5º banco — 2026-05-22)
+
+### Decisão de arquitetura: API REST (sem browser)
+Enriquecimento de telefone por CPF. Retorna até 4 telefones — exporta 1 linha por telefone.
+
+### Endpoints API
+- **Auth:** `POST https://novapowerhub.com.br/api/auth/token {username,password}` → access_token (300s) + refresh_token (24h)
+- **Refresh:** `POST https://novapowerhub.com.br/api/auth/refresh?refreshToken={token}`
+- **Consulta:** `GET https://higienizacao.novapowerhub.com.br/api/telefonia/dados/{CPF}?whatsapp=true`
+- **Resposta:** `{telefones: [{phone: "..."}], nomeCompleto: "..."}`
+
+### Credenciais portal
+- **Login:** `1243` / **Senha:** `Nexxo2025`
+
+### Arquivos-chave
+- `backend/app/banks/powerhub/api_client.py` — httpx, keep-alive desabilitado, retry 3x em RemoteProtocolError
+- `backend/app/banks/powerhub/api_worker.py` — auto-reset leads "processing" no startup (worker_id==0)
+- `backend/app/banks/powerhub/bot_pool.py` — max 3 workers/user, 12 total
+- `backend/app/routers/powerhub.py` — `/api/powerhub/*`
+- `migrations/022_powerhub.sql` — powerhub_leads (phones jsonb), powerhub_batches, powerhub_bot_runs + RLS
+- `frontend/src/pages/PowerHub.tsx` — `/powerhub`
+
+### Armadilhas
+- `httpx` keepalive → server disconnects após ~25s → `Connection: close` + `http1=True` + `max_keepalive_connections=0`
+- Leads ficam em `processing` se worker crasha → `_reset_stuck()` no startup do worker_id==0
+- Upload duplicado cria 2 batches `active` → `currentBatch` pega o mais recente por `created_at DESC`
+- CSV da base: `~/Downloads/MIL POWERHUB.csv` (sep=`;`, cpf zfill(11))
+
+### Status (2026-05-22)
+- ✅ Local funcionando — 40 CPFs testados
+- ✅ Migration 022 aplicada Supabase
+- ⏳ Deploy VPS pendente
+

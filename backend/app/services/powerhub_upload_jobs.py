@@ -107,6 +107,8 @@ async def _run_upload(job_id: str, content: bytes, user_id: str, file_name: str)
                 "status": "active",
             }).execute()
         )
+        if not batch_resp.data:
+            raise RuntimeError("Falha ao criar batch: insert retornou vazio")
         batch_id = batch_resp.data[0]["id"]
 
         inserted = 0
