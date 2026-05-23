@@ -40,6 +40,7 @@ def _norm_key(s: str) -> str:
 
 CPF_KEYS = {"cpf", "cpfcliente", "documento", "doc", "cpfcnpj"}
 NOME_KEYS = {"nome", "nomecliente", "cliente", "nomecompleto"}
+FONE_KEYS = {"telefone", "fone", "celular", "phone", "tel", "whatsapp", "numero", "contato"}
 
 
 def _pick(row: dict, normalized_row: dict, candidates: set[str]) -> str:
@@ -81,7 +82,9 @@ def _parse_csv(content: bytes) -> list[dict]:
         cpf_digits_seen.add(cpf_digits)
 
         nome = _pick(row, normalized, NOME_KEYS)
-        records.append({"cpf": cpf_digits, "nome": nome})
+        fone_raw = _pick(row, normalized, FONE_KEYS)
+        fone_digits = re.sub(r"\D", "", fone_raw) if fone_raw else None
+        records.append({"cpf": cpf_digits, "nome": nome, "telefone_original": fone_digits or None})
 
     return records
 
@@ -122,6 +125,7 @@ async def _run_upload(job_id: str, content: bytes, user_id: str, file_name: str)
                     "nome": r["nome"] or None,
                     "status": "pending",
                     "phones": "[]",
+                    "telefone_original": r.get("telefone_original"),
                 }
                 for r in chunk
             ]

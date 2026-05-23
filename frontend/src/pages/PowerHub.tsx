@@ -245,17 +245,17 @@ export default function PowerHub() {
           </div>
 
           <div style={{ marginTop: 12 }}>
-            <a
-              href={batch ? powerhubApi.exportCsvUrl(batch.id) : powerhubApi.exportCsvUrl()}
+            <button
+              onClick={() => powerhubApi.exportCsv(batch?.id)}
               style={{
-                display: "block", textAlign: "center", padding: "9px 0", borderRadius: 10,
+                width: "100%", display: "block", textAlign: "center", padding: "9px 0", borderRadius: 10,
                 background: "rgba(168,85,247,.1)", color: C.purple,
                 border: "1px solid rgba(168,85,247,.3)",
-                fontWeight: 700, fontSize: ".78rem", textDecoration: "none",
+                fontWeight: 700, fontSize: ".78rem", cursor: "pointer",
               }}
             >
               ⬇ Exportar CSV (CPF × Telefone)
-            </a>
+            </button>
             <div style={{ fontSize: ".68rem", color: C.muted, textAlign: "center", marginTop: 4 }}>
               1 linha por telefone — até 4 por CPF
             </div>

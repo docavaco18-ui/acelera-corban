@@ -472,6 +472,18 @@ export const powerhubApi = {
     const base = (import.meta.env.VITE_API_URL || "") + "/api/powerhub/leads/export";
     return batchId ? `${base}?batch_id=${batchId}&status=found` : `${base}?status=found`;
   },
+
+  exportCsv: async (batchId?: string): Promise<void> => {
+    const url = powerhubApi.exportCsvUrl(batchId);
+    const resp = await powerhubAxios.get(url, { responseType: "blob" });
+    const mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    const blob = new Blob([resp.data], { type: mime });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "powerhub_telefones.xlsx";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  },
 };
 
 export const broadcastApi = {

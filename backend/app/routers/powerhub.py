@@ -1,9 +1,10 @@
 """Router PowerHub — enriquecimento de telefone via CPF (/api/powerhub/*)."""
-import csv
 import io
 import json
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment
 
 from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
@@ -62,13 +63,22 @@ async def list_leads(
     return {"data": result.data, "page": page}
 
 
+def _fmt_phone(raw: str) -> str:
+    digits = "".join(c for c in str(raw) if c.isdigit())
+    if not digits:
+        return ""
+    if digits.startswith("55") and len(digits) >= 12:
+        return f"+{digits}"
+    return f"+55{digits}"
+
+
 @router.get("/leads/export")
-async def export_csv(
+async def export_xlsx(
     batch_id: str | None = None,
     status: str = "found",
     user: AuthUser = Depends(require_user),
 ):
-    """Exporta CSV com 1 linha por telefone (até 4 por CPF)."""
+    """Exporta Excel com 2 abas: Enriquecido (PowerHub) + Original (telefone do CSV)."""
     db = get_db()
     q = scoped(db, "powerhub_leads", user.user_id).select("*")
     if status:
@@ -77,13 +87,23 @@ async def export_csv(
         q = q.eq("batch_id", batch_id)
     leads = q.execute().data or []
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["cpf", "nome", "telefone"])
+    wb = openpyxl.Workbook()
 
+    # ── Aba 1: Enriquecido (PowerHub) ─────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Enriquecido"
+    hdr_fill = PatternFill("solid", fgColor="7C3AED")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    for col, title in enumerate(["CPF", "Nome", "Telefone", "Fonte"], 1):
+        cell = ws1.cell(row=1, column=col, value=title)
+        cell.fill = hdr_fill
+        cell.font = hdr_font
+        cell.alignment = Alignment(horizontal="center")
+
+    row = 2
     for lead in leads:
         cpf = lead.get("cpf", "")
-        nome = lead.get("nome", "")
+        nome = lead.get("nome", "") or ""
         phones_raw = lead.get("phones") or "[]"
         try:
             phones = json.loads(phones_raw) if isinstance(phones_raw, str) else (phones_raw or [])
@@ -92,15 +112,38 @@ async def export_csv(
 
         if phones:
             for phone in phones:
-                writer.writerow([cpf, nome, phone])
+                ws1.append([cpf, nome, _fmt_phone(phone), "PowerHub"])
+                row += 1
         else:
-            writer.writerow([cpf, nome, ""])
+            ws1.append([cpf, nome, "", "PowerHub"])
+            row += 1
 
-    output.seek(0)
+    for col in [1, 2, 3, 4]:
+        ws1.column_dimensions[openpyxl.utils.get_column_letter(col)].width = [16, 35, 18, 12][col - 1]
+
+    # ── Aba 2: Original (telefone que veio no CSV) ─────────────────────────────
+    has_original = any(lead.get("telefone_original") for lead in leads)
+    if has_original:
+        ws2 = wb.create_sheet("Original")
+        hdr_fill2 = PatternFill("solid", fgColor="1D4ED8")
+        for col, title in enumerate(["CPF", "Nome", "Telefone Original"], 1):
+            cell = ws2.cell(row=1, column=col, value=title)
+            cell.fill = hdr_fill2
+            cell.font = hdr_font
+            cell.alignment = Alignment(horizontal="center")
+        for lead in leads:
+            fone = lead.get("telefone_original")
+            ws2.append([lead.get("cpf", ""), lead.get("nome", "") or "", _fmt_phone(fone) if fone else ""])
+        for col in [1, 2, 3]:
+            ws2.column_dimensions[openpyxl.utils.get_column_letter(col)].width = [16, 35, 18][col - 1]
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
     return StreamingResponse(
-        io.BytesIO(output.getvalue().encode("utf-8-sig")),
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=powerhub_telefones.csv"},
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=powerhub_telefones.xlsx"},
     )
 
 
