@@ -54,7 +54,7 @@ def list_batches(user: AuthUser = Depends(require_user)):
     PAGE = 1000
     leads: list[dict] = []
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         chunk = (
             scoped(db, "v8_leads", user.user_id)
             .select("batch_id,status,valor_liberado")
@@ -146,7 +146,7 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         chunk = (
             scoped(db, "v8_leads", user.user_id)
             .select("status,valor_liberado,margem_disponivel")

@@ -66,7 +66,7 @@ async def export_csv(
     user: AuthUser = Depends(require_user),
 ):
     db = get_db()
-    result = scoped(db, "presenca_leads", user.user_id).select("*").eq("status", status).execute()
+    result = scoped(db, "presenca_leads", user.user_id).select("*").eq("status", status).limit(50_000).execute()
     leads = result.data
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
@@ -142,7 +142,7 @@ async def stats_dashboard(batch_id: str | None = None, user: AuthUser = Depends(
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         q = scoped(db, "presenca_leads", user.user_id).select("status,valor_liberado,batch_id")
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)
@@ -200,7 +200,7 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         chunk = (
             scoped(db, "presenca_leads", user.user_id)
             .select("status,valor_liberado")

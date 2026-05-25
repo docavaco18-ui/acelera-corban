@@ -129,7 +129,7 @@ async def stats_dashboard(batch_id: str | None = None, user: AuthUser = Depends(
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         q = scoped(db, "vctex_leads", user.user_id).select(
             "status,valor_liberado,batch_id"
         )
@@ -192,7 +192,7 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         chunk = (
             scoped(db, "vctex_leads", user.user_id)
             .select("status,valor_liberado")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import uuid
 from datetime import datetime, timezone
@@ -150,16 +151,19 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     except Exception:
         pass  # Chatwoot down não bloqueia refresh Meta
 
-    # 2. Fetch Meta numbers per WABA and cross-reference
+    # 2. Fetch Meta numbers per WABA — paralelo via gather
     meta = MetaClient(meta_token)
     updated = []
 
-    for waba_id in waba_ids:
+    async def _safe_phones(wid: str):
         try:
-            phones = await meta.get_all_phones(waba_id)
+            return wid, await meta.get_all_phones(wid)
         except Exception:
-            continue
+            return wid, []
 
+    results = await asyncio.gather(*[_safe_phones(w) for w in waba_ids])
+
+    for waba_id, phones in results:
         for p in phones:
             digits = "".join(c for c in p["display_phone"] if c.isdigit())
             suffix = digits[-10:] if len(digits) >= 10 else digits

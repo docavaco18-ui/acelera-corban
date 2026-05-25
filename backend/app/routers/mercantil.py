@@ -107,7 +107,7 @@ async def export_csv(
     q = scoped(db, "mercantil_leads", user.user_id).select("*").eq("status", status)
     if batch_id:
         q = q.eq("batch_id", batch_id)
-    result = q.execute()
+    result = q.limit(50_000).execute()
     leads = result.data
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=[
@@ -244,7 +244,7 @@ async def stats_dashboard(batch_id: str | None = None, user: AuthUser = Depends(
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         q = scoped(db, "mercantil_leads", user.user_id).select("status,valor_liberado,batch_id")
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)
@@ -308,7 +308,7 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
     rows: list[dict] = []
     PAGE = 1000
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         chunk = (
             scoped(db, "mercantil_leads", user.user_id)
             .select("status,valor_liberado")
@@ -487,9 +487,17 @@ async def bot_import_session(
         }],
     }
 
-    state_dir = Path(os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"))
+    import uuid as _uuid
+    try:
+        _uuid.UUID(str(actual_user_id))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "user_id inválido")
+
+    state_dir = Path(os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil")).resolve()
     state_dir.mkdir(parents=True, exist_ok=True)
-    state_file = state_dir / f"{actual_user_id}.json"
+    state_file = (state_dir / f"{actual_user_id}.json").resolve()
+    if state_dir not in state_file.parents:
+        raise HTTPException(400, "path traversal detectado")
     with open(state_file, "w") as f:
         _json.dump(storage_state, f, ensure_ascii=False)
 

@@ -85,7 +85,8 @@ async def export_xlsx(
         q = q.eq("status", status)
     if batch_id:
         q = q.eq("batch_id", batch_id)
-    leads = q.execute().data or []
+    # Cap export em 50k linhas pra evitar OOM
+    leads = q.limit(50_000).execute().data or []
 
     wb = openpyxl.Workbook()
 

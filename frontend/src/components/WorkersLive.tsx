@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useState } from "react";
+import { memo, useMemo, useEffect, useState } from "react";
 import type { WorkerState, BotEvent } from "../lib/types";
 
 interface WorkersLiveProps {
@@ -16,19 +16,20 @@ function xpForLevel(level: number): { current: number; next: number } {
   return { current, next };
 }
 
-function useElapsed(startedAt: number | null): string {
+const ElapsedTimer = memo(function ElapsedTimer({ startedAt }: { startedAt: number | null }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
+    if (!startedAt) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
-  }, []);
-  if (!startedAt) return "00:00:00";
+  }, [startedAt]);
+  if (!startedAt) return <>00:00:00</>;
   const s = Math.floor((now - startedAt) / 1000);
   const h = Math.floor(s / 3600).toString().padStart(2, "0");
   const m = Math.floor((s % 3600) / 60).toString().padStart(2, "0");
   const sec = (s % 60).toString().padStart(2, "0");
-  return `${h}:${m}:${sec}`;
-}
+  return <>{`${h}:${m}:${sec}`}</>;
+});
 
 function phaseLabel(fase: string | null): string {
   const map: Record<string, string> = {
@@ -45,14 +46,13 @@ function phaseLabel(fase: string | null): string {
   return fase ? (map[fase] ?? fase) : "Aguardando fila...";
 }
 
-function WorkerCard({ w, isFlash, isKing }: { w: WorkerState; isFlash: boolean; isKing: boolean }) {
+const WorkerCard = memo(function WorkerCard({ w, isFlash, isKing }: { w: WorkerState; isFlash: boolean; isKing: boolean }) {
   const { current: xpCurrent, next: xpNext } = xpForLevel(w.level);
   const xpRange = (xpNext - xpCurrent) || 1;
   const xpPct = Math.min(100, ((w.xp - xpCurrent) / xpRange) * 100);
   const isActive = w.currentPhase !== null && w.currentPhase !== "elegivel" && w.currentPhase !== "inelegivel";
   const isError = w.currentPhase === "erro";
   const isElegivel = w.currentPhase === "elegivel";
-  const taskElapsed = useElapsed(w.startedAt);
 
   return (
     <div style={{
@@ -113,7 +113,7 @@ function WorkerCard({ w, isFlash, isKing }: { w: WorkerState; isFlash: boolean; 
         {w.currentCpf && (
           <div style={{ color: "#64748b", fontFamily: "monospace", display: "flex", justifyContent: "space-between" }}>
             <span>CPF: {w.currentCpf}</span>
-            {w.startedAt && <span style={{ color: "#475569" }}>⏱ {taskElapsed}</span>}
+            {w.startedAt && <span style={{ color: "#475569" }}>⏱ <ElapsedTimer startedAt={w.startedAt} /></span>}
           </div>
         )}
       </div>
@@ -162,11 +162,9 @@ function WorkerCard({ w, isFlash, isKing }: { w: WorkerState; isFlash: boolean; 
       )}
     </div>
   );
-}
+});
 
 export default function WorkersLive({ workerStates, events, runStartedAt, isRunning }: WorkersLiveProps) {
-  const elapsed = useElapsed(runStartedAt);
-
   const globalCpm = useMemo(() => workerStates.reduce((s, w) => s + w.cpm, 0), [workerStates]);
   const totalProcessed = useMemo(() => workerStates.reduce((s, w) => s + w.processed, 0), [workerStates]);
   const totalElegiveis = useMemo(() => workerStates.reduce((s, w) => s + w.elegiveis, 0), [workerStates]);
@@ -212,7 +210,7 @@ export default function WorkersLive({ workerStates, events, runStartedAt, isRunn
             boxShadow: isRunning ? "0 0 8px #22c55e" : "none",
           }} />
           <span style={{ fontFamily: "monospace", fontSize: 20, color: "#fff", letterSpacing: 2 }}>
-            ⏱ {elapsed}
+            ⏱ <ElapsedTimer startedAt={runStartedAt} />
           </span>
         </div>
         {[

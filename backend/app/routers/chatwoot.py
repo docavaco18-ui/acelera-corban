@@ -143,11 +143,12 @@ async def sync_history(limit: int = 10, user: AuthUser = Depends(require_user)):
 # ─── Métricas / Relatórios ───────────────────────────────────────────────────
 
 PAGE = 1000
+MAX_ROWS = 200_000
 
 
 def _scan(db, table, user_id, cols, **filters):
     rows, off = [], 0
-    while True:
+    while off < MAX_ROWS:
         q = db.table(table).select(cols).eq("owner_id", user_id)
         for k, v in filters.items():
             q = q.eq(k, v)

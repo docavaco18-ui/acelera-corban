@@ -28,17 +28,24 @@ app.state.powerhub_pool = PowerHubBotPool()
 
 @app.on_event("startup")
 def _seed_admin_credentials():
-    """Garante que credenciais VendeAI do admin estejam sempre salvas e válidas."""
-    _OWNER_ID   = "bc72f4c3-472d-4f1a-831f-5cda1c539b92"
-    _EMAIL      = "own_ndat9@vendeai.com"
-    _PASSWORD   = "own_UMwV8@!"
-    _META_TOKEN = (
-        "EAAOKxO1Kg9ABRfdOofvTlOUG82Rv46oR6DFXVdKkjZAbr42jZAYTPvTpyzFU4ZC0z0Yvcot"
-        "ZAbWqwUZAiOb3DElunGe7NA8BrZAvJZAb4DZBAGRrCZCtv499tIq9PydXBZBAYBHEM2FG9A51k"
-        "AqdeqZBmVqlDZB9FaIoMPkwarrBYZBVYFgsPjkpCxQpC9GeA6OhWVQZDZD"
-    )
-    _ACCOUNT_ID = "6927"
-    _CRM_TOKEN  = "tfccqbSpUZUZetePM1M1ivmG"
+    """Seed VendeAI admin credentials from env. Skips silently if any required env var missing.
+
+    Required env: ADMIN_OWNER_ID, ADMIN_VENDEAI_EMAIL, ADMIN_VENDEAI_PASSWORD,
+    ADMIN_META_TOKEN, ADMIN_ACCOUNT_ID, ADMIN_CRM_TOKEN.
+    """
+    import os
+    import logging
+
+    _OWNER_ID   = os.getenv("ADMIN_OWNER_ID")
+    _EMAIL      = os.getenv("ADMIN_VENDEAI_EMAIL")
+    _PASSWORD   = os.getenv("ADMIN_VENDEAI_PASSWORD")
+    _META_TOKEN = os.getenv("ADMIN_META_TOKEN")
+    _ACCOUNT_ID = os.getenv("ADMIN_ACCOUNT_ID")
+    _CRM_TOKEN  = os.getenv("ADMIN_CRM_TOKEN")
+
+    if not all([_OWNER_ID, _EMAIL, _PASSWORD, _META_TOKEN, _ACCOUNT_ID, _CRM_TOKEN]):
+        logging.warning("admin_seed_skipped: ADMIN_* env vars ausentes — seed pulado")
+        return
 
     try:
         from .credentials.crypto import encrypt, safe_decrypt
@@ -68,8 +75,8 @@ def _seed_admin_credentials():
             db.table("vendeai_settings").update(creds).eq("owner_id", _OWNER_ID).execute()
         else:
             db.table("vendeai_settings").insert({"owner_id": _OWNER_ID, **creds}).execute()
-    except Exception:
-        pass
+    except Exception as e:
+        logging.exception("admin_seed_failed: %s", e)
 
 
 @app.on_event("startup")

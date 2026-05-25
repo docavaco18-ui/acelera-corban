@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { botApi, leadsApi } from "../lib/api";
 import type { BotStatus } from "../lib/types";
 
@@ -13,6 +13,8 @@ export default function BotControl({ status, onRefresh }: Props) {
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadAbortedRef = useRef(false);
+  useEffect(() => () => { uploadAbortedRef.current = true; }, []);
 
   const exec = async (fn: () => Promise<unknown>) => {
     setLoading(true);
@@ -37,8 +39,9 @@ export default function BotControl({ status, onRefresh }: Props) {
       return;
     }
     setUploadMsg("Processando…");
-    while (true) {
+    while (!uploadAbortedRef.current) {
       await new Promise((res) => setTimeout(res, 1000));
+      if (uploadAbortedRef.current) break;
       try {
         const s = await leadsApi.uploadStatus(jobId);
         if (s.total > 0) setUploadProgress({ processed: s.processed, total: s.total });

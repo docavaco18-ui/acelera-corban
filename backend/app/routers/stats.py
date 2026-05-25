@@ -6,13 +6,14 @@ from ..db_scoped import scoped
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 PAGE = 1000
+MAX_ROWS = 200_000  # hard cap p/ evitar OOM/timeout em scans degenerados
 
 
 def _scan_all(db, user_id: str, columns: str, batch_id: str | None = None) -> list[dict]:
-    """Scaneia v8_leads do user paginado, opcionalmente filtrado por batch."""
+    """Scaneia v8_leads paginado. Cap em MAX_ROWS."""
     rows: list[dict] = []
     offset = 0
-    while True:
+    while offset < MAX_ROWS:
         q = scoped(db, "v8_leads", user_id).select(columns)
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)

@@ -41,20 +41,24 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "runs",     label: "📜 Histórico de Runs" },
 ];
 
-const card = (extra?: React.CSSProperties): React.CSSProperties => ({
+const CARD_BASE: React.CSSProperties = {
   background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14,
-  padding: "20px 22px", marginBottom: 14, ...extra,
-});
+  padding: "20px 22px", marginBottom: 14,
+};
+const card = (extra?: React.CSSProperties): React.CSSProperties =>
+  extra ? { ...CARD_BASE, ...extra } : CARD_BASE;
 
-const resCard = (): React.CSSProperties => ({
+const RES_CARD: React.CSSProperties = {
   background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
   padding: 18, textAlign: "center",
-});
+};
+const resCard = (): React.CSSProperties => RES_CARD;
 
-const faseBox = (): React.CSSProperties => ({
+const FASE_BOX: React.CSSProperties = {
   background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
   padding: "16px 18px", textAlign: "center", flex: 1,
-});
+};
+const faseBox = (): React.CSSProperties => FASE_BOX;
 
 // Bucketed view: VCTex's fase 0/1/2 → V8 status groups
 interface DashData {
