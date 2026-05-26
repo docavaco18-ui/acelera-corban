@@ -13,6 +13,7 @@ from ..services import presenca_upload_jobs, presenca_bot_service
 
 router = APIRouter(prefix="/api/presenca", tags=["presenca"])
 _events: list[dict] = []
+MAX_ROWS = 200_000
 
 
 def _on_event(event: dict):
