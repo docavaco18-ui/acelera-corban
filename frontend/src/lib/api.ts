@@ -370,9 +370,17 @@ export const presencaApi = {
 
   currentBatch: () =>
     presencaAxios
-      .get<{ id: string; name: string } | null>("/api/presenca/batches/current")
+      .get<{ id: string; name: string; scheduled_for?: string | null } | null>("/api/presenca/batches/current")
       .then((r) => r.data)
       .catch(() => null),
+
+  scheduleBatch: (batchId: string, scheduledFor: string | null) =>
+    presencaAxios
+      .post<{ batch_id: string; scheduled_for: string | null }>(
+        `/api/presenca/batches/${batchId}/schedule`,
+        { scheduled_for: scheduledFor }
+      )
+      .then((r) => r.data),
 
   listBatches: () =>
     presencaAxios

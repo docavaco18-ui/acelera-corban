@@ -230,6 +230,50 @@ def batch_stats(batch_id: str, user: AuthUser = Depends(require_user)):
     }
 
 
+class ScheduleBatchPayload(BaseModel):
+    scheduled_for: str | None  # ISO8601 UTC; None = desagenda
+
+
+@router.post("/batches/{batch_id}/schedule")
+def schedule_batch(
+    batch_id: str,
+    payload: ScheduleBatchPayload,
+    user: AuthUser = Depends(require_user),
+):
+    """Agenda (ou desagenda) disparo automático do batch.
+
+    scheduled_for: ISO8601 UTC futuro. Loop scheduler dispara start_bot na hora.
+    null = remove agendamento (volta a start manual).
+    """
+    from datetime import datetime, timezone
+    db = get_db()
+    own = (
+        scoped(db, "presenca_batches", user.user_id)
+        .select("id, status").eq("id", batch_id).execute().data or []
+    )
+    if not own:
+        raise HTTPException(404, "Batch não encontrada")
+    if own[0]["status"] != "pendente":
+        raise HTTPException(409, f"Batch já {own[0]['status']} — só agenda batches pendentes")
+
+    sched_value: str | None
+    if payload.scheduled_for is None:
+        sched_value = None
+    else:
+        try:
+            dt = datetime.fromisoformat(payload.scheduled_for.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(400, "scheduled_for inválido — use ISO8601 (ex: 2026-05-27T06:00:00Z)")
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        sched_value = dt.astimezone(timezone.utc).isoformat()
+
+    scoped(db, "presenca_batches", user.user_id).update({
+        "scheduled_for": sched_value,
+    }).eq("id", batch_id).execute()
+    return {"batch_id": batch_id, "scheduled_for": sched_value}
+
+
 @router.get("/batches/current")
 def current_batch(user: AuthUser = Depends(require_user)):
     db = get_db()

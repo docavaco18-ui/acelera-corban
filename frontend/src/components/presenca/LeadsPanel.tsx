@@ -32,6 +32,9 @@ export default function PresencaLeadsPanel({ onStatsRefresh }: { onStatsRefresh?
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ processed: number; total: number } | null>(null);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  const [scheduledFor, setScheduledFor] = useState<string | null>(null);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [scheduleInput, setScheduleInput] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const mountedRef = useRef(true);
   const wsRef = useRef<WebSocket | null>(null);
@@ -46,6 +49,7 @@ export default function PresencaLeadsPanel({ onStatsRefresh }: { onStatsRefresh?
     presencaApi.currentBatch().then((b) => {
       if (!mountedRef.current || !b) return;
       setCurrentBatchId(b.id);
+      setScheduledFor(b.scheduled_for ?? null);
     }).catch(() => {});
 
     return () => { mountedRef.current = false; };
@@ -172,15 +176,28 @@ export default function PresencaLeadsPanel({ onStatsRefresh }: { onStatsRefresh?
           </label>
 
           {!isRunning ? (
-            <button onClick={startBot} disabled={loading}
-              style={{
-                padding: "7px 14px", borderRadius: 8, border: "none",
-                background: loading ? C.border : C.purple,
-                color: loading ? C.muted : "#fff",
-                fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
-              }}>
-              {loading ? "…" : "▶ Rodar Bot"}
-            </button>
+            <>
+              <button onClick={startBot} disabled={loading}
+                style={{
+                  padding: "7px 14px", borderRadius: 8, border: "none",
+                  background: loading ? C.border : C.purple,
+                  color: loading ? C.muted : "#fff",
+                  fontSize: 13, fontWeight: 700, cursor: loading ? "not-allowed" : "pointer",
+                }}>
+                {loading ? "…" : "▶ Rodar Bot"}
+              </button>
+              <button onClick={() => setShowSchedule(true)} disabled={!currentBatchId || loading}
+                title={!currentBatchId ? "Faça upload do CSV primeiro" : "Agendar disparo automático"}
+                style={{
+                  padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`,
+                  background: "transparent",
+                  color: !currentBatchId ? C.muted : C.text,
+                  fontSize: 13, fontWeight: 700,
+                  cursor: !currentBatchId || loading ? "not-allowed" : "pointer",
+                }}>
+                ⏰ Agendar
+              </button>
+            </>
           ) : (
             <button onClick={stopBot} disabled={loading}
               style={{
@@ -198,6 +215,59 @@ export default function PresencaLeadsPanel({ onStatsRefresh }: { onStatsRefresh?
         <p style={{ fontSize: 13, color: uploadMsg.startsWith("✓") ? C.green : uploadMsg.startsWith("Erro") ? C.red : C.muted, marginBottom: 8 }}>
           {uploadMsg}
         </p>
+      )}
+
+      {scheduledFor && !isRunning && (
+        <div style={{ padding: "8px 12px", background: "#0f172a", border: `1px solid ${C.purple}`, borderRadius: 8, marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontSize: 13, color: C.text }}>
+            ⏰ Agendado para <strong>{new Date(scheduledFor).toLocaleString("pt-BR")}</strong>
+          </span>
+          <button onClick={async () => {
+            if (!currentBatchId) return;
+            await presencaApi.scheduleBatch(currentBatchId, null);
+            setScheduledFor(null);
+          }} style={{ background: "transparent", border: "none", color: C.red, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+            Cancelar agendamento
+          </button>
+        </div>
+      )}
+
+      {showSchedule && (
+        <div onClick={() => setShowSchedule(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: 24, minWidth: 360 }}>
+            <h3 style={{ margin: "0 0 12px", color: C.text, fontSize: 15 }}>Agendar disparo do bot</h3>
+            <p style={{ fontSize: 12, color: C.muted, margin: "0 0 12px" }}>
+              Bot dispara sozinho na hora escolhida. Sem precisar deixar nada aberto.
+            </p>
+            <input type="datetime-local" value={scheduleInput} onChange={(e) => setScheduleInput(e.target.value)}
+              style={{ width: "100%", padding: 10, borderRadius: 8, border: `1px solid ${C.border}`, background: "#0f172a", color: C.text, fontSize: 14, marginBottom: 16 }} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowSchedule(false)}
+                style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "transparent", color: C.text, fontSize: 13, cursor: "pointer" }}>
+                Cancelar
+              </button>
+              <button onClick={async () => {
+                if (!currentBatchId || !scheduleInput) return;
+                const dt = new Date(scheduleInput);
+                if (dt.getTime() <= Date.now()) {
+                  alert("Escolha uma data futura");
+                  return;
+                }
+                try {
+                  const r = await presencaApi.scheduleBatch(currentBatchId, dt.toISOString());
+                  setScheduledFor(r.scheduled_for);
+                  setShowSchedule(false);
+                  setScheduleInput("");
+                } catch (e: any) {
+                  alert(e?.response?.data?.detail || "Erro ao agendar");
+                }
+              }} disabled={!scheduleInput}
+                style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: scheduleInput ? C.purple : C.border, color: scheduleInput ? "#fff" : C.muted, fontSize: 13, fontWeight: 700, cursor: scheduleInput ? "pointer" : "not-allowed" }}>
+                Agendar
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {uploadProgress && uploadProgress.total > 0 && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>

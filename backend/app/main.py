@@ -96,8 +96,10 @@ async def _sweep_stale_chatwoot_runs():
     import asyncio
     from .redis_client import get_redis
     from .services.broadcast.monitor_loop import run_monitor_loop
+    from .services.presenca_scheduler_loop import run_presenca_scheduler_loop
     redis_client = await get_redis()
     asyncio.create_task(run_monitor_loop(redis_client))
+    asyncio.create_task(run_presenca_scheduler_loop(app, redis_client))
 
 app.add_middleware(
     CORSMiddleware,
