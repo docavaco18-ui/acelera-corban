@@ -266,7 +266,10 @@ def schedule_batch(
             raise HTTPException(400, "scheduled_for inválido — use ISO8601 (ex: 2026-05-27T06:00:00Z)")
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
-        sched_value = dt.astimezone(timezone.utc).isoformat()
+        dt_utc = dt.astimezone(timezone.utc)
+        if dt_utc <= datetime.now(timezone.utc):
+            raise HTTPException(400, "scheduled_for deve ser futuro")
+        sched_value = dt_utc.isoformat()
 
     scoped(db, "presenca_batches", user.user_id).update({
         "scheduled_for": sched_value,
