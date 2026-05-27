@@ -434,3 +434,35 @@ Enriquecimento de telefone por CPF. Retorna até 4 telefones — exporta 1 linha
 - ✅ Migration 022 aplicada Supabase
 - ⏳ Deploy VPS pendente
 
+## Scheduler — Agendamento de Batches (26-05-2026)
+
+Feature pra agendar disparo automático de bot. Implementado em **Presença**. Pendente PowerHub/V8/VCTex. Mercantil pulado (antifraude).
+
+### Arquivos Presença
+- `migrations/023_presenca_scheduled.sql` — ADD scheduled_for TIMESTAMPTZ NULL + index parcial
+- `backend/app/services/presenca_scheduler_loop.py` — loop Redis SETNX leader-elected (padrão `broadcast/monitor_loop.py`), tick 60s
+- `backend/app/main.py:96-101` — startup hook `asyncio.create_task(run_presenca_scheduler_loop)`
+- `backend/app/routers/presenca.py:233-273` — `POST /api/presenca/batches/{batch_id}/schedule {scheduled_for: ISO8601|null}`
+- `frontend/src/components/presenca/LeadsPanel.tsx` — botão ⏰ Agendar + modal datetime-local + banner
+- `frontend/src/lib/api.ts` — `presencaApi.scheduleBatch(batchId, isoOrNull)`
+
+### Comportamento
+- Scheduler busca batches `WHERE status='pendente' AND scheduled_for <= now()` (max 50/tick)
+- Skip se `pool.status(owner_id) is not None` (bot já rodando)
+- 1 batch/owner/tick
+- Limpa `scheduled_for=NULL` após fire (evita re-fire em retry-errors)
+- Endpoint valida: future date, ISO válido, batch existe, batch=pendente
+- NULL `scheduled_for` = comportamento atual (start manual via UI)
+
+### Replicar pros outros bancos
+- **PowerHub** (~30min): API REST, mesma arquitetura — copy `presenca_scheduler_loop.py` → `powerhub_scheduler_loop.py`, ajusta refs de tabela/service, migration `024_powerhub_scheduled.sql`, endpoint POST, UI button
+- **V8 / VCTex** (~30min cada): Playwright headless. Funciona se sessão Chrome viva no horário — UX risco se expirar
+- **Mercantil**: ❌ NÃO. Antifraude + JWT 12h. Cron vai falhar relogin
+
+### Deploy VPS (feito 26/05)
+1. Fix APP_ENCRYPTION_KEY divergente entre local/VPS (causava 500 em `/api/credentials` e `bot/start`)
+2. `git pull && docker compose build --no-cache backend frontend && up -d`
+3. Verifica log `presenca scheduler standby` + `leader elected`
+
+⚠️ `/api/credentials` ainda 500 mesmo após fix — outro banco com Fernet antigo. Não bloqueia scheduler. Endpoint usa `decrypt()` simples; trocar pra `safe_decrypt()` em `credentials/service.py:get()` resolve.
+
