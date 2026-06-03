@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import asyncio
+import csv
+import io
+import logging
+from typing import Any
+
+import httpx
+
+BASE_URL = "https://api.aesirerp.com/api/v1"
+log = logging.getLogger(__name__)
+
+
+class AesirClient:
+    def __init__(self, api_token: str, account_id: str):
+        self.api_token = api_token
+        self.account_id = account_id
+
+    def _headers(self) -> dict:
+        return {
+            "X-Token": self.api_token,
+            "X-Account-ID": self.account_id,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        }
+
+    async def list_instances(self) -> list[dict]:
+        """GET /whatsapp/instances — lista instâncias WA do tenant."""
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                f"{BASE_URL}/whatsapp/instances",
+                headers=self._headers(),
+                timeout=15,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, list):
+                return data
+            return data.get("data") or data.get("instances") or []
+
+    async def dispatch_csv(
+        self,
+        csv_bytes: bytes,
+        instance_id: str,
+        message_tpl: str,
+        phone_column: str = "telefone",
+        cooldown_seconds: int = 5,
+        stop_event: asyncio.Event | None = None,
+    ) -> dict[str, Any]:
+        """Loop through CSV rows, send one message per contact.
+
+        Returns {sent, errors, total}.
+        """
+        text = csv_bytes.lstrip(b"\xef\xbb\xbf").decode("utf-8", errors="replace")
+        rows = list(csv.DictReader(io.StringIO(text)))
+
+        sent = 0
+        errors = 0
+
+        async with httpx.AsyncClient(timeout=15) as client:
+            for i, row in enumerate(rows):
+                if stop_event and stop_event.is_set():
+                    log.info("aesir_dispatch stopped by stop_event")
+                    break
+
+                phone_raw = ""
+                for col in [phone_column, "telefone", "phone", "celular", "numero", "whatsapp"]:
+                    if col in row and row[col]:
+                        phone_raw = row[col]
+                        break
+                phone = "".join(c for c in phone_raw if c.isdigit())
+                if not phone:
+                    errors += 1
+                    continue
+
+                message = message_tpl
+                for key, val in row.items():
+                    message = message.replace(f"{{{{{key}}}}}", str(val or ""))
+
+                try:
+                    r = await client.post(
+                        f"{BASE_URL}/whatsapp/send-message",
+                        headers=self._headers(),
+                        json={"instance_id": instance_id, "phone": phone, "message": message},
+                    )
+                    r.raise_for_status()
+                    sent += 1
+                    log.info(f"aesir_sent phone={phone} instance={instance_id}")
+                except Exception as exc:
+                    errors += 1
+                    log.warning(f"aesir_send_error phone={phone}: {exc}")
+
+                # sleep between rows, skip after last
+                if i < len(rows) - 1:
+                    await asyncio.sleep(cooldown_seconds)
+
+        return {"sent": sent, "errors": errors, "total": sent + errors}

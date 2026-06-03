@@ -9,6 +9,7 @@ from .routers import presenca as presenca_router
 from .routers import v8_proposals
 from .routers import broadcast as broadcast_router
 from .routers import powerhub as powerhub_router
+from .routers import aesir_broadcast as aesir_broadcast_router
 from .credentials.router import router as credentials_router
 from .banks.v8.bot_pool import V8BotPool
 from .banks.vctex.bot_pool import VCTexBotPool
@@ -125,6 +126,7 @@ app.include_router(v8_proposals.router)
 app.include_router(chatwoot.router)
 app.include_router(broadcast_router.router)
 app.include_router(powerhub_router.router)
+app.include_router(aesir_broadcast_router.router)
 
 @app.get("/health")
 @app.get("/api/health")

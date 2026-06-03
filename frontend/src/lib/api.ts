@@ -494,12 +494,47 @@ export const powerhubApi = {
   },
 };
 
+const aesirAxios = axios.create({ baseURL: BASE_URL });
+aesirAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const aesirApi = {
+  getCredentials: () =>
+    aesirAxios.get<{ configured: boolean; account_id?: string; updated_at?: string }>("/api/aesir-broadcast/credentials").then((r) => r.data),
+  saveCredentials: (api_token: string, account_id: string) =>
+    aesirAxios.post("/api/aesir-broadcast/credentials", { api_token, account_id }).then((r) => r.data),
+
+  listInstances: () =>
+    aesirAxios.get<any[]>("/api/aesir-broadcast/instances").then((r) => r.data),
+  pauseInstance: (instanceId: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/instances/${instanceId}/pause`).then((r) => r.data),
+  resumeInstance: (instanceId: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/instances/${instanceId}/resume`).then((r) => r.data),
+
+  startDispatch: (form: FormData) =>
+    aesirAxios.post<{ dispatch_id: string; status: string }>("/api/aesir-broadcast/dispatch", form).then((r) => r.data),
+  pauseDispatch: (id: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/dispatch/${id}/pause`).then((r) => r.data),
+  cancelDispatch: (id: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/dispatch/${id}/cancel`).then((r) => r.data),
+  listDispatches: () =>
+    aesirAxios.get<any[]>("/api/aesir-broadcast/dispatches").then((r) => r.data),
+};
+
 export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
   saveCredentials: (data: { email: string; password: string; meta_token?: string }) =>
     broadcastAxios.post("/api/broadcast/credentials", data),
   listNumbers: () => broadcastAxios.get("/api/broadcast/numbers"),
   refreshNumbers: () => broadcastAxios.post("/api/broadcast/numbers/refresh"),
+  resumeNumber: (phoneId: string) => broadcastAxios.post(`/api/broadcast/numbers/${phoneId}/resume`),
   analyzeCSV: (file: File) => {
     const form = new FormData();
     form.append("file", file);
