@@ -69,6 +69,51 @@ class MetaClient:
     def __init__(self, access_token: str):
         self.access_token = access_token
 
+    async def discover_wabas(self) -> list[str]:
+        """Auto-discover WABA IDs from the system user token via debug_token → businesses → WABAs."""
+        waba_ids: list[str] = []
+        async with httpx.AsyncClient(timeout=15) as client:
+            # Step 1: get business IDs from token scopes
+            r = await client.get(
+                f"{META_BASE}/debug_token",
+                params={"input_token": self.access_token, "access_token": self.access_token},
+            )
+            r.raise_for_status()
+            debug = r.json().get("data", {})
+            business_ids: list[str] = []
+            for scope in debug.get("granular_scopes", []):
+                if scope.get("scope") == "whatsapp_business_management":
+                    business_ids = [str(t) for t in scope.get("target_ids", [])]
+                    break
+
+            # Step 2: for each business, list owned WABAs
+            for biz_id in business_ids:
+                r2 = await client.get(
+                    f"{META_BASE}/{biz_id}/owned_whatsapp_business_accounts",
+                    params={"fields": "id,name", "access_token": self.access_token, "limit": 100},
+                )
+                if r2.status_code != 200:
+                    continue
+                data2 = r2.json()
+                for waba in data2.get("data", []):
+                    wid = str(waba.get("id", ""))
+                    if wid and wid not in waba_ids:
+                        waba_ids.append(wid)
+
+        return waba_ids
+
+    async def get_all_phones_auto(self) -> list[dict]:
+        """Discover WABAs from token then fetch all phone numbers — no manual WABA IDs needed."""
+        waba_ids = await self.discover_wabas()
+        all_phones: list[dict] = []
+        for wid in waba_ids:
+            try:
+                phones = await self.get_all_phones(wid)
+                all_phones.extend(phones)
+            except Exception:
+                pass
+        return all_phones
+
     async def get_phone_quality(self, phone_id: str) -> dict:
         async with httpx.AsyncClient() as client:
             r = await client.get(

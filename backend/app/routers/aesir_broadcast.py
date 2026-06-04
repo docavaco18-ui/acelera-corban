@@ -216,18 +216,28 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     meta_token = safe_decrypt(row.get("meta_token_enc") or "")
     waba_ids: list[str] = row.get("waba_ids") or []
     meta_phones: dict[str, dict] = {}
-    if meta_token and waba_ids:
+    if meta_token:
         meta_client = MetaClient(access_token=meta_token)
-        for waba_id in waba_ids:
-            try:
-                phones = await meta_client.get_all_phones(waba_id)
-                for p in phones:
-                    raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
-                    key = raw[-10:] if len(raw) >= 10 else raw
-                    if key:
-                        meta_phones[key] = p
-            except Exception:
-                pass
+        try:
+            if waba_ids:
+                # Manual WABA IDs provided — use them
+                phones_list: list[dict] = []
+                for wid in waba_ids:
+                    try:
+                        phones_list.extend(await meta_client.get_all_phones(wid))
+                    except Exception:
+                        pass
+            else:
+                # Auto-discover WABAs from token
+                phones_list = await meta_client.get_all_phones_auto()
+
+            for p in phones_list:
+                raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+                key = raw[-10:] if len(raw) >= 10 else raw
+                if key:
+                    meta_phones[key] = p
+        except Exception:
+            pass  # Meta optional — don't fail the refresh
 
     now = datetime.now(timezone.utc).isoformat()
     for inst in aesir_instances:

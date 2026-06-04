@@ -68,24 +68,21 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
 
 function MetaPanel({ onSaved }: { onSaved: () => void }) {
   const [metaOk, setMetaOk] = useState(false);
-  const [wabaIds, setWabaIds] = useState<string[]>([]);
-  const [tok, setTok] = useState(''); const [wabaInput, setWabaInput] = useState('');
+  const [tok, setTok] = useState('');
   const [saving, setSaving] = useState(false); const [msg, setMsg] = useState('');
 
   useEffect(() => {
     aesirApi.getCredentials().then(d => {
-      if (d.configured) { setMetaOk(d.meta_configured || false); setWabaIds(d.waba_ids || []); setWabaInput((d.waba_ids || []).join('\n')); }
+      if (d.configured) setMetaOk(d.meta_configured || false);
     }).catch(() => {});
   }, []);
 
   const save = async () => {
     if (!tok.trim()) { setMsg('Informe o Meta System User Token'); return; }
-    const ids = wabaInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
-    if (!ids.length) { setMsg('Informe ao menos 1 WABA ID'); return; }
     setSaving(true);
     try {
-      await aesirApi.saveMetaCredentials(tok.trim(), ids);
-      setMetaOk(true); setWabaIds(ids); setTok(''); setMsg('Meta configurado!'); onSaved();
+      await aesirApi.saveMetaCredentials(tok.trim(), []);
+      setMetaOk(true); setTok(''); setMsg('Meta configurado! WABAs descobertos automaticamente no Refresh.'); onSaved();
     } catch (e: any) { setMsg('Erro: ' + (e?.response?.data?.detail || e?.message)); }
     finally { setSaving(false); }
   };
@@ -93,16 +90,13 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
   return (
     <div style={CARD}>
       <h2 style={H2('#1d9bf0')}>Meta Business Manager</h2>
-      {metaOk && <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 8 }}>✅ Meta configurado — {wabaIds.length} WABA(s)</p>}
+      {metaOk && <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 8 }}>✅ Meta token configurado</p>}
       <p style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
-        Token permanente System User BM — mesmo do Disparo VendeAI. WABA IDs: um por linha.
+        Token permanente System User BM. WABAs e números são descobertos automaticamente ao clicar em "Refresh Números".
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
         <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>System User Token</label>
           <input style={INPUT} type="password" placeholder="EAAOKxO1..." value={tok} onChange={e => setTok(e.target.value)} /></div>
-        <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>WABA IDs (um por linha)</label>
-          <textarea style={{ ...INPUT, height: 80, resize: 'vertical', fontFamily: 'monospace' }}
-            placeholder={'123456789\n987654321'} value={wabaInput} onChange={e => setWabaInput(e.target.value)} /></div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button style={BTN('#1d9bf0', saving)} onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar Meta'}</button>
           {msg && <span style={{ color: msg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>{msg}</span>}
