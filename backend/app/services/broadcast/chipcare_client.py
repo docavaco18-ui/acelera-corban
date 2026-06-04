@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 class ChipcareHashes:
     sa_create: str = "40be5a0f648930e0433281bce7c7e92b8608ca8538"
     sa_activate: str = "40d6c8e94ed90438c061742726eb102e9e30d7aad6"
-    sa_list_tpl: str = "4076e492ad0bf871591d73486aaf60ef4b5899b6b5"
+    sa_list_tpl: str = "40431d7dacd2374aaaaa250e1993d7c8c512d4eef2"  # getCommonChannelTemplates
     sa_list_camps: str = "60d1f84d254eb29a6024a5d2206b8153916b2bbcc7"
 
 
@@ -52,60 +52,65 @@ class ChipcareClient:
     # ── Auth ──────────────────────────────────────────────────────────────────
 
     async def login(self, tenant_id: str | None = None) -> str:
-        """Login + select tenant. Returns JWT token string."""
-        async with httpx.AsyncClient(follow_redirects=True) as client:
+        """Login + select tenant. Returns JWT token string.
+
+        Chipcare auth flow (captured 2026-06-04):
+        1. POST /api/auth {email, senha} → {requiresTenantSelection, availableTenants}
+        2. POST /api/auth/select-tenant {email, senha, tenantId} → {token, message}
+        """
+        async with httpx.AsyncClient(follow_redirects=False) as client:
             r = await client.post(
                 f"{BASE_URL}/api/auth",
-                json={"email": self.email, "password": self.password},
-                headers={"Content-Type": "application/json"},
+                json={"email": self.email, "senha": self.password},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*"},
                 timeout=15,
             )
             r.raise_for_status()
             data = r.json()
-            token = (
-                data.get("token")
-                or data.get("accessToken")
-                or data.get("access_token")
-                or ""
+
+            # Step 2: always required — select tenant and get JWT
+            tenants = data.get("availableTenants") or []
+
+            # Resolve tenant_id: use provided name/id, else first available
+            resolved_tenant_id: int | None = None
+            for t in tenants:
+                t_name = (t.get("tenantName") or t.get("tenantSlug") or "").lower()
+                t_id = t.get("tenantId")
+                t_user_id = t.get("userId")
+                if tenant_id and (str(t_id) == str(tenant_id) or t_name == tenant_id.lower()):
+                    resolved_tenant_id = t_id
+                    self._user_id = str(t_user_id or "")
+                    break
+            if resolved_tenant_id is None and tenants:
+                resolved_tenant_id = tenants[0]["tenantId"]
+                self._user_id = str(tenants[0].get("userId") or "")
+
+            if resolved_tenant_id is None:
+                raise ValueError(f"Login falhou — nenhum tenant disponível: {data}")
+
+            r2 = await client.post(
+                f"{BASE_URL}/api/auth/select-tenant",
+                json={"email": self.email, "senha": self.password, "tenantId": resolved_tenant_id},
+                headers={"Content-Type": "application/json", "Accept": "application/json, text/plain, */*"},
+                timeout=10,
             )
-
-            # Extract user id for _1_createdBy field in createCampaign
-            user_data = data.get("user") or data.get("data") or {}
-            self._user_id = str(user_data.get("id") or "")
-
-            if not token:
-                # JWT might be in Set-Cookie header
-                for header_val in r.headers.get_list("set-cookie"):
-                    if "token=" in header_val:
-                        token = header_val.split("token=")[1].split(";")[0]
-                        break
+            r2.raise_for_status()
+            data2 = r2.json()
+            token = data2.get("token") or data2.get("accessToken") or data2.get("access_token") or ""
 
             if not token:
-                raise ValueError(f"Login falhou — resposta inesperada: {data}")
+                raise ValueError(f"Login falhou — sem token após select-tenant: {data2}")
 
             self._jwt = token
-
-            # Select tenant if needed
-            if tenant_id:
-                await self._select_tenant(client, token, tenant_id)
+            log.info("chipcare login ok tenant_id=%s user_id=%s", resolved_tenant_id, self._user_id)
 
         return self._jwt
 
     async def _select_tenant(
         self, client: httpx.AsyncClient, token: str, tenant_id: str
     ) -> None:
-        r = await client.post(
-            f"{BASE_URL}/api/auth/select-tenant",
-            json={"tenantId": tenant_id},
-            headers={"Content-Type": "application/json", "Cookie": f"token={token}"},
-            timeout=10,
-        )
-        if r.status_code == 200:
-            data = r.json()
-            new_token = data.get("token") or data.get("accessToken") or ""
-            if new_token:
-                self._jwt = new_token
-        # non-200 = tenant not found — proceed with original token
+        # Kept for backwards compat but superseded by login() flow above
+        pass
 
     def _headers_rest(self, jwt: str) -> dict:
         return {
@@ -139,18 +144,33 @@ class ChipcareClient:
 
     # ── Templates ─────────────────────────────────────────────────────────────
 
-    async def list_templates(self, jwt: str) -> list[dict]:
-        """SA listMessageTemplates — retorna templates HSM APPROVED."""
+    async def list_templates(self, jwt: str, channel_ids: list[int] | None = None) -> list[dict]:
+        """SA getCommonChannelTemplates — retorna templates HSM APPROVED comuns aos canais.
+
+        channel_ids: IDs dos canais WHATSAPP_OFFICIAL ativos (sem filtro = todos).
+        Body: [[channelId, ...]] — array aninhado é o contrato do SA.
+        """
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{BASE_URL}/admin/campanhas",
                 headers=self._headers_sa(jwt, self.hashes.sa_list_tpl),
-                content=json.dumps(["WHATSAPP_OFFICIAL"]),
+                content=json.dumps([channel_ids or []]),
                 timeout=15,
             )
             r.raise_for_status()
-            # RSC response — parse JSON from streaming text/x-component
-            return _parse_rsc_json(r.text)
+            result = _parse_rsc_json(r.text)
+            # RSC line 0 is metadata, line 1 is the template list
+            if isinstance(result, list) and len(result) > 0:
+                # If first element is dict with RSC metadata (has "a", "f" keys), skip it
+                templates = []
+                for item in result:
+                    if isinstance(item, list):
+                        templates = item
+                        break
+                    elif isinstance(item, dict) and "id" in item:
+                        templates.append(item)
+                return templates
+            return result if isinstance(result, list) else []
 
     # ── Lead preview ─────────────────────────────────────────────────────────
 

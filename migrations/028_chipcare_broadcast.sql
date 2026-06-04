@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS chipcare_settings (
     -- SA hashes (may change per Chipcare deploy)
     sa_create       TEXT DEFAULT '40be5a0f648930e0433281bce7c7e92b8608ca8538',
     sa_activate     TEXT DEFAULT '40d6c8e94ed90438c061742726eb102e9e30d7aad6',
-    sa_list_tpl     TEXT DEFAULT '4076e492ad0bf871591d73486aaf60ef4b5899b6b5',
+    sa_list_tpl     TEXT DEFAULT '40431d7dacd2374aaaaa250e1993d7c8c512d4eef2',
     sa_list_camps   TEXT DEFAULT '60d1f84d254eb29a6024a5d2206b8153916b2bbcc7',
     updated_at      TIMESTAMPTZ DEFAULT NOW()
 );

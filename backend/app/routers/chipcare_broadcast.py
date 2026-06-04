@@ -257,11 +257,15 @@ async def resume_channel(channel_id: int, user_id: str = Depends(_get_user_id)):
 
 @router.get("/templates")
 async def list_templates(user_id: str = Depends(_get_user_id)):
-    """Login no Chipcare + SA listMessageTemplates → retorna templates HSM."""
+    """Login no Chipcare + SA getCommonChannelTemplates → retorna templates HSM."""
+    db = get_db()
     client, row = _get_client_and_settings(user_id)
+    # Get stored channel IDs (non-paused WHATSAPP_OFFICIAL)
+    ch_resp = db.table("chipcare_channels").select("channel_id").eq("owner_id", user_id).eq("is_paused", False).execute()
+    channel_ids = [r["channel_id"] for r in (ch_resp.data or [])]
     try:
         jwt = await client.login(tenant_id=row.get("tenant_id"))
-        templates = await client.list_templates(jwt)
+        templates = await client.list_templates(jwt, channel_ids=channel_ids or None)
     except Exception as e:
         raise HTTPException(502, f"Chipcare list_templates falhou: {e}")
     return {"templates": templates}
