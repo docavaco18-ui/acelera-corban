@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+import redis.asyncio as aioredis
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.aesir_client import AesirClient
@@ -16,11 +21,12 @@ from app.services.broadcast.meta_client import MetaClient
 router = APIRouter(prefix="/api/aesir-broadcast", tags=["aesir-broadcast"])
 security = HTTPBearer()
 
-# stop events keyed by dispatch_id
+# stop events and strong task refs keyed by dispatch_id
 _stop_events: dict[str, asyncio.Event] = {}
-# strong refs to background tasks so GC doesn't collect them mid-run
 _bg_tasks: set[asyncio.Task] = set()
 
+
+# ── Auth helpers ───────────────────────────────────────────────────────────────
 
 def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     db = get_db()
@@ -43,30 +49,76 @@ def _get_client(user_id: str) -> AesirClient:
     return AesirClient(api_token=token, account_id=row["account_id"])
 
 
+def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
+    """Distribute leads proportionally across eligible Aesir instances."""
+    def is_eligible(inst: dict) -> bool:
+        if inst.get("is_paused"):
+            return False
+        can_send = inst.get("can_send", "UNKNOWN")
+        if can_send in ("DISABLED", "BLOCKED"):
+            return False
+        if inst.get("quality_rating") == "RED":
+            return False
+        if (inst.get("daily_limit") or 500) <= 0:
+            return False
+        return True
+
+    active = [i for i in instances if is_eligible(i)]
+    excluded = [i for i in instances if not is_eligible(i)]
+
+    if not active:
+        return {
+            "assignments": [],
+            "justification": "Nenhuma instância elegível para disparo.",
+            "risks": "Verifique se há instâncias ativas com qualidade OK.",
+        }
+
+    total_capacity = sum(i.get("daily_limit") or 500 for i in active)
+    remaining = total_leads
+    assignments = []
+
+    for idx, inst in enumerate(active):
+        limit = inst.get("daily_limit") or 500
+        if idx == len(active) - 1:
+            planned = remaining
+        else:
+            planned = min(round(total_leads * limit / total_capacity), remaining, limit)
+        remaining -= planned
+        assignments.append({
+            "instance_id": inst["instance_id"],
+            "name": inst.get("name") or inst["instance_id"],
+            "display_phone": inst.get("display_phone") or inst.get("phone") or "",
+            "quality_rating": inst.get("quality_rating", "UNKNOWN"),
+            "can_send": inst.get("can_send", "UNKNOWN"),
+            "daily_limit": limit,
+            "planned_count": planned,
+        })
+
+    risks = []
+    paused = [i for i in excluded if i.get("is_paused")]
+    blocked = [i for i in excluded if i.get("can_send") in ("DISABLED", "BLOCKED")]
+    red = [i for i in excluded if i.get("quality_rating") == "RED"]
+    if paused:
+        risks.append(f"{len(paused)} instância(s) pausada(s) excluída(s)")
+    if blocked:
+        risks.append(f"{len(blocked)} instância(s) bloqueada(s) excluída(s)")
+    if red:
+        risks.append(f"{len(red)} instância(s) com qualidade RED excluída(s)")
+    if total_leads > total_capacity:
+        risks.append(f"Total de leads ({total_leads}) excede capacidade diária ({total_capacity})")
+
+    return {
+        "assignments": assignments,
+        "justification": f"Distribuição proporcional entre {len(active)} instância(s) ativa(s).",
+        "risks": "; ".join(risks) if risks else "Nenhum risco identificado.",
+    }
+
+
 # ── Credentials ───────────────────────────────────────────────────────────────
 
 class AesirCredsIn(BaseModel):
     api_token: str
     account_id: str
-    meta_token: str | None = None
-    waba_ids: list[str] | None = None
-
-
-@router.post("/credentials")
-async def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_id)):
-    db = get_db()
-    payload: dict = {
-        "owner_id": user_id,
-        "api_token_enc": encrypt(body.api_token.strip()),
-        "account_id": body.account_id.strip(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if body.meta_token and body.meta_token.strip():
-        payload["meta_token_enc"] = encrypt(body.meta_token.strip())
-    if body.waba_ids is not None:
-        payload["waba_ids"] = [w.strip() for w in body.waba_ids if w.strip()]
-    db.table("aesir_settings").upsert(payload, on_conflict="owner_id").execute()
-    return {"ok": True}
 
 
 class AesirMetaCredsIn(BaseModel):
@@ -74,9 +126,21 @@ class AesirMetaCredsIn(BaseModel):
     waba_ids: list[str]
 
 
+@router.post("/credentials")
+async def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    payload = {
+        "owner_id": user_id,
+        "api_token_enc": encrypt(body.api_token.strip()),
+        "account_id": body.account_id.strip(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("aesir_settings").upsert(payload, on_conflict="owner_id").execute()
+    return {"ok": True}
+
+
 @router.post("/meta-credentials")
 async def save_meta_credentials(body: AesirMetaCredsIn, user_id: str = Depends(_get_user_id)):
-    """Partial update — saves only Meta token + WABA IDs, leaves Aesir token untouched."""
     db = get_db()
     existing = db.table("aesir_settings").select("owner_id").eq("owner_id", user_id).execute()
     if not existing.data:
@@ -111,7 +175,6 @@ async def get_credentials(user_id: str = Depends(_get_user_id)):
 
 @router.get("/instances")
 async def list_instances(user_id: str = Depends(_get_user_id)):
-    """Return aesir_instances from DB (includes quality data from last refresh)."""
     db = get_db()
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     return stored.data or []
@@ -133,28 +196,26 @@ async def resume_instance(instance_id: str, user_id: str = Depends(_get_user_id)
 
 @router.post("/refresh-numbers")
 async def refresh_numbers(user_id: str = Depends(_get_user_id)):
-    """Pull Aesir instances + Meta phone quality → cross-reference by phone → upsert aesir_instances."""
+    """Pull Aesir instances + Meta phone quality → cross-reference by phone → upsert."""
     db = get_db()
-    settings = db.table("aesir_settings").select("*").eq("owner_id", user_id).execute()
-    if not settings.data:
+    settings_row = db.table("aesir_settings").select("*").eq("owner_id", user_id).execute()
+    if not settings_row.data:
         raise HTTPException(400, "Credenciais não configuradas")
-    row = settings.data[0]
+    row = settings_row.data[0]
 
-    meta_token = safe_decrypt(row.get("meta_token_enc") or "")
-    waba_ids: list[str] = row.get("waba_ids") or []
-
-    # 1. Fetch Aesir ERP instances
     aesir_token = safe_decrypt(row["api_token_enc"])
     if not aesir_token:
         raise HTTPException(400, "Token Aesir inválido — reconfigure")
     client = AesirClient(api_token=aesir_token, account_id=row["account_id"])
+
     try:
         aesir_instances = await client.list_instances()
     except Exception as e:
         raise HTTPException(502, f"Aesir API error: {e}")
 
-    # 2. Fetch Meta phone quality (optional — only if meta configured)
-    meta_phones: dict[str, dict] = {}  # last-10-digits → quality dict
+    meta_token = safe_decrypt(row.get("meta_token_enc") or "")
+    waba_ids: list[str] = row.get("waba_ids") or []
+    meta_phones: dict[str, dict] = {}
     if meta_token and waba_ids:
         meta_client = MetaClient(access_token=meta_token)
         for waba_id in waba_ids:
@@ -166,11 +227,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
                     if key:
                         meta_phones[key] = p
             except Exception:
-                pass  # don't fail the whole refresh if one WABA errors
+                pass
 
     now = datetime.now(timezone.utc).isoformat()
-
-    # 3. Upsert instances with quality data
     for inst in aesir_instances:
         iid = str(inst.get("id") or inst.get("instance_id") or "")
         if not iid:
@@ -178,7 +237,6 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         phone_raw = inst.get("phone") or inst.get("phone_number") or ""
         digits = "".join(c for c in phone_raw if c.isdigit())
         key = digits[-10:] if len(digits) >= 10 else digits
-
         quality = meta_phones.get(key, {})
         upsert_payload: dict = {
             "owner_id": user_id,
@@ -197,123 +255,245 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
                 "daily_limit": quality.get("daily_limit") or 500,
                 "quality_updated_at": now,
             })
-
         db.table("aesir_instances").upsert(upsert_payload, on_conflict="owner_id,instance_id").execute()
 
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     return {"ok": True, "instances": stored.data or [], "meta_matched": len(meta_phones)}
 
 
-# ── Dispatch ──────────────────────────────────────────────────────────────────
+# ── Analyze CSV ───────────────────────────────────────────────────────────────
 
-@router.post("/dispatch")
-async def start_dispatch(
-    file: UploadFile = File(...),
-    instance_id: str = Form(""),
-    message_tpl: str = Form(""),
-    phone_column: str = Form("telefone"),
-    cooldown_seconds: int = Form(5),
-    user_id: str = Depends(_get_user_id),
-):
-    if not instance_id:
-        raise HTTPException(400, "instance_id obrigatório")
-    if not message_tpl:
-        raise HTTPException(400, "message_tpl obrigatório")
-
-    # Check instance not paused
+@router.post("/analyze")
+async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_user_id)):
     db = get_db()
-    inst_row = db.table("aesir_instances").select("is_paused").eq("owner_id", user_id).eq("instance_id", instance_id).execute()
-    if inst_row.data and inst_row.data[0].get("is_paused"):
-        raise HTTPException(400, "Instância pausada")
-
     csv_bytes = await file.read()
-    dispatch_id = str(uuid.uuid4())
+    if csv_bytes.startswith(b"\xef\xbb\xbf"):
+        csv_bytes = csv_bytes[3:]
 
-    # Register dispatch
+    total_leads = max(0, csv_bytes.count(b"\n") - 1)
+
+    csv_columns: list[str] = []
+    try:
+        first_line = csv_bytes.decode("utf-8", errors="replace").splitlines()[0]
+        for delim in [",", ";", "\t", "|"]:
+            if delim in first_line:
+                csv_columns = [c.strip().strip('"').lstrip("﻿") for c in first_line.split(delim)]
+                break
+        if not csv_columns:
+            csv_columns = [first_line.strip()]
+    except Exception:
+        csv_columns = []
+
+    instances_resp = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
+    instances = instances_resp.data or []
+    if not instances:
+        raise HTTPException(400, "Nenhuma instância cadastrada. Faça Refresh Números primeiro.")
+
+    split = _advise_split(instances, total_leads)
+
+    dispatch_id = str(uuid.uuid4())
     db.table("aesir_dispatches").insert({
         "id": dispatch_id,
         "owner_id": user_id,
-        "instance_id": instance_id,
         "csv_filename": file.filename,
-        "message_tpl": message_tpl,
-        "status": "running",
+        "total_leads": total_leads,
+        "status": "pending_confirm",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
 
+    r = aioredis.from_url(settings.redis_url)
+    await r.setex(f"aesir:csv:{dispatch_id}", 3600, csv_bytes)
+
+    return {
+        "dispatch_id": dispatch_id,
+        "total_leads": total_leads,
+        "split": split,
+        "csv_columns": csv_columns,
+    }
+
+
+# ── Dispatch (confirm) ────────────────────────────────────────────────────────
+
+class AssignmentIn(BaseModel):
+    instance_id: str
+    planned_count: int
+
+
+class DispatchIn(BaseModel):
+    dispatch_id: str
+    assignments: list[AssignmentIn]
+    message_tpl: str
+    phone_column: str = "telefone"
+    campaign_name: str = ""
+    cooldown_seconds: int = 5
+
+
+@router.post("/dispatch")
+async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+
+    dispatch = db.table("aesir_dispatches").select("*").eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+    if not dispatch.data:
+        raise HTTPException(404, "Dispatch não encontrado")
+    if dispatch.data[0]["status"] != "pending_confirm":
+        raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
+
+    r = aioredis.from_url(settings.redis_url)
+    csv_bytes = await r.get(f"aesir:csv:{body.dispatch_id}")
+    if not csv_bytes:
+        raise HTTPException(400, "CSV expirou (1h). Faça upload novamente.")
+    if csv_bytes.startswith(b"\xef\xbb\xbf"):
+        csv_bytes = csv_bytes[3:]
+
+    csv_text = csv_bytes.decode("utf-8", errors="replace")
+    csv_lines = csv_text.splitlines()
+    header = csv_lines[0] if csv_lines else ""
+    data_rows = csv_lines[1:] if len(csv_lines) > 1 else []
+
+    def _slice_csv(rows: list[str], start: int, count: int) -> bytes:
+        chunk = [header] + rows[start: start + count]
+        return "\n".join(chunk).encode("utf-8")
+
+    # Build assignments_json with initial state
+    assignments_json = [
+        {"instance_id": a.instance_id, "planned": a.planned_count, "sent": 0, "errors": 0, "status": "queued"}
+        for a in body.assignments
+    ]
+
+    now = datetime.now(timezone.utc).isoformat()
+    db.table("aesir_dispatches").update({
+        "status": "running",
+        "campaign_name": body.campaign_name or body.dispatch_id[:8],
+        "phone_column": body.phone_column,
+        "message_tpl": body.message_tpl,
+        "cooldown_seconds": body.cooldown_seconds,
+        "assignments_json": assignments_json,
+        "updated_at": now,
+    }).eq("id", body.dispatch_id).execute()
+
     stop_event = asyncio.Event()
-    _stop_events[dispatch_id] = stop_event
+    _stop_events[body.dispatch_id] = stop_event
 
     client = _get_client(user_id)
 
     async def _run():
-        try:
-            result = await client.dispatch_csv(
-                csv_bytes=csv_bytes,
-                instance_id=instance_id,
-                message_tpl=message_tpl,
-                phone_column=phone_column,
-                cooldown_seconds=cooldown_seconds,
-                stop_event=stop_event,
-            )
-            final_status = "done" if not stop_event.is_set() else "paused"
-            db.table("aesir_dispatches").update({
-                "status": final_status,
-                "sent": result["sent"],
-                "errors": result["errors"],
-                "total_contacts": result["total"],
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", dispatch_id).execute()
-        except Exception as exc:
-            db.table("aesir_dispatches").update({
-                "status": "error",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", dispatch_id).execute()
-            raise exc
-        finally:
-            _stop_events.pop(dispatch_id, None)
-            _bg_tasks.discard(task)
+        row_offset = 0
+        for asn_model in body.assignments:
+            if stop_event.is_set():
+                break
+            iid = asn_model.instance_id
+            planned = asn_model.planned_count
+            slice_bytes = _slice_csv(data_rows, row_offset, planned)
+            row_offset += planned
+
+            # Mark this instance as running
+            _update_assignment(body.dispatch_id, iid, {"status": "running"}, db)
+
+            try:
+                result = await client.dispatch_csv(
+                    csv_bytes=slice_bytes,
+                    instance_id=iid,
+                    message_tpl=body.message_tpl,
+                    phone_column=body.phone_column,
+                    cooldown_seconds=body.cooldown_seconds,
+                    stop_event=stop_event,
+                )
+                _update_assignment(body.dispatch_id, iid, {
+                    "sent": result["sent"],
+                    "errors": result["errors"],
+                    "status": "done" if not stop_event.is_set() else "paused",
+                }, db)
+            except Exception as exc:
+                _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
+
+        final = "done" if not stop_event.is_set() else "paused"
+        db.table("aesir_dispatches").update({
+            "status": final,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", body.dispatch_id).execute()
+        _stop_events.pop(body.dispatch_id, None)
+        _bg_tasks.discard(task)
 
     task = asyncio.create_task(_run())
     _bg_tasks.add(task)
-    return {"dispatch_id": dispatch_id, "status": "running"}
+    return {"dispatch_id": body.dispatch_id, "status": "running"}
 
 
-@router.post("/dispatch/{dispatch_id}/pause")
+def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db) -> None:
+    """Update a single assignment's fields inside assignments_json."""
+    resp = db.table("aesir_dispatches").select("assignments_json").eq("id", dispatch_id).execute()
+    if not resp.data:
+        return
+    assignments = resp.data[0].get("assignments_json") or []
+    for asn in assignments:
+        if asn.get("instance_id") == instance_id:
+            asn.update(patch)
+    db.table("aesir_dispatches").update({
+        "assignments_json": assignments,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", dispatch_id).execute()
+
+
+# ── Dispatch control ──────────────────────────────────────────────────────────
+
+@router.post("/dispatches/{dispatch_id}/pause")
 async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
     db = get_db()
-    db.table("aesir_dispatches").update({"status": "paused", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    db.table("aesir_dispatches").update({
+        "status": "paused",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
     return {"ok": True}
 
 
-@router.post("/dispatch/{dispatch_id}/resume")
-async def resume_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
-    """Re-queue a paused dispatch as a new background run from the beginning."""
-    db = get_db()
-    row = db.table("aesir_dispatches").select("*").eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    if not row.data:
-        raise HTTPException(404, "Dispatch não encontrado")
-    d = row.data[0]
-    if d["status"] != "paused":
-        raise HTTPException(400, "Dispatch não está pausado")
-    raise HTTPException(501, "Resume não suportado — inicie um novo disparo com o mesmo CSV")
-
-
-@router.post("/dispatch/{dispatch_id}/cancel")
+@router.post("/dispatches/{dispatch_id}/cancel")
 async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
     db = get_db()
-    db.table("aesir_dispatches").update({"status": "cancelled", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    db.table("aesir_dispatches").update({
+        "status": "cancelled",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
     return {"ok": True}
+
+
+# ── Read endpoints ────────────────────────────────────────────────────────────
+
+@router.get("/snapshot")
+async def get_snapshot(user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    instances = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
+    active = db.table("aesir_dispatches").select("*").eq("owner_id", user_id).in_("status", ["running", "paused"]).order("created_at", desc=True).limit(10).execute()
+    return {
+        "instances": instances.data or [],
+        "active_dispatches": active.data or [],
+    }
 
 
 @router.get("/dispatches")
 async def list_dispatches(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    resp = db.table("aesir_dispatches").select("*").eq("owner_id", user_id).order("created_at", desc=True).limit(50).execute()
+    resp = db.table("aesir_dispatches").select("*").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(50).execute()
     return resp.data or []
+
+
+@router.get("/analytics")
+async def get_analytics(user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    resp = db.table("aesir_dispatches").select("id, campaign_name, sent, errors, total_leads, total_contacts, status, created_at, finished_at").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(20).execute()
+    rows = resp.data or []
+    total_sent = sum((r.get("sent") or 0) for r in rows)
+    total_errors = sum((r.get("errors") or 0) for r in rows)
+    return {
+        "campaigns": rows,
+        "total_sent": total_sent,
+        "total_errors": total_errors,
+        "total_campaigns": len(rows),
+    }

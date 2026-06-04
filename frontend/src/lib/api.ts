@@ -506,30 +506,52 @@ aesirAxios.interceptors.request.use(async (config) => {
 });
 
 export const aesirApi = {
+  // credentials
   getCredentials: () =>
     aesirAxios.get<{ configured: boolean; account_id?: string; meta_configured?: boolean; waba_ids?: string[]; updated_at?: string }>("/api/aesir-broadcast/credentials").then((r) => r.data),
   saveCredentials: (api_token: string, account_id: string) =>
     aesirAxios.post("/api/aesir-broadcast/credentials", { api_token, account_id }).then((r) => r.data),
+  saveMetaCredentials: (meta_token: string, waba_ids: string[]) =>
+    aesirAxios.post("/api/aesir-broadcast/meta-credentials", { meta_token, waba_ids }).then((r) => r.data),
 
+  // instances
   listInstances: () =>
     aesirAxios.get<any[]>("/api/aesir-broadcast/instances").then((r) => r.data),
   pauseInstance: (instanceId: string) =>
     aesirAxios.post(`/api/aesir-broadcast/instances/${instanceId}/pause`).then((r) => r.data),
   resumeInstance: (instanceId: string) =>
     aesirAxios.post(`/api/aesir-broadcast/instances/${instanceId}/resume`).then((r) => r.data),
-
-  startDispatch: (form: FormData) =>
-    aesirAxios.post<{ dispatch_id: string; status: string }>("/api/aesir-broadcast/dispatch", form).then((r) => r.data),
-  pauseDispatch: (id: string) =>
-    aesirAxios.post(`/api/aesir-broadcast/dispatch/${id}/pause`).then((r) => r.data),
-  cancelDispatch: (id: string) =>
-    aesirAxios.post(`/api/aesir-broadcast/dispatch/${id}/cancel`).then((r) => r.data),
-  listDispatches: () =>
-    aesirAxios.get<any[]>("/api/aesir-broadcast/dispatches").then((r) => r.data),
   refreshNumbers: () =>
     aesirAxios.post<{ ok: boolean; instances: any[]; meta_matched: number }>("/api/aesir-broadcast/refresh-numbers").then((r) => r.data),
-  saveMetaCredentials: (meta_token: string, waba_ids: string[]) =>
-    aesirAxios.post("/api/aesir-broadcast/meta-credentials", { meta_token, waba_ids }).then((r) => r.data),
+
+  // wizard
+  analyzeCSV: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return aesirAxios.post<{ dispatch_id: string; total_leads: number; split: any; csv_columns: string[] }>("/api/aesir-broadcast/analyze", form).then((r) => r.data);
+  },
+  confirmDispatch: (body: {
+    dispatch_id: string;
+    assignments: { instance_id: string; planned_count: number }[];
+    message_tpl: string;
+    phone_column: string;
+    campaign_name: string;
+    cooldown_seconds: number;
+  }) => aesirAxios.post<{ dispatch_id: string; status: string }>("/api/aesir-broadcast/dispatch", body).then((r) => r.data),
+
+  // dispatch control
+  pauseDispatch: (id: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/dispatches/${id}/pause`).then((r) => r.data),
+  cancelDispatch: (id: string) =>
+    aesirAxios.post(`/api/aesir-broadcast/dispatches/${id}/cancel`).then((r) => r.data),
+
+  // read
+  listDispatches: () =>
+    aesirAxios.get<any[]>("/api/aesir-broadcast/dispatches").then((r) => r.data),
+  getSnapshot: () =>
+    aesirAxios.get<{ instances: any[]; active_dispatches: any[] }>("/api/aesir-broadcast/snapshot").then((r) => r.data),
+  getAnalytics: () =>
+    aesirAxios.get<{ campaigns: any[]; total_sent: number; total_errors: number; total_campaigns: number }>("/api/aesir-broadcast/analytics").then((r) => r.data),
 };
 
 export const broadcastApi = {
