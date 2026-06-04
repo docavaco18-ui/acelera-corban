@@ -9,6 +9,7 @@ import CRM from "./pages/CRM";
 import Chatwoot from "./pages/Chatwoot";
 import Disparo from "./pages/Disparo";
 import DisparoAesir from "./pages/DisparoAesir";
+import DisparoChipcare from "./pages/DisparoChipcare";
 import Mercantil from "./pages/Mercantil";
 import Presenca from "./pages/Presenca";
 import PowerHub from "./pages/PowerHub";
@@ -80,6 +81,7 @@ function TopBar() {
         ["/chatwoot", "CRM Chatwoot"],
         ["/disparo", "Disparo WhatsApp"],
         ["/disparo-aesir", "Disparo Aesir"],
+        ["/disparo-chipcare", "Disparo Chipcare"],
         ["/registros", "Registros"],
         ["/configuracoes", "Configurações"],
         ...(isAdmin ? [["/admin", "Admin"] as const] : []),
@@ -141,6 +143,7 @@ export default function App() {
                 <Route path="/chatwoot" element={<Chatwoot />} />
                 <Route path="/disparo" element={<Disparo />} />
                 <Route path="/disparo-aesir" element={<DisparoAesir />} />
+                <Route path="/disparo-chipcare" element={<DisparoChipcare />} />
                 <Route path="/mercantil" element={<Mercantil />} />
                 <Route path="/presenca" element={<Presenca />} />
                 <Route path="/powerhub" element={<PowerHub />} />

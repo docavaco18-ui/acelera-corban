@@ -6,12 +6,20 @@ import logging
 
 import redis.asyncio as aioredis
 
+from datetime import datetime, timezone
+
 from app.config import settings
 from app.credentials.crypto import safe_decrypt as decrypt
 from app.database import get_db
 from app.services.broadcast.intervention import evaluate_and_intervene
 from app.services.broadcast.meta_client import MetaClient
 from app.services.broadcast.vendeai_client import VendeAIClient
+
+_vendeai_cache: dict[str, VendeAIClient] = {}
+
+
+def _utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 logger = logging.getLogger(__name__)
 POLL_INTERVAL = 60
@@ -68,26 +76,43 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     if not email or not password:
         return
 
-    vendeai = VendeAIClient(email, password)
+    # Reuse client so the token is not refreshed every tick
+    cache_key = f"{owner_id}:{email}"
+    if cache_key not in _vendeai_cache:
+        _vendeai_cache[cache_key] = VendeAIClient(email, password)
+    vendeai = _vendeai_cache[cache_key]
 
     # 1. Poll VendeAI mailings → update sent/failed counts
+    # Load only active mailing IDs to avoid full-scan pagination
     try:
-        mailings_data = await vendeai.list_mailings(page=1, page_size=100)
-        for mailing in mailings_data.get("results", []):
-            mailing_id = mailing.get("id")
-            if not mailing_id:
-                continue
-            asn_resp = db.table("broadcast_dispatch_assignments") \
-                .select("id") \
-                .eq("vendeai_mailing_id", mailing_id) \
-                .eq("owner_id", owner_id) \
-                .execute()
-            if asn_resp.data:
-                db.table("broadcast_dispatch_assignments").update({
-                    "sent_count": mailing.get("sent_count", 0),
-                    "failed_count": mailing.get("dispatch_total", 0) - mailing.get("sent_count", 0),
-                    "last_poll_at": "now()",
-                }).eq("id", asn_resp.data[0]["id"]).execute()
+        active_asns = db.table("broadcast_dispatch_assignments") \
+            .select("id,vendeai_mailing_id") \
+            .eq("owner_id", owner_id) \
+            .in_("status", ["running", "paused"]) \
+            .not_.is_("vendeai_mailing_id", "null") \
+            .execute()
+
+        # Paginate all mailings until we find all tracked IDs
+        tracked_ids = {a["vendeai_mailing_id"]: a["id"] for a in (active_asns.data or [])}
+        if tracked_ids:
+            page, found = 1, 0
+            while found < len(tracked_ids):
+                mailings_data = await vendeai.list_mailings(page=page, page_size=100)
+                results = mailings_data.get("results", [])
+                if not results:
+                    break
+                for mailing in results:
+                    mailing_id = str(mailing.get("id") or "")
+                    if mailing_id in tracked_ids:
+                        db.table("broadcast_dispatch_assignments").update({
+                            "sent_count": mailing.get("sent_count", 0),
+                            "failed_count": max(0, (mailing.get("dispatch_total", 0) or 0) - (mailing.get("sent_count", 0) or 0)),
+                            "last_poll_at": _utcnow(),
+                        }).eq("id", tracked_ids[mailing_id]).execute()
+                        found += 1
+                if len(results) < 100:
+                    break  # no more pages
+                page += 1
     except Exception as e:
         logger.warning(f"VendeAI poll failed for {owner_id}: {e}")
 
@@ -107,7 +132,7 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
                         "messaging_tier": quality_data["messaging_tier"],
                         "daily_limit": quality_data["daily_limit"],
                         "can_send": quality_data["can_send"],
-                        "last_meta_check_at": "now()",
+                        "last_meta_check_at": _utcnow(),
                     }
                     # Track previous quality for change detection
                     if num.get("quality_rating") and num["quality_rating"] != quality_data["quality_rating"]:

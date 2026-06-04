@@ -132,26 +132,49 @@ async def _attempt_failover(
     failed_phone_id: str,
     failed_asn: dict,
 ) -> None:
-    remaining = failed_asn.get("planned_count", 0) - failed_asn.get("sent_count", 0)
+    """
+    Failover: record remaining leads against a backup number so the operator
+    can re-dispatch via the UI. We cannot automatically re-dispatch because
+    the original CSV bytes are no longer in Redis after the first dispatch.
+    Creates a 'failover' assignment with status='paused' so CampaignHistoryList
+    shows it and the alert feed explains what happened.
+    """
+    remaining = failed_asn.get("planned_count", 0) - (failed_asn.get("sent_count", 0) or 0)
     if remaining <= 0:
         return
 
     numbers_resp = db.table("broadcast_numbers") \
-        .select("phone_id, daily_limit") \
+        .select("phone_id, daily_limit, chatwoot_inbox_id") \
         .eq("owner_id", owner_id) \
         .eq("quality_rating", "GREEN") \
         .eq("is_paused", False) \
+        .eq("chatwoot_connected", True) \
         .neq("phone_id", failed_phone_id) \
         .order("daily_limit", desc=True) \
         .limit(1) \
         .execute()
 
     if not numbers_resp.data:
+        # No eligible backup — create alert so operator knows
+        try:
+            db.table("broadcast_alerts").insert({
+                "owner_id": owner_id,
+                "dispatch_id": dispatch_id,
+                "phone_id": failed_phone_id,
+                "alert_type": "failover_no_backup",
+                "severity": "critical",
+                "message": f"{remaining} leads sem failover — nenhum número GREEN disponível",
+                "action_taken": "none",
+                "action_id": f"{dispatch_id}:{failed_phone_id}:failover_no_backup",
+            }).execute()
+        except Exception:
+            pass
         return
 
-    failover_phone = numbers_resp.data[0]["phone_id"]
+    failover_num = numbers_resp.data[0]
+    failover_phone = failover_num["phone_id"]
 
-    # Update or create assignment for failover number
+    # Copy template/inbox from the failed assignment so the UI has enough context
     existing = db.table("broadcast_dispatch_assignments") \
         .select("id, planned_count") \
         .eq("dispatch_id", dispatch_id) \
@@ -160,7 +183,7 @@ async def _attempt_failover(
 
     if existing.data:
         asn_id = existing.data[0]["id"]
-        new_planned = existing.data[0]["planned_count"] + remaining
+        new_planned = (existing.data[0]["planned_count"] or 0) + remaining
         db.table("broadcast_dispatch_assignments").update({
             "planned_count": new_planned
         }).eq("id", asn_id).execute()
@@ -170,5 +193,24 @@ async def _attempt_failover(
             "owner_id": owner_id,
             "phone_id": failover_phone,
             "planned_count": remaining,
-            "status": "scheduled",
+            "status": "paused",
+            "template_id": failed_asn.get("template_id", ""),
+            "inbox_id": failover_num.get("chatwoot_inbox_id") or failed_asn.get("inbox_id", ""),
+            "display_phone": failover_phone[-10:],
+            "quality_at_start": "GREEN",
         }).execute()
+
+    # Alert operator to re-dispatch the failover slice manually
+    try:
+        db.table("broadcast_alerts").insert({
+            "owner_id": owner_id,
+            "dispatch_id": dispatch_id,
+            "phone_id": failover_phone,
+            "alert_type": "failover_pending",
+            "severity": "warn",
+            "message": f"{remaining} leads em espera no failover ({failover_phone[-10:]}) — re-disparo manual necessário",
+            "action_taken": "failover_created",
+            "action_id": f"{dispatch_id}:{failed_phone_id}:failover_pending",
+        }).execute()
+    except Exception:
+        pass

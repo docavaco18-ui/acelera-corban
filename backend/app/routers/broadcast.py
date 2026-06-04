@@ -91,6 +91,22 @@ async def list_numbers(user_id: str = Depends(_get_user_id)):
     return resp.data or []
 
 
+@router.post("/numbers/{phone_id}/resume")
+async def resume_number(phone_id: str, user_id: str = Depends(_get_user_id)):
+    """Un-pause a number that was auto-paused by the intervention loop."""
+    db = get_db()
+    existing = db.table("broadcast_numbers") \
+        .select("phone_id") \
+        .eq("owner_id", user_id) \
+        .eq("phone_id", phone_id) \
+        .execute()
+    if not existing.data:
+        raise HTTPException(404, "Número não encontrado")
+    db.table("broadcast_numbers").update({"is_paused": False}) \
+        .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
+    return {"ok": True, "phone_id": phone_id}
+
+
 class WabaIdsIn(BaseModel):
     waba_ids: list[str]
 

@@ -56,6 +56,15 @@ export default function Disparo() {
     }
   };
 
+  const handleResumeNumber = async (phoneId: string) => {
+    try {
+      await broadcastApi.resumeNumber(phoneId);
+      await loadData();
+    } catch (e) {
+      console.error('[Disparo] resumeNumber falhou:', e);
+    }
+  };
+
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 1200 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -116,7 +125,7 @@ export default function Disparo() {
         <h2 style={{ color: '#6366f1', fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 }}>
           Qualidade dos Números
         </h2>
-        <NumberQualityGrid numbers={numbers} onResume={loadData} />
+        <NumberQualityGrid numbers={numbers} onResume={handleResumeNumber} />
       </div>
 
       {/* Panel 5 — Metrics + Alerts */}

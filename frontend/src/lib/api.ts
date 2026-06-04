@@ -554,6 +554,77 @@ export const aesirApi = {
     aesirAxios.get<{ campaigns: any[]; total_sent: number; total_errors: number; total_campaigns: number }>("/api/aesir-broadcast/analytics").then((r) => r.data),
 };
 
+const chipcareAxios = axios.create({ baseURL: BASE_URL });
+chipcareAxios.interceptors.request.use(async (config) => {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (token) {
+    config.headers = config.headers ?? {};
+    (config.headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+export const chipcareApi = {
+  // credentials
+  getCredentials: () =>
+    chipcareAxios.get<{ configured: boolean; email?: string; tenant_id?: string; updated_at?: string }>("/api/chipcare-broadcast/credentials").then((r) => r.data),
+  saveCredentials: (email: string, password: string, tenant_id?: string) =>
+    chipcareAxios.post("/api/chipcare-broadcast/credentials", { email, password, tenant_id }).then((r) => r.data),
+
+  // SA hashes
+  updateHashes: (hashes: { sa_create?: string; sa_activate?: string; sa_list_tpl?: string; sa_list_camps?: string }) =>
+    chipcareAxios.post("/api/chipcare-broadcast/sa-hashes", hashes).then((r) => r.data),
+
+  // channels
+  listChannels: () =>
+    chipcareAxios.get<any[]>("/api/chipcare-broadcast/channels").then((r) => r.data),
+  refreshChannels: () =>
+    chipcareAxios.post<{ ok: boolean; channels: any[] }>("/api/chipcare-broadcast/refresh-channels").then((r) => r.data),
+  pauseChannel: (channelId: number) =>
+    chipcareAxios.post(`/api/chipcare-broadcast/channels/${channelId}/pause`).then((r) => r.data),
+  resumeChannel: (channelId: number) =>
+    chipcareAxios.post(`/api/chipcare-broadcast/channels/${channelId}/resume`).then((r) => r.data),
+
+  // templates
+  listTemplates: () =>
+    chipcareAxios.get<any[]>("/api/chipcare-broadcast/templates").then((r) => r.data),
+
+  // lead preview
+  leadPreview: (params: { source_type?: string; kanban_column_ids?: number[]; tag_ids?: number[]; chat_status?: string; channel_ids?: number[] }) =>
+    chipcareAxios.post<{ count: number }>("/api/chipcare-broadcast/lead-preview", params).then((r) => r.data),
+
+  // wizard
+  analyzeCSV: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return chipcareAxios.post<{ dispatch_id: string; total_leads: number; split: any; csv_columns: string[] }>("/api/chipcare-broadcast/analyze", form).then((r) => r.data);
+  },
+  dispatch: (body: {
+    dispatch_id: string;
+    assignments: { channel_id: number; planned_count: number }[];
+    template: { templateName: string; templateId: string; languageCode?: string; components?: any[] };
+    campaign_name: string;
+    aggression_level?: string;
+    activate_immediately?: boolean;
+    dry_run?: boolean;
+  }) => chipcareAxios.post<{ dispatch_id: string; campaign_id?: number; status: string; dry_run_result?: any }>("/api/chipcare-broadcast/dispatch", body).then((r) => r.data),
+
+  // dispatch control
+  activateDispatch: (id: string) =>
+    chipcareAxios.post(`/api/chipcare-broadcast/dispatches/${id}/activate`).then((r) => r.data),
+  cancelDispatch: (id: string) =>
+    chipcareAxios.post(`/api/chipcare-broadcast/dispatches/${id}/cancel`).then((r) => r.data),
+
+  // read
+  listDispatches: () =>
+    chipcareAxios.get<any[]>("/api/chipcare-broadcast/dispatches").then((r) => r.data),
+  getSnapshot: () =>
+    chipcareAxios.get<{ channels: any[]; active_dispatches: any[] }>("/api/chipcare-broadcast/snapshot").then((r) => r.data),
+  getAnalytics: () =>
+    chipcareAxios.get<{ campaigns: any[]; total_campaigns: number }>("/api/chipcare-broadcast/analytics").then((r) => r.data),
+};
+
 export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
   saveCredentials: (data: { email: string; password: string; meta_token?: string }) =>

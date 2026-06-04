@@ -247,8 +247,8 @@ async def do_login(page):
     return False
 
 
-CSV_INPUT  = "/tmp/mercantil_janeiro_5499.csv"
-CSV_OUTPUT = "/tmp/mercantil_resultados_jan.csv"
+CSV_INPUT  = "/tmp/mercantil_30_erros.csv"
+CSV_OUTPUT = "/tmp/mercantil_30_erros_resultado.csv"
 
 
 def _load_output_csv():
@@ -519,7 +519,7 @@ async def main():
                     print(f"[DOM-TEST] Variável 1: ❌ CPF bloqueado — política do banco")
                     print(f"[DOM-TEST] TOAST snippet: {_toast_text[:200]}")
                     try:
-                        _sp = f"/tmp/mercantil_screenshots/{cpf}_var1.png"
+                        _sp = f"/tmp/mercantil_screenshots_30/{cpf}_var1.png"
                         await page.screenshot(path=_sp, full_page=True)
                         print(f"[SCREENSHOT] {_sp}")
                     except Exception:
@@ -727,7 +727,7 @@ async def main():
                                     resultado_cpf = {"cpf": cpf, "status": "elegivel", "valor_liberado": vl_text, **extra}
                                     print(f"[DOM-TEST] RESULTADO: ✅ elegível — {vl_text} | parcela={extra.get('valor_parcela','?')} | prazo={extra.get('prazo','?')}")
                                     try:
-                                        _sp = f"/tmp/mercantil_screenshots/{cpf}_elegivel.png"
+                                        _sp = f"/tmp/mercantil_screenshots_30/{cpf}_elegivel.png"
                                         await page.screenshot(path=_sp, full_page=True)
                                         print(f"[SCREENSHOT] {_sp}")
                                     except Exception:
@@ -740,7 +740,7 @@ async def main():
                             resultado_cpf = {"cpf": cpf, "status": "inelegivel", "erro": "timeout sem resultado"}
                             print(f"[DOM-TEST] RESULTADO: ❌ inelegível (timeout)")
                             try:
-                                _sp = f"/tmp/mercantil_screenshots/{cpf}_timeout_resultado.png"
+                                _sp = f"/tmp/mercantil_screenshots_30/{cpf}_timeout_resultado.png"
                                 await page.screenshot(path=_sp, full_page=True)
                                 print(f"[SCREENSHOT] {_sp}")
                             except Exception:
@@ -750,7 +750,7 @@ async def main():
                 resultado_cpf = {"cpf": cpf, "status": "erro", "erro": str(e)[:200]}
                 print(f"[DOM-TEST] ❌ CPF {cpf} erro: {e}")
                 try:
-                    _sp = f"/tmp/mercantil_screenshots/{cpf}_erro.png"
+                    _sp = f"/tmp/mercantil_screenshots_30/{cpf}_erro.png"
                     await page.screenshot(path=_sp, full_page=True)
                     print(f"[SCREENSHOT] {_sp}")
                 except Exception:
