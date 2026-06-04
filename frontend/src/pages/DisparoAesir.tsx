@@ -38,6 +38,13 @@ const BTN = (bg: string, disabled = false) => ({
   fontWeight: 600,
 });
 
+const QUALITY_COLOR: Record<string, string> = {
+  GREEN: '#22c55e',
+  YELLOW: '#f59e0b',
+  RED: '#ef4444',
+  UNKNOWN: '#64748b',
+};
+
 function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
   const [configured, setConfigured] = useState(false);
   const [accountId, setAccountId] = useState('');
@@ -81,22 +88,11 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
         <div>
           <label style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }}>Account ID</label>
-          <input
-            style={INPUT_STYLE}
-            placeholder="532"
-            value={accInput}
-            onChange={(e) => setAccInput(e.target.value)}
-          />
+          <input style={INPUT_STYLE} placeholder="532" value={accInput} onChange={(e) => setAccInput(e.target.value)} />
         </div>
         <div>
-          <label style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }}>API Token</label>
-          <input
-            style={INPUT_STYLE}
-            type="password"
-            placeholder="aesir_v1_..."
-            value={tokenInput}
-            onChange={(e) => setTokenInput(e.target.value)}
-          />
+          <label style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }}>API Token Aesir</label>
+          <input style={INPUT_STYLE} type="password" placeholder="aesir_v1_..." value={tokenInput} onChange={(e) => setTokenInput(e.target.value)} />
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button style={BTN('#6366f1', saving)} onClick={save} disabled={saving}>
@@ -106,6 +102,116 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function MetaPanel({ onSaved }: { onSaved: () => void }) {
+  const [metaConfigured, setMetaConfigured] = useState(false);
+  const [wabaIds, setWabaIds] = useState<string[]>([]);
+  const [tokenInput, setTokenInput] = useState('');
+  const [wabaInput, setWabaInput] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  useEffect(() => {
+    aesirApi.getCredentials().then((d) => {
+      if (d.configured) {
+        setMetaConfigured(d.meta_configured || false);
+        setWabaIds(d.waba_ids || []);
+        setWabaInput((d.waba_ids || []).join('\n'));
+      }
+    }).catch(() => {});
+  }, []);
+
+  const save = async () => {
+    if (!tokenInput.trim()) { setMsg('Informe o Meta System User Token'); return; }
+    const ids = wabaInput.split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+    if (!ids.length) { setMsg('Informe ao menos 1 WABA ID'); return; }
+    setSaving(true);
+    try {
+      await aesirApi.saveMetaCredentials(tokenInput.trim(), ids);
+      setMetaConfigured(true);
+      setWabaIds(ids);
+      setTokenInput('');
+      setMsg('Meta configurado!');
+      onSaved();
+    } catch (e: any) {
+      setMsg('Erro: ' + (e?.response?.data?.detail || e?.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={CARD}>
+      <h2 style={H2('#1d9bf0')}>Meta Business Manager</h2>
+      {metaConfigured && (
+        <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 12 }}>
+          ✅ Meta configurado — {wabaIds.length} WABA(s)
+        </p>
+      )}
+      <p style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
+        Token permanente do System User da BM — mesmo token usado no Disparo VendeAI.
+        WABA IDs: um por linha.
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
+        <div>
+          <label style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }}>System User Token</label>
+          <input
+            style={INPUT_STYLE}
+            type="password"
+            placeholder="EAAOKxO1..."
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+          />
+        </div>
+        <div>
+          <label style={{ color: '#94a3b8', fontSize: 12, marginBottom: 4, display: 'block' }}>WABA IDs (um por linha)</label>
+          <textarea
+            style={{ ...INPUT_STYLE, height: 80, resize: 'vertical', fontFamily: 'monospace' }}
+            placeholder={'123456789\n987654321'}
+            value={wabaInput}
+            onChange={(e) => setWabaInput(e.target.value)}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <button style={BTN('#1d9bf0', saving)} onClick={save} disabled={saving}>
+            {saving ? 'Salvando...' : 'Salvar Meta'}
+          </button>
+          {msg && <span style={{ color: msg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function QualityBadge({ rating }: { rating?: string }) {
+  const r = rating || 'UNKNOWN';
+  return (
+    <span style={{
+      background: QUALITY_COLOR[r] + '22',
+      color: QUALITY_COLOR[r],
+      border: `1px solid ${QUALITY_COLOR[r]}55`,
+      borderRadius: 4,
+      padding: '2px 8px',
+      fontSize: 11,
+      fontWeight: 700,
+    }}>
+      {r}
+    </span>
+  );
+}
+
+function CanSendBadge({ canSend }: { canSend?: string }) {
+  const ok = canSend === 'ENABLED';
+  return (
+    <span style={{
+      color: ok ? '#22c55e' : '#f87171',
+      fontSize: 11,
+      fontWeight: 600,
+    }}>
+      {ok ? '✓ Pode enviar' : '✗ Bloqueado'}
+    </span>
   );
 }
 
@@ -128,31 +234,67 @@ function InstancesPanel({ instances, onRefresh }: { instances: any[]; onRefresh:
   if (!instances.length) {
     return (
       <div style={{ color: '#94a3b8', fontSize: 13 }}>
-        Nenhuma instância encontrada. Configure as credenciais e clique em "Refresh Instâncias".
+        Nenhuma instância. Clique em "Refresh Números" para sincronizar com Aesir ERP e Meta BM.
       </div>
     );
   }
 
   const errEl = err ? <div style={{ color: '#f87171', fontSize: 12, marginBottom: 8 }}>{err}</div> : null;
+  const hasQuality = instances.some(i => i.quality_rating && i.quality_rating !== 'UNKNOWN');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       {errEl}
+      {/* Header */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: hasQuality ? '1fr 80px 100px 120px 90px 80px' : '1fr 80px 100px',
+        gap: 12,
+        padding: '4px 16px',
+        color: '#64748b',
+        fontSize: 11,
+        fontWeight: 600,
+        textTransform: 'uppercase' as const,
+      }}>
+        <span>Nome / Telefone</span>
+        <span>Status</span>
+        <span>Tier</span>
+        {hasQuality && <><span>Qualidade</span><span>Envio</span></>}
+        <span></span>
+      </div>
       {instances.map((inst) => {
         const paused = !!inst.is_paused;
-        const statusColor = inst.status === 'open' ? '#22c55e' : '#f87171';
+        const statusColor = inst.status === 'open' || inst.status === 'CONNECTED' ? '#22c55e' : '#f87171';
         return (
           <div key={inst.instance_id} style={{
-            display: 'flex', alignItems: 'center', gap: 16,
-            background: '#0d0d1f', border: '1px solid #1e1e3a',
-            borderRadius: 8, padding: '10px 16px',
+            display: 'grid',
+            gridTemplateColumns: hasQuality ? '1fr 80px 100px 120px 90px 80px' : '1fr 80px 100px',
+            gap: 12,
+            alignItems: 'center',
+            background: '#0a0a18',
+            border: '1px solid #1e1e3a',
+            borderRadius: 8,
+            padding: '10px 16px',
           }}>
-            <div style={{ flex: 1 }}>
-              <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>{inst.name || inst.instance_id}</span>
-              <span style={{ color: '#64748b', fontSize: 12, marginLeft: 10 }}>{inst.phone}</span>
+            <div>
+              <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>
+                {inst.name || inst.instance_id}
+              </span>
+              {(inst.display_phone || inst.phone) && (
+                <span style={{ color: '#64748b', fontSize: 12, marginLeft: 8 }}>
+                  {inst.display_phone || inst.phone}
+                </span>
+              )}
+              {paused && <span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 8 }}>PAUSADA</span>}
             </div>
             <span style={{ color: statusColor, fontSize: 12, fontWeight: 600 }}>{inst.status}</span>
-            {paused && <span style={{ color: '#f59e0b', fontSize: 11 }}>PAUSADA</span>}
+            <span style={{ color: '#94a3b8', fontSize: 12 }}>{inst.messaging_tier || `${inst.daily_limit ?? 500}/dia`}</span>
+            {hasQuality && (
+              <>
+                <QualityBadge rating={inst.quality_rating} />
+                <CanSendBadge canSend={inst.can_send} />
+              </>
+            )}
             <button
               style={BTN(paused ? '#22c55e' : '#ef4444', loading[inst.instance_id])}
               disabled={loading[inst.instance_id]}
@@ -202,7 +344,7 @@ function DispatchForm({ instances, onDispatched }: { instances: any[]; onDispatc
     }
   };
 
-  const activeInstances = instances.filter((i) => !i.is_paused);
+  const activeInstances = instances.filter((i) => !i.is_paused && i.can_send !== 'DISABLED');
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 560 }}>
@@ -216,7 +358,7 @@ function DispatchForm({ instances, onDispatched }: { instances: any[]; onDispatc
           <option value="">Selecione...</option>
           {activeInstances.map((i) => (
             <option key={i.instance_id} value={i.instance_id}>
-              {i.name || i.instance_id} {i.phone ? `(${i.phone})` : ''}
+              {i.name || i.instance_id} {i.display_phone || i.phone ? `(${i.display_phone || i.phone})` : ''} {i.quality_rating && i.quality_rating !== 'UNKNOWN' ? `— ${i.quality_rating}` : ''}
             </option>
           ))}
         </select>
@@ -361,6 +503,14 @@ export default function DisparoAesir() {
   const [instances, setInstances] = useState<any[]>([]);
   const [dispatches, setDispatches] = useState<any[]>([]);
   const [refreshingInst, setRefreshingInst] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState('');
+
+  const loadInstances = async () => {
+    try {
+      const data = await aesirApi.listInstances();
+      setInstances(data || []);
+    } catch { /* ignore */ }
+  };
 
   const loadDispatches = async () => {
     try {
@@ -369,17 +519,26 @@ export default function DisparoAesir() {
     } catch { /* ignore */ }
   };
 
-  const refreshInstances = async () => {
+  const refreshNumbers = async () => {
     setRefreshingInst(true);
+    setRefreshMsg('');
     try {
-      const data = await aesirApi.listInstances();
-      setInstances(data || []);
-    } catch { /* ignore */ }
-    finally { setRefreshingInst(false); }
+      const result = await aesirApi.refreshNumbers();
+      setInstances(result.instances || []);
+      const matched = result.meta_matched;
+      setRefreshMsg(matched > 0
+        ? `✅ ${result.instances.length} instâncias · ${matched} cruzadas com Meta BM`
+        : `✅ ${result.instances.length} instâncias (Meta BM não configurado ou sem match)`
+      );
+    } catch (e: any) {
+      setRefreshMsg('Erro: ' + (e?.response?.data?.detail || e?.message));
+    } finally {
+      setRefreshingInst(false);
+    }
   };
 
   useEffect(() => {
-    refreshInstances();
+    loadInstances();
     loadDispatches();
   }, []);
 
@@ -397,34 +556,47 @@ export default function DisparoAesir() {
         <h1 style={{ color: '#e2e8f0', fontSize: 22, fontWeight: 700, margin: 0 }}>
           Disparo WhatsApp — Aesir ERP
         </h1>
-        <button
-          onClick={refreshInstances}
-          disabled={refreshingInst}
-          style={{
-            background: '#0d0d1f', border: '1px solid #1e1e3a',
-            color: '#94a3b8', borderRadius: 8, padding: '8px 16px',
-            cursor: 'pointer', fontSize: 13,
-          }}
-        >
-          {refreshingInst ? 'Atualizando...' : '⟳ Refresh Instâncias'}
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {refreshMsg && (
+            <span style={{ color: refreshMsg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>
+              {refreshMsg}
+            </span>
+          )}
+          <button
+            onClick={refreshNumbers}
+            disabled={refreshingInst}
+            style={{
+              background: '#0d0d1f', border: '1px solid #1e1e3a',
+              color: '#94a3b8', borderRadius: 8, padding: '8px 16px',
+              cursor: 'pointer', fontSize: 13,
+            }}
+          >
+            {refreshingInst ? 'Sincronizando...' : '⟳ Refresh Números'}
+          </button>
+        </div>
       </div>
 
-      <CredentialsPanel onSaved={refreshInstances} />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <CredentialsPanel onSaved={loadInstances} />
+        <MetaPanel onSaved={() => {}} />
+      </div>
 
       <div style={CARD}>
         <h2 style={H2('#00ff88')}>Instâncias WhatsApp</h2>
-        <InstancesPanel instances={instances} onRefresh={refreshInstances} />
-      </div>
-
-      <div style={CARD}>
-        <h2 style={H2('#6366f1')}>Histórico de Disparos</h2>
-        <DispatchHistory dispatches={dispatches} onRefresh={loadDispatches} />
+        <p style={{ color: '#64748b', fontSize: 12, marginTop: -8, marginBottom: 16 }}>
+          Clique em "Refresh Números" para sincronizar Aesir ERP + qualidade Meta BM.
+        </p>
+        <InstancesPanel instances={instances} onRefresh={loadInstances} />
       </div>
 
       <div style={CARD}>
         <h2 style={H2('#6366f1')}>Novo Disparo</h2>
         <DispatchForm instances={instances} onDispatched={loadDispatches} />
+      </div>
+
+      <div style={CARD}>
+        <h2 style={H2('#6366f1')}>Histórico de Disparos</h2>
+        <DispatchHistory dispatches={dispatches} onRefresh={loadDispatches} />
       </div>
     </div>
   );

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.aesir_client import AesirClient
+from app.services.broadcast.meta_client import MetaClient
 
 router = APIRouter(prefix="/api/aesir-broadcast", tags=["aesir-broadcast"])
 security = HTTPBearer()
@@ -47,58 +48,71 @@ def _get_client(user_id: str) -> AesirClient:
 class AesirCredsIn(BaseModel):
     api_token: str
     account_id: str
+    meta_token: str | None = None
+    waba_ids: list[str] | None = None
 
 
 @router.post("/credentials")
 async def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    payload = {
+    payload: dict = {
         "owner_id": user_id,
         "api_token_enc": encrypt(body.api_token.strip()),
         "account_id": body.account_id.strip(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if body.meta_token and body.meta_token.strip():
+        payload["meta_token_enc"] = encrypt(body.meta_token.strip())
+    if body.waba_ids is not None:
+        payload["waba_ids"] = [w.strip() for w in body.waba_ids if w.strip()]
     db.table("aesir_settings").upsert(payload, on_conflict="owner_id").execute()
+    return {"ok": True}
+
+
+class AesirMetaCredsIn(BaseModel):
+    meta_token: str
+    waba_ids: list[str]
+
+
+@router.post("/meta-credentials")
+async def save_meta_credentials(body: AesirMetaCredsIn, user_id: str = Depends(_get_user_id)):
+    """Partial update — saves only Meta token + WABA IDs, leaves Aesir token untouched."""
+    db = get_db()
+    existing = db.table("aesir_settings").select("owner_id").eq("owner_id", user_id).execute()
+    if not existing.data:
+        raise HTTPException(400, "Configure as credenciais Aesir primeiro")
+    payload = {
+        "owner_id": user_id,
+        "meta_token_enc": encrypt(body.meta_token.strip()),
+        "waba_ids": [w.strip() for w in body.waba_ids if w.strip()],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("aesir_settings").update(payload).eq("owner_id", user_id).execute()
     return {"ok": True}
 
 
 @router.get("/credentials")
 async def get_credentials(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    resp = db.table("aesir_settings").select("owner_id, account_id, updated_at").eq("owner_id", user_id).execute()
+    resp = db.table("aesir_settings").select("owner_id, account_id, meta_token_enc, waba_ids, updated_at").eq("owner_id", user_id).execute()
     if not resp.data:
         return {"configured": False}
     row = resp.data[0]
-    return {"configured": True, "account_id": row["account_id"], "updated_at": row["updated_at"]}
+    return {
+        "configured": True,
+        "account_id": row["account_id"],
+        "meta_configured": bool(row.get("meta_token_enc")),
+        "waba_ids": row.get("waba_ids") or [],
+        "updated_at": row["updated_at"],
+    }
 
 
 # ── Instances ─────────────────────────────────────────────────────────────────
 
 @router.get("/instances")
 async def list_instances(user_id: str = Depends(_get_user_id)):
-    """Fetch instances from Aesir API and sync to DB."""
-    client = _get_client(user_id)
+    """Return aesir_instances from DB (includes quality data from last refresh)."""
     db = get_db()
-    try:
-        instances = await client.list_instances()
-    except Exception as e:
-        raise HTTPException(502, f"Aesir API error: {e}")
-
-    # Upsert to aesir_instances
-    for inst in instances:
-        iid = str(inst.get("id") or inst.get("instance_id") or "")
-        if not iid:
-            continue
-        db.table("aesir_instances").upsert({
-            "owner_id": user_id,
-            "instance_id": iid,
-            "name": inst.get("name") or inst.get("instance_name") or iid,
-            "phone": inst.get("phone") or inst.get("phone_number") or "",
-            "status": inst.get("status") or inst.get("connection_status") or "unknown",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }, on_conflict="owner_id,instance_id").execute()
-
-    # Return from DB (includes is_paused, daily_limit)
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     return stored.data or []
 
@@ -115,6 +129,79 @@ async def resume_instance(instance_id: str, user_id: str = Depends(_get_user_id)
     db = get_db()
     db.table("aesir_instances").update({"is_paused": False}).eq("owner_id", user_id).eq("instance_id", instance_id).execute()
     return {"ok": True}
+
+
+@router.post("/refresh-numbers")
+async def refresh_numbers(user_id: str = Depends(_get_user_id)):
+    """Pull Aesir instances + Meta phone quality → cross-reference by phone → upsert aesir_instances."""
+    db = get_db()
+    settings = db.table("aesir_settings").select("*").eq("owner_id", user_id).execute()
+    if not settings.data:
+        raise HTTPException(400, "Credenciais não configuradas")
+    row = settings.data[0]
+
+    meta_token = safe_decrypt(row.get("meta_token_enc") or "")
+    waba_ids: list[str] = row.get("waba_ids") or []
+
+    # 1. Fetch Aesir ERP instances
+    aesir_token = safe_decrypt(row["api_token_enc"])
+    if not aesir_token:
+        raise HTTPException(400, "Token Aesir inválido — reconfigure")
+    client = AesirClient(api_token=aesir_token, account_id=row["account_id"])
+    try:
+        aesir_instances = await client.list_instances()
+    except Exception as e:
+        raise HTTPException(502, f"Aesir API error: {e}")
+
+    # 2. Fetch Meta phone quality (optional — only if meta configured)
+    meta_phones: dict[str, dict] = {}  # last-10-digits → quality dict
+    if meta_token and waba_ids:
+        meta_client = MetaClient(access_token=meta_token)
+        for waba_id in waba_ids:
+            try:
+                phones = await meta_client.get_all_phones(waba_id)
+                for p in phones:
+                    raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+                    key = raw[-10:] if len(raw) >= 10 else raw
+                    if key:
+                        meta_phones[key] = p
+            except Exception:
+                pass  # don't fail the whole refresh if one WABA errors
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    # 3. Upsert instances with quality data
+    for inst in aesir_instances:
+        iid = str(inst.get("id") or inst.get("instance_id") or "")
+        if not iid:
+            continue
+        phone_raw = inst.get("phone") or inst.get("phone_number") or ""
+        digits = "".join(c for c in phone_raw if c.isdigit())
+        key = digits[-10:] if len(digits) >= 10 else digits
+
+        quality = meta_phones.get(key, {})
+        upsert_payload: dict = {
+            "owner_id": user_id,
+            "instance_id": iid,
+            "name": inst.get("name") or inst.get("instance_name") or iid,
+            "phone": phone_raw,
+            "status": inst.get("status") or inst.get("connection_status") or "unknown",
+            "updated_at": now,
+        }
+        if quality:
+            upsert_payload.update({
+                "display_phone": quality.get("display_phone"),
+                "quality_rating": quality.get("quality_rating", "UNKNOWN"),
+                "messaging_tier": quality.get("messaging_tier"),
+                "can_send": quality.get("can_send", "UNKNOWN"),
+                "daily_limit": quality.get("daily_limit") or 500,
+                "quality_updated_at": now,
+            })
+
+        db.table("aesir_instances").upsert(upsert_payload, on_conflict="owner_id,instance_id").execute()
+
+    stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
+    return {"ok": True, "instances": stored.data or [], "meta_matched": len(meta_phones)}
 
 
 # ── Dispatch ──────────────────────────────────────────────────────────────────

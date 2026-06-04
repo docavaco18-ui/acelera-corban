@@ -507,7 +507,7 @@ aesirAxios.interceptors.request.use(async (config) => {
 
 export const aesirApi = {
   getCredentials: () =>
-    aesirAxios.get<{ configured: boolean; account_id?: string; updated_at?: string }>("/api/aesir-broadcast/credentials").then((r) => r.data),
+    aesirAxios.get<{ configured: boolean; account_id?: string; meta_configured?: boolean; waba_ids?: string[]; updated_at?: string }>("/api/aesir-broadcast/credentials").then((r) => r.data),
   saveCredentials: (api_token: string, account_id: string) =>
     aesirAxios.post("/api/aesir-broadcast/credentials", { api_token, account_id }).then((r) => r.data),
 
@@ -526,6 +526,10 @@ export const aesirApi = {
     aesirAxios.post(`/api/aesir-broadcast/dispatch/${id}/cancel`).then((r) => r.data),
   listDispatches: () =>
     aesirAxios.get<any[]>("/api/aesir-broadcast/dispatches").then((r) => r.data),
+  refreshNumbers: () =>
+    aesirAxios.post<{ ok: boolean; instances: any[]; meta_matched: number }>("/api/aesir-broadcast/refresh-numbers").then((r) => r.data),
+  saveMetaCredentials: (meta_token: string, waba_ids: string[]) =>
+    aesirAxios.post("/api/aesir-broadcast/meta-credentials", { meta_token, waba_ids }).then((r) => r.data),
 };
 
 export const broadcastApi = {
