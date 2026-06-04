@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import redis.asyncio as aioredis
+
+log = logging.getLogger(__name__)
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
@@ -280,7 +283,8 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
         csv_bytes = csv_bytes[3:]
 
-    total_leads = max(0, csv_bytes.count(b"\n") - 1)
+    csv_text_tmp = csv_bytes.decode("utf-8", errors="replace")
+    total_leads = max(0, len([l for l in csv_text_tmp.splitlines() if l.strip()]) - 1)
 
     csv_columns: list[str] = []
     try:
@@ -313,7 +317,10 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
     }).execute()
 
     r = aioredis.from_url(settings.redis_url)
-    await r.setex(f"aesir:csv:{dispatch_id}", 3600, csv_bytes)
+    try:
+        await r.setex(f"aesir:csv:{dispatch_id}", 3600, csv_bytes)
+    finally:
+        await r.aclose()
 
     return {
         "dispatch_id": dispatch_id,
@@ -351,6 +358,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
     r = aioredis.from_url(settings.redis_url)
     csv_bytes = await r.get(f"aesir:csv:{body.dispatch_id}")
+    await r.aclose()
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou (1h). Faça upload novamente.")
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
@@ -415,6 +423,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                     "status": "done" if not stop_event.is_set() else "paused",
                 }, db)
             except Exception as exc:
+                log.exception("aesir dispatch error instance=%s dispatch=%s: %s", iid, body.dispatch_id, exc)
                 _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
 
         final = "done" if not stop_event.is_set() else "paused"
@@ -497,10 +506,16 @@ async def list_dispatches(user_id: str = Depends(_get_user_id)):
 @router.get("/analytics")
 async def get_analytics(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    resp = db.table("aesir_dispatches").select("id, campaign_name, sent, errors, total_leads, total_contacts, status, created_at, finished_at").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(20).execute()
+    resp = db.table("aesir_dispatches").select("id, campaign_name, total_leads, assignments_json, status, created_at, finished_at").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(20).execute()
     rows = resp.data or []
-    total_sent = sum((r.get("sent") or 0) for r in rows)
-    total_errors = sum((r.get("errors") or 0) for r in rows)
+    total_sent = 0
+    total_errors = 0
+    for r in rows:
+        asns = r.get("assignments_json") or []
+        r["sent"] = sum(a.get("sent", 0) for a in asns)
+        r["errors"] = sum(a.get("errors", 0) for a in asns)
+        total_sent += r["sent"]
+        total_errors += r["errors"]
     return {
         "campaigns": rows,
         "total_sent": total_sent,

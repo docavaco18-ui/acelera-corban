@@ -68,21 +68,29 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
 
 function MetaPanel({ onSaved }: { onSaved: () => void }) {
   const [metaOk, setMetaOk] = useState(false);
+  const [savedWabaIds, setSavedWabaIds] = useState<string[]>([]);
   const [tok, setTok] = useState('');
+  const [wabaText, setWabaText] = useState('');
   const [saving, setSaving] = useState(false); const [msg, setMsg] = useState('');
 
   useEffect(() => {
     aesirApi.getCredentials().then(d => {
-      if (d.configured) setMetaOk(d.meta_configured || false);
+      if (d.configured) {
+        setMetaOk(d.meta_configured || false);
+        if (d.waba_ids?.length) setSavedWabaIds(d.waba_ids);
+      }
     }).catch(() => {});
   }, []);
 
   const save = async () => {
     if (!tok.trim()) { setMsg('Informe o Meta System User Token'); return; }
+    const waba_ids = wabaText.split('\n').map(s => s.trim()).filter(Boolean);
     setSaving(true);
     try {
-      await aesirApi.saveMetaCredentials(tok.trim(), []);
-      setMetaOk(true); setTok(''); setMsg('Meta configurado! WABAs descobertos automaticamente no Refresh.'); onSaved();
+      await aesirApi.saveMetaCredentials(tok.trim(), waba_ids);
+      setMetaOk(true); setSavedWabaIds(waba_ids); setTok(''); setWabaText('');
+      setMsg(waba_ids.length ? `Meta configurado! ${waba_ids.length} WABA(s) salvo(s).` : 'Meta token salvo.');
+      onSaved();
     } catch (e: any) { setMsg('Erro: ' + (e?.response?.data?.detail || e?.message)); }
     finally { setSaving(false); }
   };
@@ -90,13 +98,20 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
   return (
     <div style={CARD}>
       <h2 style={H2('#1d9bf0')}>Meta Business Manager</h2>
-      {metaOk && <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 8 }}>✅ Meta token configurado</p>}
+      {metaOk && (
+        <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 8 }}>
+          ✅ Meta token configurado{savedWabaIds.length ? ` · ${savedWabaIds.length} WABA(s)` : ' · WABAs não configurados'}
+        </p>
+      )}
       <p style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
-        Token permanente System User BM. WABAs e números são descobertos automaticamente ao clicar em "Refresh Números".
+        Token permanente do System User BM. Informe os WABA IDs (um por linha) — encontre em Meta Business Suite → WhatsApp Manager → ID da conta.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
         <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>System User Token</label>
           <input style={INPUT} type="password" placeholder="EAAOKxO1..." value={tok} onChange={e => setTok(e.target.value)} /></div>
+        <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>WABA IDs (um por linha)</label>
+          <textarea style={{ ...INPUT, height: 80, resize: 'vertical', fontFamily: 'monospace' }}
+            placeholder={'123456789\n987654321'} value={wabaText} onChange={e => setWabaText(e.target.value)} /></div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button style={BTN('#1d9bf0', saving)} onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar Meta'}</button>
           {msg && <span style={{ color: msg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>{msg}</span>}
