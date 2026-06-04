@@ -70,8 +70,9 @@ class AesirClient:
                         phone_raw = row[col]
                         break
                 phone = "".join(c for c in phone_raw if c.isdigit())
-                if not phone:
+                if not phone or not (10 <= len(phone) <= 13):
                     errors += 1
+                    log.debug("aesir_skip invalid_phone raw=%r digits=%r", phone_raw, phone)
                     continue
 
                 message = message_tpl
@@ -89,7 +90,7 @@ class AesirClient:
                     log.info(f"aesir_sent phone={phone} instance={instance_id}")
                 except Exception as exc:
                     errors += 1
-                    log.warning(f"aesir_send_error phone={phone}: {exc}")
+                    log.warning("aesir_send_error phone=%s error=%s: %s", phone, type(exc).__name__, str(exc)[:120])
 
                 # sleep between rows, skip after last
                 if i < len(rows) - 1:

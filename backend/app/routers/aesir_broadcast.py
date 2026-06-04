@@ -34,8 +34,14 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     try:
         resp = db.auth.get_user(credentials.credentials)
         return resp.user.id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        msg = str(exc).lower()
+        if any(k in msg for k in ("invalid", "expired", "unauthorized", "jwt", "token")):
+            raise HTTPException(status_code=401, detail="Invalid token")
+        log.exception("_get_user_id unexpected error")
+        raise HTTPException(status_code=503, detail="Auth service unavailable")
 
 
 def _get_client(user_id: str) -> AesirClient:
@@ -314,11 +320,8 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
 
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        await r.setex(f"aesir:csv:{dispatch_id}", 3600, csv_bytes)
-    finally:
-        await r.aclose()
+    async with aioredis.from_url(settings.redis_url) as r:
+        await r.setex(f"aesir:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
 
     return {
         "dispatch_id": dispatch_id,
@@ -354,9 +357,8 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
 
-    r = aioredis.from_url(settings.redis_url)
-    csv_bytes = await r.get(f"aesir:csv:{body.dispatch_id}")
-    await r.aclose()
+    async with aioredis.from_url(settings.redis_url) as r:
+        csv_bytes = await r.get(f"aesir:csv:{user_id}:{body.dispatch_id}")
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou (1h). Faça upload novamente.")
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
@@ -368,7 +370,10 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
     data_rows = csv_lines[1:] if len(csv_lines) > 1 else []
 
     def _slice_csv(rows: list[str], start: int, count: int) -> bytes:
-        chunk = [header] + rows[start: start + count]
+        actual = rows[start: start + count]
+        if len(actual) < count:
+            log.warning("aesir _slice_csv: requested %d rows from offset %d but only %d available", count, start, len(actual))
+        chunk = [header] + actual
         return "\n".join(chunk).encode("utf-8")
 
     # Build assignments_json with initial state
@@ -395,43 +400,52 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
     async def _run():
         row_offset = 0
-        for asn_model in body.assignments:
-            if stop_event.is_set():
-                break
-            iid = asn_model.instance_id
-            planned = asn_model.planned_count
-            slice_bytes = _slice_csv(data_rows, row_offset, planned)
-            row_offset += planned
+        try:
+            for asn_model in body.assignments:
+                if stop_event.is_set():
+                    break
+                iid = asn_model.instance_id
+                planned = asn_model.planned_count
+                slice_bytes = _slice_csv(data_rows, row_offset, planned)
+                row_offset += planned
 
-            # Mark this instance as running
-            _update_assignment(body.dispatch_id, iid, {"status": "running"}, db)
+                _update_assignment(body.dispatch_id, iid, {"status": "running"}, db)
 
-            try:
-                result = await client.dispatch_csv(
-                    csv_bytes=slice_bytes,
-                    instance_id=iid,
-                    message_tpl=body.message_tpl,
-                    phone_column=body.phone_column,
-                    cooldown_seconds=body.cooldown_seconds,
-                    stop_event=stop_event,
-                )
-                _update_assignment(body.dispatch_id, iid, {
-                    "sent": result["sent"],
-                    "errors": result["errors"],
-                    "status": "done" if not stop_event.is_set() else "paused",
-                }, db)
-            except Exception as exc:
-                log.exception("aesir dispatch error instance=%s dispatch=%s: %s", iid, body.dispatch_id, exc)
-                _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
+                try:
+                    result = await client.dispatch_csv(
+                        csv_bytes=slice_bytes,
+                        instance_id=iid,
+                        message_tpl=body.message_tpl,
+                        phone_column=body.phone_column,
+                        cooldown_seconds=body.cooldown_seconds,
+                        stop_event=stop_event,
+                    )
+                    _update_assignment(body.dispatch_id, iid, {
+                        "sent": result["sent"],
+                        "errors": result["errors"],
+                        "status": "done" if not stop_event.is_set() else "paused",
+                    }, db)
+                except asyncio.CancelledError:
+                    _update_assignment(body.dispatch_id, iid, {"status": "paused"}, db)
+                    raise
+                except Exception as exc:
+                    log.exception("aesir dispatch error instance=%s dispatch=%s", iid, body.dispatch_id)
+                    _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
 
-        final = "done" if not stop_event.is_set() else "paused"
-        db.table("aesir_dispatches").update({
-            "status": final,
-            "finished_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", body.dispatch_id).execute()
-        _stop_events.pop(body.dispatch_id, None)
-        _bg_tasks.discard(task)
+            final = "done" if not stop_event.is_set() else "paused"
+        except asyncio.CancelledError:
+            final = "paused"
+        except Exception:
+            log.exception("aesir _run unhandled error dispatch=%s", body.dispatch_id)
+            final = "error"
+        finally:
+            db.table("aesir_dispatches").update({
+                "status": final,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("id", body.dispatch_id).execute()
+            _stop_events.pop(body.dispatch_id, None)
+            _bg_tasks.discard(task)
 
     task = asyncio.create_task(_run())
     _bg_tasks.add(task)

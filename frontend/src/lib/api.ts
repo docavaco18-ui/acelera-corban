@@ -568,7 +568,7 @@ chipcareAxios.interceptors.request.use(async (config) => {
 export const chipcareApi = {
   // credentials
   getCredentials: () =>
-    chipcareAxios.get<{ configured: boolean; email?: string; tenant_id?: string; updated_at?: string }>("/api/chipcare-broadcast/credentials").then((r) => r.data),
+    chipcareAxios.get<{ configured: boolean; tenant_id?: string; sa_create?: string; sa_activate?: string; updated_at?: string }>("/api/chipcare-broadcast/credentials").then((r) => r.data),
   saveCredentials: (email: string, password: string, tenant_id?: string) =>
     chipcareAxios.post("/api/chipcare-broadcast/credentials", { email, password, tenant_id }).then((r) => r.data),
 

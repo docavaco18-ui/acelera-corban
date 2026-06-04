@@ -39,9 +39,31 @@ from app.services.broadcast.chipcare_client import (
     csv_to_xlsx_bytes,
 )
 
+import time as _time
+
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chipcare-broadcast", tags=["chipcare-broadcast"])
 security = HTTPBearer()
+
+# JWT cache: user_id → (jwt_token, expires_at_epoch). TTL 60min (conservative under Chipcare's ~2h lifetime).
+_jwt_cache: dict[str, tuple[str, float]] = {}
+_JWT_TTL = 3600.0
+
+
+def _get_cached_jwt(user_id: str) -> str | None:
+    entry = _jwt_cache.get(user_id)
+    if entry and _time.monotonic() < entry[1]:
+        return entry[0]
+    _jwt_cache.pop(user_id, None)
+    return None
+
+
+def _set_cached_jwt(user_id: str, jwt: str) -> None:
+    _jwt_cache[user_id] = (jwt, _time.monotonic() + _JWT_TTL)
+
+
+def _invalidate_jwt(user_id: str) -> None:
+    _jwt_cache.pop(user_id, None)
 
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -51,8 +73,14 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     try:
         resp = db.auth.get_user(credentials.credentials)
         return resp.user.id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        msg = str(exc).lower()
+        if any(k in msg for k in ("invalid", "expired", "unauthorized", "jwt", "token")):
+            raise HTTPException(status_code=401, detail="Invalid token")
+        log.exception("_get_user_id unexpected error")
+        raise HTTPException(status_code=503, detail="Auth service unavailable")
 
 
 def _get_client_and_settings(user_id: str) -> tuple[ChipcareClient, dict]:
@@ -161,11 +189,24 @@ class SaHashesIn(BaseModel):
     sa_list_camps: str | None = None
 
 
+import re as _re
+
+_SA_HASH_RE = _re.compile(r'^[0-9a-f]{40,}$', _re.IGNORECASE)
+
+
 @router.post("/sa-hashes")
 async def update_sa_hashes(body: SaHashesIn, user_id: str = Depends(_get_user_id)):
     """Atualizar hashes SA quando Chipcare fizer deploy e os hashes mudarem."""
     db = get_db()
-    patch = {k: v for k, v in body.dict().items() if v}
+    patch: dict = {}
+    for k, v in body.dict().items():
+        if not v:
+            continue
+        if not _SA_HASH_RE.match(v):
+            raise HTTPException(400, f"Hash SA inválido '{k}': deve ter 40+ caracteres hex (got {len(v)} chars)")
+        patch[k] = v
+    if not patch:
+        raise HTTPException(400, "Nenhum hash fornecido")
     patch["updated_at"] = datetime.now(timezone.utc).isoformat()
     db.table("chipcare_settings").update(patch).eq("owner_id", user_id).execute()
     return {"ok": True, "updated": list(patch.keys())}
@@ -197,7 +238,9 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
     client, row = _get_client_and_settings(user_id)
     try:
         jwt = await client.login(tenant_id=row.get("tenant_id"))
+        _set_cached_jwt(user_id, jwt)
     except Exception as e:
+        _invalidate_jwt(user_id)
         raise HTTPException(502, f"Login Chipcare falhou: {e}")
 
     # Save user_id for createCampaign _1_createdBy
@@ -260,13 +303,14 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
     """Login no Chipcare + SA getCommonChannelTemplates → retorna templates HSM."""
     db = get_db()
     client, row = _get_client_and_settings(user_id)
-    # Get stored channel IDs (non-paused WHATSAPP_OFFICIAL)
     ch_resp = db.table("chipcare_channels").select("channel_id").eq("owner_id", user_id).eq("is_paused", False).execute()
     channel_ids = [r["channel_id"] for r in (ch_resp.data or [])]
     try:
-        jwt = await client.login(tenant_id=row.get("tenant_id"))
+        jwt = _get_cached_jwt(user_id) or await client.login(tenant_id=row.get("tenant_id"))
+        _set_cached_jwt(user_id, jwt)
         templates = await client.list_templates(jwt, channel_ids=channel_ids or None)
     except Exception as e:
+        _invalidate_jwt(user_id)
         raise HTTPException(502, f"Chipcare list_templates falhou: {e}")
     return {"templates": templates}
 
@@ -314,11 +358,8 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
 
-    r = aioredis.from_url(settings.redis_url)
-    try:
-        await r.setex(f"chipcare:csv:{dispatch_id}", 3600, csv_bytes)
-    finally:
-        await r.aclose()
+    async with aioredis.from_url(settings.redis_url) as r:
+        await r.setex(f"chipcare:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
 
     return {
         "dispatch_id": dispatch_id,
@@ -368,9 +409,8 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
 
-    r = aioredis.from_url(settings.redis_url)
-    csv_bytes = await r.get(f"chipcare:csv:{body.dispatch_id}")
-    await r.aclose()
+    async with aioredis.from_url(settings.redis_url) as r:
+        csv_bytes = await r.get(f"chipcare:csv:{user_id}:{body.dispatch_id}")
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou (1h). Faça upload novamente.")
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
@@ -398,13 +438,19 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
 
     client, row = _get_client_and_settings(user_id)
     try:
-        jwt = await client.login(tenant_id=row.get("tenant_id"))
+        jwt = _get_cached_jwt(user_id) or await client.login(tenant_id=row.get("tenant_id"))
+        _set_cached_jwt(user_id, jwt)
     except Exception as e:
+        _invalidate_jwt(user_id)
         raise HTTPException(502, f"Login Chipcare falhou: {e}")
 
     # Convert CSV to XLSX for upload
     xlsx_bytes = None
     if body.source_type == "XLSX_FILE":
+        try:
+            import openpyxl  # noqa
+        except ImportError:
+            raise HTTPException(500, "openpyxl não instalado no servidor — instale: pip install openpyxl")
         xlsx_bytes = csv_to_xlsx_bytes(csv_bytes)
 
     try:
@@ -472,8 +518,14 @@ async def activate_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_i
         raise HTTPException(400, "Campanha Chipcare não criada ainda")
 
     client, settings_row = _get_client_and_settings(user_id)
-    jwt = await client.login(tenant_id=settings_row.get("tenant_id"))
-    await client.activate_campaign(jwt, chipcare_id)
+    try:
+        jwt = _get_cached_jwt(user_id) or await client.login(tenant_id=settings_row.get("tenant_id"))
+        _set_cached_jwt(user_id, jwt)
+        await client.activate_campaign(jwt, chipcare_id)
+    except Exception as e:
+        _invalidate_jwt(user_id)
+        log.exception("chipcare activate_dispatch error dispatch=%s campaign=%s: %s", dispatch_id, chipcare_id, e)
+        raise HTTPException(502, f"Chipcare ativar campanha falhou: {e}")
 
     db.table("chipcare_dispatches").update({
         "status": "running",

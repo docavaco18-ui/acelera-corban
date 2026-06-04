@@ -159,9 +159,7 @@ class ChipcareClient:
             )
             r.raise_for_status()
             result = _parse_rsc_json(r.text)
-            # RSC line 0 is metadata, line 1 is the template list
             if isinstance(result, list) and len(result) > 0:
-                # If first element is dict with RSC metadata (has "a", "f" keys), skip it
                 templates = []
                 for item in result:
                     if isinstance(item, list):
@@ -169,8 +167,11 @@ class ChipcareClient:
                         break
                     elif isinstance(item, dict) and "id" in item:
                         templates.append(item)
+                if not templates:
+                    log.warning("chipcare list_templates: RSC parsed %d items but extracted 0 templates — hash may be stale. Raw[:200]: %s", len(result), r.text[:200])
                 return templates
-            return result if isinstance(result, list) else []
+            log.warning("chipcare list_templates: RSC parse returned no JSON objects — hash may be stale. Status=%s Raw[:200]: %s", r.status_code, r.text[:200])
+            return []
 
     # ── Lead preview ─────────────────────────────────────────────────────────
 
@@ -236,7 +237,9 @@ class ChipcareClient:
                 "source_type": source_type,
             }
 
-        user_id = self._user_id or "2"
+        user_id = self._user_id
+        if not user_id:
+            raise ValueError("chipcare user_id não resolvido — chame login() antes de create_campaign()")
         form = _build_campaign_formdata(
             name=name,
             channel_ids=channel_ids,
