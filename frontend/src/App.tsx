@@ -79,7 +79,7 @@ function TopBar() {
         ["/dashboard", "Dashboard"],
         ["/crm", "CRM"],
         ["/chatwoot", "CRM Chatwoot"],
-        ["/disparo", "Disparo WhatsApp"],
+        ["/disparo", "Disparo VendeAI"],
         ["/disparo-aesir", "Disparo Aesir"],
         ["/disparo-chipcare", "Disparo Chipcare"],
         ["/registros", "Registros"],

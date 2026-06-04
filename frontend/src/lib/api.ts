@@ -627,7 +627,7 @@ export const chipcareApi = {
 
 export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
-  saveCredentials: (data: { email: string; password: string; meta_token?: string }) =>
+  saveCredentials: (data: { email?: string; password?: string; meta_token?: string }) =>
     broadcastAxios.post("/api/broadcast/credentials", data),
   listNumbers: () => broadcastAxios.get("/api/broadcast/numbers"),
   refreshNumbers: () => broadcastAxios.post("/api/broadcast/numbers/refresh"),

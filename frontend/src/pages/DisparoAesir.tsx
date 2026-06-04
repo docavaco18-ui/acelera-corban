@@ -104,14 +104,18 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
         </p>
       )}
       <p style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
-        Token permanente do System User BM. Informe os WABA IDs (um por linha) — encontre em Meta Business Suite → WhatsApp Manager → ID da conta.
+        Token permanente do System User BM. <strong style={{ color: '#94a3b8' }}>WABA IDs são opcionais</strong> — o token auto-descobre todos os WABAs da BM ao Refresh Números. Informe manualmente apenas se quiser restringir a WABAs específicas.
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
         <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>System User Token</label>
           <input style={INPUT} type="password" placeholder="EAAOKxO1..." value={tok} onChange={e => setTok(e.target.value)} /></div>
-        <div><label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>WABA IDs (um por linha)</label>
+        <div>
+          <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>
+            WABA IDs (opcional — um por linha)
+            <span style={{ color: '#6366f1', marginLeft: 6, fontSize: 11 }}>deixe vazio para auto-descoberta</span>
+          </label>
           <textarea style={{ ...INPUT, height: 80, resize: 'vertical', fontFamily: 'monospace' }}
-            placeholder={'123456789\n987654321'} value={wabaText} onChange={e => setWabaText(e.target.value)} /></div>
+            placeholder={'Opcional — token auto-descobre WABAs da BM\n123456789\n987654321'} value={wabaText} onChange={e => setWabaText(e.target.value)} /></div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
           <button style={BTN('#1d9bf0', saving)} onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar Meta'}</button>
           {msg && <span style={{ color: msg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>{msg}</span>}

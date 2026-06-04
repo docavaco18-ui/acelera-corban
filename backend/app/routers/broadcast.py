@@ -78,8 +78,15 @@ async def save_credentials(
 @router.get("/credentials")
 async def get_credentials_status(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    resp = db.table("vendeai_settings").select("owner_id").eq("owner_id", user_id).execute()
-    return {"configured": bool(resp.data)}
+    resp = db.table("vendeai_settings").select("*").eq("owner_id", user_id).execute()
+    if not resp.data:
+        return {"configured": False, "meta_configured": False, "waba_ids": []}
+    row = resp.data[0]
+    return {
+        "configured": bool(row.get("email_enc")),
+        "meta_configured": bool(row.get("meta_token_enc")),
+        "waba_ids": row.get("waba_ids") or [],
+    }
 
 
 # ── Numbers ───────────────────────────────────────────────────────────────────
@@ -147,7 +154,12 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     if not meta_token:
         raise HTTPException(400, "Token Meta não configurado")
     if not waba_ids:
-        raise HTTPException(400, "Nenhum WABA ID configurado")
+        try:
+            waba_ids = await MetaClient(meta_token).discover_wabas()
+        except Exception:
+            waba_ids = []
+        if not waba_ids:
+            raise HTTPException(400, "Nenhum WABA ID configurado e auto-descoberta não retornou resultados")
 
     # 1. Fetch VendeAI/Chatwoot inboxes — build lookup: last10digits → inbox_id
     chatwoot_map: dict[str, str] = {}
