@@ -34,7 +34,7 @@ def test_get_returns_empty_when_no_creds(client):
     resp = client.get("/api/credentials")
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"v8": None, "vctex": None}
+    assert body == {"v8": None, "vctex": None, "mercantil": None, "presenca": None, "powerhub": None}
 
 
 def test_get_returns_safe_summary(client):

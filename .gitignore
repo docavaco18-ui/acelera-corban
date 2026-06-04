@@ -13,3 +13,6 @@ PROGRESS.md
 # Playwright session state (Mercantil cookies persistidas por user)
 .bot_state/
 backend/.bot_state/
+# Bases de dados com PII — nunca versionar
+*.csv
+*.xlsx

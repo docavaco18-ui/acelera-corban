@@ -74,4 +74,8 @@ def test_tenant_tables_constant():
     assert TENANT_TABLES == {
         "v8_leads", "v8_bot_runs", "v8_batches",
         "vctex_leads", "vctex_bot_runs", "vctex_batches",
+        "mercantil_leads", "mercantil_bot_runs", "mercantil_batches",
+        "presenca_leads", "presenca_bot_runs", "presenca_batches",
+        "powerhub_leads", "powerhub_bot_runs", "powerhub_batches",
+        "crm_propostas", "crm_settings",
     }

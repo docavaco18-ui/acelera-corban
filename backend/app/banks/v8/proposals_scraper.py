@@ -399,7 +399,7 @@ class V8ProposalsScraper:
                         .filter(el => el.children.length === 0);
                     for (const el of all) {
                         const t = el.textContent.trim();
-                        const m = t.match(/Contratado[:\s]+(R\\$[\\s\\S]+)/i);
+                        const m = t.match(/Contratado[:\\s]+(R\\$[\\s\\S]+)/i);
                         if (m) { result.valor = m[1].trim(); break; }
                     }
                 }

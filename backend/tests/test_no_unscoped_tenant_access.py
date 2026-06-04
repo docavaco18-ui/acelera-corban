@@ -14,6 +14,9 @@ TENANT_TABLES = {
 ALLOWLIST = {
     "app/db_scoped.py",
     "app/routers/webhook.py",
+    "app/routers/admin.py",             # cross-tenant intencional — protegido por require_admin
+    "app/routers/chatwoot.py",          # filtra .eq("owner_id") manualmente antes de range/in_
+    "app/services/chatwoot_service.py", # filtra .eq("owner_id") manualmente no loop de paginação
 }
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"

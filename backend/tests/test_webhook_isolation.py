@@ -25,6 +25,7 @@ def test_webhook_resolves_owner_and_updates_by_id(monkeypatch):
         def execute(self):
             return MagicMock(data=[])
 
+    monkeypatch.setattr(webhook_mod, "_verify_v8_signature", lambda raw, sig: None)
     monkeypatch.setattr(webhook_mod, "scoped", lambda d, t, uid: FakeScoped(None, uid))
     monkeypatch.setattr(webhook_mod, "get_db", lambda: db)
 

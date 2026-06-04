@@ -48,10 +48,7 @@ Em tudo que é local/reversível: tomar decisão e executar.
 ## Banco Mercantil (3º banco — 2026-05-13)
 
 ### Credenciais portal
-- **URL:** `https://meu.bancomercantil.com.br/login`
-- **Login:** `35275CF.GABRIEL`
-- **Senha:** `zZB|;v8eoe5~J1$[_4/_%`
-- **SMS 2FA:** código 6 dígitos pro celular final **-5744** (pode levar até 5 min)
+- Credenciais removidas deste arquivo por segurança. Ver `PROGRESS.md` (gitignored).
 
 ### Arquitetura — BFF Bridge via page.evaluate (decisão 2026-05-13)
 
@@ -413,7 +410,7 @@ Enriquecimento de telefone por CPF. Retorna até 4 telefones — exporta 1 linha
 - **Resposta:** `{telefones: [{phone: "..."}], nomeCompleto: "..."}`
 
 ### Credenciais portal
-- **Login:** `1243` / **Senha:** `Nexxo2025`
+- Credenciais removidas deste arquivo por segurança. Ver `PROGRESS.md` (gitignored).
 
 ### Arquivos-chave
 - `backend/app/banks/powerhub/api_client.py` — httpx, keep-alive desabilitado, retry 3x em RemoteProtocolError
@@ -466,3 +463,27 @@ Feature pra agendar disparo automático de bot. Implementado em **Presença**. P
 
 ⚠️ `/api/credentials` ainda 500 mesmo após fix — outro banco com Fernet antigo. Não bloqueia scheduler. Endpoint usa `decrypt()` simples; trocar pra `safe_decrypt()` em `credentials/service.py:get()` resolve.
 
+
+## gstack (REQUIRED — global install)
+
+**Before doing ANY work, verify gstack is installed:**
+
+```bash
+test -d ~/.claude/skills/gstack/bin && echo "GSTACK_OK" || echo "GSTACK_MISSING"
+```
+
+If GSTACK_MISSING: STOP. Do not proceed. Tell the user:
+
+> gstack is required for all AI-assisted work in this repo.
+> Install it:
+> ```bash
+> git clone --depth 1 https://github.com/garrytan/gstack.git ~/.claude/skills/gstack
+> cd ~/.claude/skills/gstack && ./setup --team
+> ```
+> Then restart your AI coding tool.
+
+Do not skip skills, ignore gstack errors, or work around missing gstack.
+
+Using gstack skills: After install, skills like /qa, /ship, /review, /investigate,
+and /browse are available. Use /browse for all web browsing.
+Use ~/.claude/skills/gstack/... for gstack file paths (the global path).

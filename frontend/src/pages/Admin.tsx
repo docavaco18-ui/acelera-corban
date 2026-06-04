@@ -190,7 +190,7 @@ export function Admin() {
           </div>
           <div style={{ flex: "1 1 180px" }}>
             <label style={{ fontSize: ".7rem", color: "#666", display: "block", marginBottom: 4 }}>Senha</label>
-            <input type="text" required minLength={6} value={password} onChange={e => setPassword(e.target.value)}
+            <input type="password" required minLength={6} value={password} onChange={e => setPassword(e.target.value)}
               style={inp} />
           </div>
           <div>
