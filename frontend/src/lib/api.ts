@@ -522,7 +522,7 @@ export const aesirApi = {
   resumeInstance: (instanceId: string) =>
     aesirAxios.post(`/api/aesir-broadcast/instances/${instanceId}/resume`).then((r) => r.data),
   refreshNumbers: () =>
-    aesirAxios.post<{ ok: boolean; instances: any[]; meta_matched: number }>("/api/aesir-broadcast/refresh-numbers").then((r) => r.data),
+    aesirAxios.post<{ ok: boolean; instances: any[]; meta_matched: number; meta_total?: number; aesir_error?: string | null; meta_error?: string | null }>("/api/aesir-broadcast/refresh-numbers").then((r) => r.data),
 
   // wizard
   analyzeCSV: (file: File) => {
@@ -568,9 +568,11 @@ chipcareAxios.interceptors.request.use(async (config) => {
 export const chipcareApi = {
   // credentials
   getCredentials: () =>
-    chipcareAxios.get<{ configured: boolean; tenant_id?: string; sa_create?: string; sa_activate?: string; updated_at?: string }>("/api/chipcare-broadcast/credentials").then((r) => r.data),
+    chipcareAxios.get<{ configured: boolean; tenant_id?: string; sa_create?: string; sa_activate?: string; updated_at?: string; meta_configured?: boolean; waba_ids?: string[] }>("/api/chipcare-broadcast/credentials").then((r) => r.data),
   saveCredentials: (email: string, password: string, tenant_id?: string) =>
     chipcareAxios.post("/api/chipcare-broadcast/credentials", { email, password, tenant_id }).then((r) => r.data),
+  saveMetaCredentials: (meta_token: string, waba_ids: string[]) =>
+    chipcareAxios.post("/api/chipcare-broadcast/meta-credentials", { meta_token, waba_ids }).then((r) => r.data),
 
   // SA hashes
   updateHashes: (hashes: { sa_create?: string; sa_activate?: string; sa_list_tpl?: string; sa_list_camps?: string }) =>
@@ -580,7 +582,7 @@ export const chipcareApi = {
   listChannels: () =>
     chipcareAxios.get<any[]>("/api/chipcare-broadcast/channels").then((r) => r.data),
   refreshChannels: () =>
-    chipcareAxios.post<{ ok: boolean; channels: any[] }>("/api/chipcare-broadcast/refresh-channels").then((r) => r.data),
+    chipcareAxios.post<{ ok: boolean; channels: any[]; count?: number; meta_total?: number; meta_matched?: number; chipcare_error?: string | null; meta_error?: string | null }>("/api/chipcare-broadcast/refresh-channels").then((r) => r.data),
   pauseChannel: (channelId: number) =>
     chipcareAxios.post(`/api/chipcare-broadcast/channels/${channelId}/pause`).then((r) => r.data),
   resumeChannel: (channelId: number) =>
@@ -627,10 +629,19 @@ export const chipcareApi = {
 
 export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
-  saveCredentials: (data: { email?: string; password?: string; meta_token?: string }) =>
+  saveCredentials: (data: { email?: string; password?: string; meta_token?: string; account_id?: string; crm_token?: string }) =>
     broadcastAxios.post("/api/broadcast/credentials", data),
-  listNumbers: () => broadcastAxios.get("/api/broadcast/numbers"),
-  refreshNumbers: () => broadcastAxios.post("/api/broadcast/numbers/refresh"),
+  listNumbers: () => broadcastAxios.get<any[]>("/api/broadcast/numbers"),
+  refreshNumbers: () => broadcastAxios.post<{
+    ok: boolean;
+    updated: string[];
+    total: number;
+    meta_total?: number;
+    chatwoot_matched?: number;
+    chatwoot_inboxes_found?: number;
+    meta_error?: string | null;
+    chatwoot_error?: string | null;
+  }>("/api/broadcast/numbers/refresh"),
   resumeNumber: (phoneId: string) => broadcastAxios.post(`/api/broadcast/numbers/${phoneId}/resume`),
   analyzeCSV: (file: File) => {
     const form = new FormData();

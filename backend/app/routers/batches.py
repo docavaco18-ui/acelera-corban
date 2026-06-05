@@ -4,6 +4,8 @@ from ..auth_deps import require_user, AuthUser
 from ..database import db as get_db
 from ..db_scoped import scoped
 
+MAX_ROWS = 200_000  # hard cap p/ evitar OOM em scans paginados
+
 router = APIRouter(prefix="/api/batches", tags=["batches"])
 
 

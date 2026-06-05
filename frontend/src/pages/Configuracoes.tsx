@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { credentialsApi, crmSettingsApi, broadcastApi } from "../lib/api";
+import { credentialsApi, crmSettingsApi } from "../lib/api";
 import { useBank } from "../hooks/useBank";
 import { useSession } from "../hooks/useSession";
 
@@ -41,57 +41,12 @@ export default function Configuracoes() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
-  // Disparo WhatsApp state
-  const [vendeaiEmail, setVendeaiEmail] = useState('');
-  const [vendeaiPassword, setVendeaiPassword] = useState('');
-  const [metaToken, setMetaToken] = useState('');
-  const [savingBroadcast, setSavingBroadcast] = useState(false);
-  const [broadcastSaved, setBroadcastSaved] = useState(false);
-  const [broadcastError, setBroadcastError] = useState('');
-  const [wabaIds, setWabaIds] = useState('');
-  const [savingWaba, setSavingWaba] = useState(false);
-  const [wabaSaved, setWabaSaved] = useState(false);
-  const [wabaError, setWabaError] = useState('');
-
   // CRM password state
   const [hasCrmPassword, setHasCrmPassword] = useState(false);
   const [crmPwd, setCrmPwd] = useState("");
   const [crmPwdConfirm, setCrmPwdConfirm] = useState("");
   const [crmBusy, setCrmBusy] = useState(false);
   const [crmMsg, setCrmMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
-
-  const handleSaveWabaIds = async () => {
-    setSavingWaba(true);
-    setWabaError('');
-    try {
-      const ids = wabaIds.split(/\r?\n|,/).map(s => s.trim()).filter(Boolean);
-      await broadcastApi.saveWabaIds(ids);
-      setWabaSaved(true);
-      setTimeout(() => setWabaSaved(false), 3000);
-    } catch (e: any) {
-      setWabaError(e?.response?.data?.detail || e?.message || 'Erro ao salvar');
-    } finally {
-      setSavingWaba(false);
-    }
-  };
-
-  const handleSaveBroadcast = async () => {
-    setSavingBroadcast(true);
-    setBroadcastError('');
-    try {
-      await broadcastApi.saveCredentials({
-        email: vendeaiEmail,
-        password: vendeaiPassword,
-        meta_token: metaToken || undefined,
-      });
-      setBroadcastSaved(true);
-      setTimeout(() => setBroadcastSaved(false), 3000);
-    } catch (e: any) {
-      setBroadcastError(e?.response?.data?.detail || e?.message || 'Erro ao salvar');
-    } finally {
-      setSavingBroadcast(false);
-    }
-  };
 
   const load = async () => {
     try {
@@ -116,10 +71,6 @@ export default function Configuracoes() {
         setHasCrmPassword(cfg.has_crm_password);
       } catch { /* ignora */ }
     }
-    try {
-      const w = await broadcastApi.getWabaIds();
-      setWabaIds((w.data.waba_ids || []).join('\n'));
-    } catch { /* ignora */ }
   };
 
   // Recarrega ao trocar bank
@@ -344,116 +295,25 @@ export default function Configuracoes() {
         </div>
       )}
 
-      {/* Disparo WhatsApp */}
+      {/* Aviso: credenciais de Disparo migraram pra dentro de cada página de disparo */}
       <div style={{
-        background: '#0d0d1f',
-        border: '1px solid #1e1e3a',
+        background: 'rgba(124,58,237,.06)',
+        border: '1px solid rgba(124,58,237,.2)',
         borderRadius: 12,
-        padding: 24,
+        padding: 20,
         marginTop: 24,
         maxWidth: 760,
       }}>
-        <h3 style={{ color: '#6366f1', marginBottom: 16, fontSize: 16, margin: '0 0 16px 0' }}>
-          Disparo WhatsApp
+        <h3 style={{ color: '#a78bfa', fontSize: 15, margin: '0 0 8px 0', fontWeight: 700 }}>
+          📨 Credenciais de Disparo
         </h3>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <label style={{ color: '#94a3b8', fontSize: 13 }}>VendeAI E-mail</label>
-          <input
-            type="text"
-            value={vendeaiEmail}
-            onChange={e => setVendeaiEmail(e.target.value)}
-            placeholder="seu@email.com"
-            style={{
-              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
-              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
-            }}
-          />
-
-          <label style={{ color: '#94a3b8', fontSize: 13 }}>VendeAI Senha</label>
-          <input
-            type="password"
-            value={vendeaiPassword}
-            onChange={e => setVendeaiPassword(e.target.value)}
-            placeholder="Em branco = manter existente"
-            style={{
-              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
-              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
-            }}
-          />
-
-          <label style={{ color: '#94a3b8', fontSize: 13 }}>Meta Graph API Token</label>
-          <input
-            type="password"
-            value={metaToken}
-            onChange={e => setMetaToken(e.target.value)}
-            placeholder="EAAxxxxx..."
-            style={{
-              background: '#080818', border: '1px solid #1e1e3a', borderRadius: 8,
-              padding: '10px 14px', color: '#e2e8f0', fontSize: 14,
-            }}
-          />
-
-          <button
-            onClick={handleSaveBroadcast}
-            disabled={savingBroadcast}
-            style={{
-              background: broadcastSaved ? '#00ff88' : '#6366f1',
-              color: broadcastSaved ? '#080818' : '#fff',
-              border: 'none', borderRadius: 8, padding: '10px 20px',
-              cursor: 'pointer', fontWeight: 600, fontSize: 14,
-              alignSelf: 'flex-start', transition: 'all 0.2s',
-            }}
-          >
-            {broadcastSaved ? 'Salvo!' : savingBroadcast ? 'Salvando...' : 'Salvar'}
-          </button>
-          {broadcastError && (
-            <p style={{ color: '#ff4444', fontSize: 13, margin: '8px 0 0' }}>{broadcastError}</p>
-          )}
-        </div>
-      </div>
-
-      {/* WABA IDs — Meta quality fetching */}
-      <div style={{
-        background: '#0d0d1f',
-        border: '1px solid #1e1e3a',
-        borderRadius: 12,
-        padding: 24,
-        marginTop: 16,
-        maxWidth: 760,
-      }}>
-        <h3 style={{ color: '#6366f1', fontSize: 16, margin: '0 0 8px 0' }}>
-          WABA IDs (WhatsApp Business Account)
-        </h3>
-        <p style={{ color: '#475569', fontSize: 12, margin: '0 0 14px' }}>
-          Um WABA ID por linha. Usado para buscar qualidade e capacidade real de cada número no Meta.
+        <p style={{ color: '#94a3b8', fontSize: 13, margin: 0, lineHeight: 1.6 }}>
+          Cada disparador (VendeAI · Aesir · Chipcare) tem suas próprias credenciais — email/senha do CRM,
+          token Meta System User e WABA IDs — gerenciadas <strong style={{ color: '#e2e8f0' }}>direto na página do disparo</strong>:{' '}
+          <a href="/disparo" style={{ color: '#a78bfa' }}>/disparo</a> ·{' '}
+          <a href="/disparo-aesir" style={{ color: '#a78bfa' }}>/disparo-aesir</a> ·{' '}
+          <a href="/disparo-chipcare" style={{ color: '#a78bfa' }}>/disparo-chipcare</a>
         </p>
-        <textarea
-          value={wabaIds}
-          onChange={e => setWabaIds(e.target.value)}
-          placeholder={"26833705632933404\n1530204361861055\n..."}
-          rows={6}
-          style={{
-            width: '100%', background: '#080818', border: '1px solid #1e1e3a',
-            borderRadius: 8, padding: '10px 14px', color: '#e2e8f0',
-            fontSize: 13, fontFamily: 'monospace', boxSizing: 'border-box', resize: 'vertical',
-          }}
-        />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 12 }}>
-          <button
-            onClick={handleSaveWabaIds}
-            disabled={savingWaba}
-            style={{
-              background: wabaSaved ? '#00ff88' : '#6366f1',
-              color: wabaSaved ? '#080818' : '#fff',
-              border: 'none', borderRadius: 8, padding: '10px 20px',
-              cursor: 'pointer', fontWeight: 600, fontSize: 14,
-            }}
-          >
-            {wabaSaved ? 'Salvo!' : savingWaba ? 'Salvando...' : 'Salvar WABA IDs'}
-          </button>
-          {wabaError && <span style={{ color: '#ff4444', fontSize: 13 }}>{wabaError}</span>}
-        </div>
       </div>
     </div>
   );

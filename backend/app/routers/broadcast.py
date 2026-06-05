@@ -37,6 +37,8 @@ class CredentialsIn(BaseModel):
     email: Optional[str] = None
     password: Optional[str] = None
     meta_token: Optional[str] = None
+    account_id: Optional[str] = None     # Chatwoot/VendeAI account ID
+    crm_token: Optional[str] = None      # CRM access token (Chatwoot)
 
 
 @router.post("/credentials")
@@ -48,7 +50,6 @@ async def save_credentials(
     Aceita strings vazias e None como 'não alterar'."""
     db = get_db()
 
-    # Build patch only with fields that have actual values
     patch: dict = {"owner_id": user_id}
     if body.email and body.email.strip():
         patch["email_enc"] = encrypt(body.email.strip())
@@ -56,18 +57,19 @@ async def save_credentials(
         patch["password_enc"] = encrypt(body.password.strip())
     if body.meta_token and body.meta_token.strip():
         patch["meta_token_enc"] = encrypt(body.meta_token.strip())
+    if body.account_id and body.account_id.strip():
+        patch["account_id"] = body.account_id.strip()
+    if body.crm_token and body.crm_token.strip():
+        patch["crm_token_enc"] = encrypt(body.crm_token.strip())
 
-    if len(patch) == 1:  # só owner_id, sem nada pra atualizar
+    if len(patch) == 1:
         raise HTTPException(400, "Nenhum campo preenchido")
 
-    # Check if row exists — upsert if new, else update only the patched fields
     existing = db.table("vendeai_settings").select("owner_id").eq("owner_id", user_id).execute()
     if existing.data:
-        # Update partial — only fields in patch
         patch.pop("owner_id")
         db.table("vendeai_settings").update(patch).eq("owner_id", user_id).execute()
     else:
-        # First insert — email and password required
         if "email_enc" not in patch or "password_enc" not in patch:
             raise HTTPException(400, "Email e senha obrigatórios na primeira gravação")
         db.table("vendeai_settings").insert(patch).execute()
@@ -80,12 +82,18 @@ async def get_credentials_status(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("vendeai_settings").select("*").eq("owner_id", user_id).execute()
     if not resp.data:
-        return {"configured": False, "meta_configured": False, "waba_ids": []}
+        return {"configured": False, "meta_configured": False, "waba_ids": [], "account_id": None, "crm_token_configured": False, "email": None}
     row = resp.data[0]
+    # Email decifrado (identifier, não secret) — permite pré-preencher form pra UX clara após reload.
+    # Senha + tokens NUNCA retornados (security).
+    email_plain = safe_decrypt(row.get("email_enc") or "") or None
     return {
         "configured": bool(row.get("email_enc")),
         "meta_configured": bool(row.get("meta_token_enc")),
         "waba_ids": row.get("waba_ids") or [],
+        "account_id": row.get("account_id"),
+        "crm_token_configured": bool(row.get("crm_token_enc")),
+        "email": email_plain,
     }
 
 
@@ -139,6 +147,11 @@ async def get_waba_ids(user_id: str = Depends(_get_user_id)):
 
 @router.post("/numbers/refresh")
 async def refresh_numbers(user_id: str = Depends(_get_user_id)):
+    """Pattern Aesir: Meta primeiro (independente do CRM), erros não-fatais, response sempre 200.
+
+    Devolve `chatwoot_error` e `meta_error` no JSON pra UI surfacar sem matar a tela.
+    Números Meta sem match Chatwoot ainda são salvos (chatwoot_connected=False).
+    """
     db = get_db()
     creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
     if not creds.data:
@@ -152,72 +165,106 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     waba_ids: list[str] = creds.data.get("waba_ids") or []
 
     if not meta_token:
-        raise HTTPException(400, "Token Meta não configurado")
-    if not waba_ids:
-        try:
-            waba_ids = await MetaClient(meta_token).discover_wabas()
-        except Exception:
-            waba_ids = []
-        if not waba_ids:
-            raise HTTPException(400, "Nenhum WABA ID configurado e auto-descoberta não retornou resultados")
+        raise HTTPException(400, "Configure o token Meta antes de sincronizar.")
 
-    # 1. Fetch VendeAI/Chatwoot inboxes — build lookup: last10digits → inbox_id
-    chatwoot_map: dict[str, str] = {}
-    try:
-        va = VendeAIClient(vendeai_email, vendeai_pass, account_id=account_id, crm_token=crm_token)
-        inboxes = await va.list_inboxes()
-        for inbox in inboxes:
-            raw_phone = inbox.get("phone_number") or inbox.get("phone") or ""
-            digits = "".join(c for c in raw_phone if c.isdigit())
-            if len(digits) >= 8:
-                key = digits[-10:]
-                chatwoot_map[key] = str(inbox.get("id") or inbox.get("inbox_id") or "")
-            # also index by inbox_id directly for fallback matching
-            inbox_id_str = str(inbox.get("id") or inbox.get("inbox_id") or "")
-            if inbox_id_str:
-                chatwoot_map[f"__id__{inbox_id_str}"] = inbox_id_str
-    except Exception:
-        pass  # Chatwoot down não bloqueia refresh Meta
-
-    # 2. Fetch Meta numbers per WABA — paralelo via gather
+    # ── Step 1: Meta discovery (independente do CRM) ─────────────────────────
+    meta_error: str | None = None
+    meta_phones_list: list[dict] = []
     meta = MetaClient(meta_token)
-    updated = []
+    try:
+        if waba_ids:
+            async def _safe_phones(wid: str):
+                try:
+                    waba_info = await meta.get_waba_info(wid)
+                    phones = await meta.get_all_phones(wid)
+                    for p in phones:
+                        p["waba_name"] = waba_info.get("name", "")
+                        p["account_review_status"] = waba_info.get("account_review_status", "UNKNOWN")
+                        p["business_verification_status"] = waba_info.get("business_verification_status", "unknown")
+                        p["waba_currency"] = waba_info.get("currency", "")
+                        p["waba_country"] = waba_info.get("country", "")
+                    return phones
+                except Exception:
+                    return []
+            results = await asyncio.gather(*[_safe_phones(w) for w in waba_ids])
+            for phones in results:
+                meta_phones_list.extend(phones)
+        else:
+            meta_phones_list = await meta.get_all_phones_auto()
+    except Exception as e:
+        meta_error = str(e)
 
-    async def _safe_phones(wid: str):
+    # ── Step 2: Chatwoot/VendeAI inboxes (não-fatal) ─────────────────────────
+    chatwoot_map: dict[str, str] = {}
+    chatwoot_error: str | None = None
+    if vendeai_email and vendeai_pass:
         try:
-            return wid, await meta.get_all_phones(wid)
-        except Exception:
-            return wid, []
+            va = VendeAIClient(vendeai_email, vendeai_pass, account_id=account_id, crm_token=crm_token)
+            inboxes = await va.list_inboxes()
+            for inbox in inboxes:
+                raw_phone = inbox.get("phone_number") or inbox.get("phone") or ""
+                digits = "".join(c for c in raw_phone if c.isdigit())
+                if len(digits) >= 8:
+                    key = digits[-10:]
+                    chatwoot_map[key] = str(inbox.get("id") or inbox.get("inbox_id") or "")
+        except Exception as e:
+            chatwoot_error = str(e)
 
-    results = await asyncio.gather(*[_safe_phones(w) for w in waba_ids])
+    # ── Step 3: Upsert each Meta phone (com ou sem match Chatwoot) ───────────
+    now_iso = datetime.now(timezone.utc).isoformat()
+    updated: list[str] = []
 
-    for waba_id, phones in results:
-        for p in phones:
-            digits = "".join(c for c in p["display_phone"] if c.isdigit())
-            suffix = digits[-10:] if len(digits) >= 10 else digits
-            inbox_id = chatwoot_map.get(suffix)
+    for p in meta_phones_list:
+        digits = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+        suffix = digits[-10:] if len(digits) >= 10 else digits
+        inbox_id = chatwoot_map.get(suffix)
 
-            record = {
-                "owner_id": user_id,
-                "waba_id": waba_id,
-                "phone_id": p["phone_id"],
-                "display_phone": p["display_phone"],
-                "quality_rating": p["quality_rating"],
-                "throughput_level": p["throughput_level"],
-                "messaging_tier": p["messaging_tier"],
-                "daily_limit": p["daily_limit"],
-                "can_send": p["can_send"],
-                "name_status": p["name_status"],
-                "phone_status": p["phone_status"],
-                "restriction_codes": p["restriction_codes"],
-                "chatwoot_connected": inbox_id is not None,
-                "chatwoot_inbox_id": inbox_id,
-                "last_meta_check_at": datetime.now(timezone.utc).isoformat(),
-            }
+        record = {
+            "owner_id": user_id,
+            "waba_id": p.get("waba_id") or "",
+            "phone_id": p.get("phone_id") or "",
+            "display_phone": p.get("display_phone") or "",
+            "quality_rating": p.get("quality_rating", "UNKNOWN"),
+            "throughput_level": p.get("throughput_level"),
+            "messaging_tier": p.get("messaging_tier"),
+            "daily_limit": p.get("daily_limit") or 500,
+            "can_send": p.get("can_send", "UNKNOWN"),
+            "name_status": p.get("name_status"),
+            "phone_status": p.get("phone_status"),
+            "restriction_codes": p.get("restriction_codes") or [],
+            "verified_name": p.get("verified_name"),
+            "account_mode": p.get("account_mode"),
+            "restrictions": p.get("restrictions") or [],
+            "additional_info": p.get("additional_info") or [],
+            "has_payment_issue": p.get("has_payment_issue", False),
+            "display_name_pending": p.get("display_name_pending", False),
+            "waba_name": p.get("waba_name"),
+            "account_review_status": p.get("account_review_status"),
+            "business_verification_status": p.get("business_verification_status"),
+            "waba_currency": p.get("waba_currency"),
+            "waba_country": p.get("waba_country"),
+            "chatwoot_connected": inbox_id is not None,
+            "chatwoot_inbox_id": inbox_id,
+            "last_meta_check_at": now_iso,
+            "quality_updated_at": now_iso,
+        }
+        try:
             db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
-            updated.append(p["phone_id"])
+            updated.append(p.get("phone_id") or "")
+        except Exception:
+            pass  # uma falha não mata os outros
 
-    return {"updated": updated, "total": len(updated), "chatwoot_inboxes_found": len(chatwoot_map)}
+    return {
+        "ok": True,
+        "updated": updated,
+        "total": len(updated),
+        "meta_total": len(meta_phones_list),
+        "chatwoot_matched": sum(1 for p in meta_phones_list
+                                if chatwoot_map.get(("".join(c for c in (p.get("display_phone") or "") if c.isdigit()))[-10:])),
+        "chatwoot_inboxes_found": len(chatwoot_map),
+        "meta_error": meta_error,
+        "chatwoot_error": chatwoot_error,
+    }
 
 
 # ── Analyze CSV ───────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ Dry-run obrigatório antes de ativar campanha real:
 
 import asyncio
 import csv
+import hashlib
 import io
 import logging
 import uuid
@@ -38,6 +39,7 @@ from app.services.broadcast.chipcare_client import (
     build_template_payload,
     csv_to_xlsx_bytes,
 )
+from app.services.broadcast.meta_client import MetaClient
 
 import time as _time
 
@@ -216,63 +218,229 @@ async def update_sa_hashes(body: SaHashesIn, user_id: str = Depends(_get_user_id
 async def get_credentials(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("chipcare_settings").select(
-        "owner_id, tenant_id, sa_create, sa_activate, updated_at"
+        "owner_id, tenant_id, sa_create, sa_activate, meta_token_enc, waba_ids, updated_at"
     ).eq("owner_id", user_id).execute()
     if not resp.data:
-        return {"configured": False}
+        return {"configured": False, "meta_configured": False, "waba_ids": []}
     row = resp.data[0]
     return {
         "configured": True,
         "tenant_id": row.get("tenant_id"),
         "sa_create": (row.get("sa_create") or "")[:8] + "...",
         "sa_activate": (row.get("sa_activate") or "")[:8] + "...",
+        "meta_configured": bool(row.get("meta_token_enc")),
+        "waba_ids": row.get("waba_ids") or [],
         "updated_at": row["updated_at"],
     }
+
+
+class MetaCredsIn(BaseModel):
+    meta_token: str
+    waba_ids: list[str] = []
+
+
+@router.post("/meta-credentials")
+async def save_meta_credentials(body: MetaCredsIn, user_id: str = Depends(_get_user_id)):
+    """Salva token Meta System User + opcional lista de WABA IDs (regra padrão dos 3 disparadores)."""
+    db = get_db()
+    existing = db.table("chipcare_settings").select("owner_id").eq("owner_id", user_id).execute()
+    if not existing.data:
+        raise HTTPException(400, "Configure as credenciais Chipcare (email/senha) antes de salvar o token Meta")
+    payload = {
+        "meta_token_enc": encrypt(body.meta_token.strip()),
+        "waba_ids": [w.strip() for w in body.waba_ids if w.strip()],
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("chipcare_settings").update(payload).eq("owner_id", user_id).execute()
+    return {"ok": True}
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
 
 @router.post("/refresh-channels")
 async def refresh_channels(user_id: str = Depends(_get_user_id)):
-    """Login no Chipcare + pull canais WA Oficial → salvar no DB."""
-    client, row = _get_client_and_settings(user_id)
-    try:
-        jwt = await client.login(tenant_id=row.get("tenant_id"))
-        _set_cached_jwt(user_id, jwt)
-    except Exception as e:
-        _invalidate_jwt(user_id)
-        raise HTTPException(502, f"Login Chipcare falhou: {e}")
+    """Pattern Aesir/VendeAI: Chipcare + Meta independentes, erros não-fatais, response sempre 200.
 
-    # Save user_id for createCampaign _1_createdBy
-    if client._user_id:
-        db = get_db()
-        db.table("chipcare_settings").update(
-            {"chipcare_user_id": client._user_id}
-        ).eq("owner_id", user_id).execute()
-
-    try:
-        channels = await client.list_channels(jwt)
-    except Exception as e:
-        raise HTTPException(502, f"Chipcare list_channels falhou: {e}")
-
+    Cross-reference channels Chipcare ↔ phones Meta pelo last10digits do título do canal.
+    Números Meta sem match são salvos como `channel_id < 0` (meta-only) pra aparecer no UI.
+    """
     db = get_db()
+    row_resp = db.table("chipcare_settings").select("*").eq("owner_id", user_id).execute()
+    if not row_resp.data:
+        raise HTTPException(400, "Configure credenciais primeiro")
+    row = row_resp.data[0]
+
+    meta_token = safe_decrypt(row.get("meta_token_enc") or "")
+    chipcare_email = safe_decrypt(row.get("email_enc") or "")
+    chipcare_pass = safe_decrypt(row.get("password_enc") or "")
+    waba_ids: list[str] = row.get("waba_ids") or []
+
+    if not chipcare_email and not meta_token:
+        raise HTTPException(400, "Configure ao menos um token (Chipcare ou Meta) antes de sincronizar.")
+
+    # ── Step 1: Meta discovery (independente do Chipcare) ────────────────────
+    meta_error: str | None = None
+    meta_phones_list: list[dict] = []
+    meta_phones_by_key: dict[str, dict] = {}
+    if meta_token:
+        meta = MetaClient(meta_token)
+        try:
+            if waba_ids:
+                async def _safe_phones(wid: str):
+                    try:
+                        waba_info = await meta.get_waba_info(wid)
+                        phones = await meta.get_all_phones(wid)
+                        for p in phones:
+                            p["waba_name"] = waba_info.get("name", "")
+                            p["account_review_status"] = waba_info.get("account_review_status", "UNKNOWN")
+                            p["business_verification_status"] = waba_info.get("business_verification_status", "unknown")
+                            p["waba_currency"] = waba_info.get("currency", "")
+                            p["waba_country"] = waba_info.get("country", "")
+                        return phones
+                    except Exception:
+                        return []
+                results = await asyncio.gather(*[_safe_phones(w) for w in waba_ids])
+                for phones in results:
+                    meta_phones_list.extend(phones)
+            else:
+                meta_phones_list = await meta.get_all_phones_auto()
+
+            for p in meta_phones_list:
+                raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+                key = raw[-10:] if len(raw) >= 10 else raw
+                if key:
+                    meta_phones_by_key[key] = p
+        except Exception as e:
+            meta_error = str(e)
+
+    # ── Step 2: Chipcare channels (não-fatal) ────────────────────────────────
+    channels: list[dict] = []
+    chipcare_error: str | None = None
+    if not chipcare_email or not chipcare_pass:
+        chipcare_error = "Credenciais Chipcare não configuradas — modo Meta-only ativo"
+    else:
+        try:
+            client, _ = _get_client_and_settings(user_id)
+            jwt = await client.login(tenant_id=row.get("tenant_id"))
+            _set_cached_jwt(user_id, jwt)
+            if client._user_id:
+                db.table("chipcare_settings").update(
+                    {"chipcare_user_id": client._user_id}
+                ).eq("owner_id", user_id).execute()
+            channels = await client.list_channels(jwt)
+        except Exception as e:
+            chipcare_error = str(e)
+            _invalidate_jwt(user_id)
+
+    # ── Step 3: Upsert Chipcare channels cruzados com Meta ──────────────────
     now = datetime.now(timezone.utc).isoformat()
+    matched_keys: set[str] = set()
     for ch in channels:
         cid = ch.get("id")
         if not cid:
             continue
-        db.table("chipcare_channels").upsert({
+        title = ch.get("title") or str(cid)
+        digits = "".join(c for c in title if c.isdigit())
+        key = digits[-10:] if len(digits) >= 10 else digits
+        meta_q = meta_phones_by_key.get(key, {})
+        if key and meta_q:
+            matched_keys.add(key)
+
+        payload: dict = {
             "owner_id": user_id,
             "channel_id": int(cid),
-            "title": ch.get("title") or str(cid),
+            "title": title,
             "status": ch.get("status") or "CLOSED",
             "channel_type": ch.get("channelType") or "WHATSAPP_OFFICIAL",
             "description": ch.get("description") or "",
             "updated_at": now,
-        }, on_conflict="owner_id,channel_id").execute()
+        }
+        if meta_q:
+            payload.update({
+                "waba_id": meta_q.get("waba_id"),
+                "phone_id": meta_q.get("phone_id"),
+                "display_phone": meta_q.get("display_phone"),
+                "quality_rating": meta_q.get("quality_rating", "UNKNOWN"),
+                "messaging_tier": meta_q.get("messaging_tier"),
+                "can_send": meta_q.get("can_send", "UNKNOWN"),
+                "verified_name": meta_q.get("verified_name"),
+                "name_status": meta_q.get("name_status"),
+                "account_mode": meta_q.get("account_mode"),
+                "restrictions": meta_q.get("restrictions") or [],
+                "additional_info": meta_q.get("additional_info") or [],
+                "has_payment_issue": meta_q.get("has_payment_issue", False),
+                "display_name_pending": meta_q.get("display_name_pending", False),
+                "waba_name": meta_q.get("waba_name"),
+                "account_review_status": meta_q.get("account_review_status"),
+                "business_verification_status": meta_q.get("business_verification_status"),
+                "waba_currency": meta_q.get("waba_currency"),
+                "waba_country": meta_q.get("waba_country"),
+                "daily_limit": meta_q.get("daily_limit") or 500,
+                "quality_updated_at": now,
+            })
+        try:
+            db.table("chipcare_channels").upsert(payload, on_conflict="owner_id,channel_id").execute()
+        except Exception:
+            pass
+
+    # ── Step 4: Meta-only phones (sem match Chipcare) — channel_id negativo
+    # Permite ver TODAS WABAs da BM mesmo sem Chipcare conectado.
+    for p in meta_phones_list:
+        raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+        key = raw[-10:] if len(raw) >= 10 else raw
+        if not key or key in matched_keys:
+            continue
+        # Hash determinístico SHA256 (negativo pra não colidir com Chipcare channel_ids positivos).
+        # hash() builtin é randomizado per-process → causaria duplicates entre runs.
+        try:
+            seed = (p.get("phone_id") or key).encode("utf-8")
+            digest = hashlib.sha256(seed).digest()
+            synth_id = -(int.from_bytes(digest[:6], "big") % 2_000_000_000)
+        except Exception:
+            continue
+        try:
+            db.table("chipcare_channels").upsert({
+                "owner_id": user_id,
+                "channel_id": synth_id,
+                "title": p.get("display_phone") or str(synth_id),
+                "status": "meta-only",
+                "channel_type": "META_ONLY",
+                "description": "Número Meta sem canal Chipcare correspondente",
+                "waba_id": p.get("waba_id"),
+                "phone_id": p.get("phone_id"),
+                "display_phone": p.get("display_phone"),
+                "quality_rating": p.get("quality_rating", "UNKNOWN"),
+                "messaging_tier": p.get("messaging_tier"),
+                "can_send": p.get("can_send", "UNKNOWN"),
+                "verified_name": p.get("verified_name"),
+                "name_status": p.get("name_status"),
+                "account_mode": p.get("account_mode"),
+                "restrictions": p.get("restrictions") or [],
+                "additional_info": p.get("additional_info") or [],
+                "has_payment_issue": p.get("has_payment_issue", False),
+                "display_name_pending": p.get("display_name_pending", False),
+                "waba_name": p.get("waba_name"),
+                "account_review_status": p.get("account_review_status"),
+                "business_verification_status": p.get("business_verification_status"),
+                "waba_currency": p.get("waba_currency"),
+                "waba_country": p.get("waba_country"),
+                "daily_limit": p.get("daily_limit") or 500,
+                "quality_updated_at": now,
+                "updated_at": now,
+            }, on_conflict="owner_id,channel_id").execute()
+        except Exception:
+            pass
 
     stored = db.table("chipcare_channels").select("*").eq("owner_id", user_id).execute()
-    return {"ok": True, "channels": stored.data or [], "count": len(channels)}
+    return {
+        "ok": True,
+        "channels": stored.data or [],
+        "count": len(channels),
+        "meta_total": len(meta_phones_list),
+        "meta_matched": len(matched_keys),
+        "chipcare_error": chipcare_error,
+        "meta_error": meta_error,
+    }
 
 
 @router.get("/channels")

@@ -203,50 +203,66 @@ async def resume_instance(instance_id: str, user_id: str = Depends(_get_user_id)
 
 @router.post("/refresh-numbers")
 async def refresh_numbers(user_id: str = Depends(_get_user_id)):
-    """Pull Aesir instances + Meta phone quality → cross-reference by phone → upsert."""
+    """Pull Aesir instances + Meta phones → cross-reference → upsert.
+
+    Resilience rules:
+    - Aesir error is non-fatal (returns 200 with `aesir_error` set + Meta-only numbers).
+    - Meta error is non-fatal (returns 200 with `meta_error` set + Aesir-only numbers).
+    - Meta phones with no matching Aesir instance are upserted as `meta-only` rows so user can see all BM numbers.
+    """
     db = get_db()
     settings_row = db.table("aesir_settings").select("*").eq("owner_id", user_id).execute()
     if not settings_row.data:
         raise HTTPException(400, "Credenciais não configuradas")
     row = settings_row.data[0]
 
-    aesir_token = safe_decrypt(row["api_token_enc"])
-    if not aesir_token:
-        raise HTTPException(400, "Token Aesir inválido — reconfigure")
-    client = AesirClient(api_token=aesir_token, account_id=row["account_id"])
-
-    try:
-        aesir_instances = await client.list_instances()
-    except Exception as e:
-        raise HTTPException(502, f"Aesir API error: {e}")
-
+    aesir_token = safe_decrypt(row.get("api_token_enc") or "")
     meta_token = safe_decrypt(row.get("meta_token_enc") or "")
+
+    if not aesir_token and not meta_token:
+        raise HTTPException(400, "Configure ao menos um token (Aesir ou Meta) antes de sincronizar.")
+
+    # ── Step 1: Meta discovery (independent of Aesir) ────────────────────────
     waba_ids: list[str] = row.get("waba_ids") or []
     meta_phones: dict[str, dict] = {}
+    meta_phones_list: list[dict] = []
+    meta_error: str | None = None
     if meta_token:
         meta_client = MetaClient(access_token=meta_token)
         try:
             if waba_ids:
                 # Manual WABA IDs provided — use them
-                phones_list: list[dict] = []
                 for wid in waba_ids:
                     try:
-                        phones_list.extend(await meta_client.get_all_phones(wid))
+                        meta_phones_list.extend(await meta_client.get_all_phones(wid))
                     except Exception:
                         pass
             else:
                 # Auto-discover WABAs from token
-                phones_list = await meta_client.get_all_phones_auto()
+                meta_phones_list = await meta_client.get_all_phones_auto()
 
-            for p in phones_list:
+            for p in meta_phones_list:
                 raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
                 key = raw[-10:] if len(raw) >= 10 else raw
                 if key:
                     meta_phones[key] = p
-        except Exception:
-            pass  # Meta optional — don't fail the refresh
+        except Exception as e:
+            meta_error = str(e)
+
+    # ── Step 2: Aesir instances (non-fatal) ──────────────────────────────────
+    aesir_instances: list[dict] = []
+    aesir_error: str | None = None
+    if aesir_token:
+        try:
+            client = AesirClient(api_token=aesir_token, account_id=row["account_id"])
+            aesir_instances = await client.list_instances()
+        except Exception as e:
+            aesir_error = str(e)
 
     now = datetime.now(timezone.utc).isoformat()
+
+    # ── Step 3: Upsert Aesir instances (cross-referenced with Meta) ─────────
+    matched_keys: set[str] = set()
     for inst in aesir_instances:
         iid = str(inst.get("id") or inst.get("instance_id") or "")
         if not iid:
@@ -255,6 +271,8 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         digits = "".join(c for c in phone_raw if c.isdigit())
         key = digits[-10:] if len(digits) >= 10 else digits
         quality = meta_phones.get(key, {})
+        if key and quality:
+            matched_keys.add(key)
         upsert_payload: dict = {
             "owner_id": user_id,
             "instance_id": iid,
@@ -270,12 +288,71 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
                 "messaging_tier": quality.get("messaging_tier"),
                 "can_send": quality.get("can_send", "UNKNOWN"),
                 "daily_limit": quality.get("daily_limit") or 500,
+                "waba_id": quality.get("waba_id"),
+                "phone_id": quality.get("phone_id"),
+                "verified_name": quality.get("verified_name"),
+                "name_status": quality.get("name_status"),
+                "account_mode": quality.get("account_mode"),
+                "restrictions": quality.get("restrictions") or [],
+                "additional_info": quality.get("additional_info") or [],
+                "has_payment_issue": quality.get("has_payment_issue", False),
+                "display_name_pending": quality.get("display_name_pending", False),
+                "waba_name": quality.get("waba_name"),
+                "account_review_status": quality.get("account_review_status"),
+                "business_verification_status": quality.get("business_verification_status"),
+                "waba_currency": quality.get("waba_currency"),
+                "waba_country": quality.get("waba_country"),
                 "quality_updated_at": now,
             })
         db.table("aesir_instances").upsert(upsert_payload, on_conflict="owner_id,instance_id").execute()
 
+    # ── Step 4: Upsert Meta-only phones (no matching Aesir instance) ────────
+    # Allows user to see every WABA number even when Aesir is down/misconfigured.
+    for p in meta_phones_list:
+        raw = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
+        key = raw[-10:] if len(raw) >= 10 else raw
+        if not key or key in matched_keys:
+            continue
+        phone_id = p.get("phone_id") or p.get("id") or key
+        meta_iid = f"meta:{phone_id}"
+        db.table("aesir_instances").upsert({
+            "owner_id": user_id,
+            "instance_id": meta_iid,
+            "name": p.get("verified_name") or p.get("display_phone") or meta_iid,
+            "phone": p.get("display_phone") or "",
+            "status": "meta-only",
+            "display_phone": p.get("display_phone"),
+            "quality_rating": p.get("quality_rating", "UNKNOWN"),
+            "messaging_tier": p.get("messaging_tier"),
+            "can_send": p.get("can_send", "UNKNOWN"),
+            "daily_limit": p.get("daily_limit") or 500,
+            "waba_id": p.get("waba_id"),
+            "phone_id": p.get("phone_id"),
+            "verified_name": p.get("verified_name"),
+            "name_status": p.get("name_status"),
+            "account_mode": p.get("account_mode"),
+            "restrictions": p.get("restrictions") or [],
+            "additional_info": p.get("additional_info") or [],
+            "has_payment_issue": p.get("has_payment_issue", False),
+            "display_name_pending": p.get("display_name_pending", False),
+            "waba_name": p.get("waba_name"),
+            "account_review_status": p.get("account_review_status"),
+            "business_verification_status": p.get("business_verification_status"),
+            "waba_currency": p.get("waba_currency"),
+            "waba_country": p.get("waba_country"),
+            "quality_updated_at": now,
+            "updated_at": now,
+        }, on_conflict="owner_id,instance_id").execute()
+
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
-    return {"ok": True, "instances": stored.data or [], "meta_matched": len(meta_phones)}
+    return {
+        "ok": True,
+        "instances": stored.data or [],
+        "meta_matched": len(meta_phones),
+        "meta_total": len(meta_phones_list),
+        "aesir_error": aesir_error,
+        "meta_error": meta_error,
+    }
 
 
 # ── Analyze CSV ───────────────────────────────────────────────────────────────

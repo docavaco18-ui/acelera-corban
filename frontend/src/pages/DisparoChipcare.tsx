@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { chipcareApi } from '../lib/api';
+import {
+  C, G, glassCard, sectionTitle, btnStyle, INPUT_STYLE, SHARED_CSS,
+  Section, PulseDot, NumberQualityGrid, AIMonitorPanel, CollapsedChip,
+} from '../components/disparo-shared';
 
 // ── Shared styles ─────────────────────────────────────────────────────────────
 
-const CARD = { background: '#0d0d1f', border: '1px solid #1e1e3a', borderRadius: 12, padding: 24 } as const;
-const H2 = (color: string) => ({ color, fontSize: 15, fontWeight: 700, marginBottom: 16, marginTop: 0 });
+// Local styles ainda usados pelo CsvUploadWizard inline (Chipcare-específico: templates HSM, aggression).
 const INPUT = {
   width: '100%', background: '#0d0d1f', border: '1px solid #334155',
   color: '#e2e8f0', borderRadius: 8, padding: '8px 12px', fontSize: 13,
@@ -23,7 +26,7 @@ const STATUS_COLOR: Record<string, string> = {
 
 // ── Credentials ───────────────────────────────────────────────────────────────
 
-function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
+function ChipcareCredsPanel({ onSaved }: { onSaved: () => void }) {
   const [configured, setConfigured] = useState(false);
   const [tenantId, setTenantId] = useState('');
   const [email, setEmail] = useState('');
@@ -31,54 +34,206 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
   const [tenant, setTenant] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
     chipcareApi.getCredentials().then(d => {
       setConfigured(d.configured);
       if (d.tenant_id) { setTenantId(d.tenant_id); setTenant(d.tenant_id); }
-    }).catch(() => {});
+      setExpanded(!d.configured);
+      setLoaded(true);
+    }).catch(() => { setExpanded(true); setLoaded(true); });
   }, []);
 
   const save = async () => {
-    if (!email.trim() || !password.trim()) { setMsg('Email e senha obrigatórios'); return; }
+    if (!configured && (!email.trim() || !password.trim())) { setMsg('Primeira gravação exige email + senha'); return; }
+    if (!email.trim() && !password.trim() && !tenant.trim()) { setMsg('Preencha pelo menos um campo'); return; }
     setSaving(true);
     try {
       await chipcareApi.saveCredentials(email.trim(), password.trim(), tenant.trim());
       setConfigured(true); setTenantId(tenant.trim());
       setEmail(''); setPassword('');
-      setMsg('Salvo! Agora clique em "Refresh Canais".');
-      onSaved();
+      setMsg('Salvo!'); onSaved();
+      setTimeout(() => { setExpanded(false); setMsg(''); }, 800);
     } catch (e: any) { setMsg('Erro: ' + (e?.response?.data?.detail || e?.message)); }
     finally { setSaving(false); }
   };
 
+  if (!loaded) return null;
+
+  if (!expanded) {
+    const detail = tenantId ? `Tenant ${tenantId}` : 'configurado';
+    return (
+      <CollapsedChip
+        icon="🔐" gradient={G.neon}
+        title="Credenciais Chipcare OK"
+        detail={detail}
+        onEdit={() => setExpanded(true)}
+      />
+    );
+  }
+
   return (
-    <div style={CARD}>
-      <h2 style={H2('#00ccff')}>Credenciais Chipcare</h2>
-      {configured && (
-        <p style={{ color: '#22c55e', fontSize: 13, marginBottom: 12 }}>
-          ✅ Configurado{tenantId ? ` · Tenant: ${tenantId}` : ''}
-        </p>
-      )}
-      <p style={{ color: '#64748b', fontSize: 12, marginBottom: 12 }}>
+    <div style={glassCard(G.neon)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12, background: G.neon,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22, boxShadow: '0 4px 16px rgba(0,0,0,.3)',
+          }}>🔐</div>
+          <div>
+            <h2 style={{ ...sectionTitle(G.neon), marginBottom: 0 }}>Credenciais Chipcare</h2>
+            {configured && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <PulseDot color="#10b981" />
+                <span style={{ color: '#10b981', fontSize: 13 }}>Editando configuração existente</span>
+              </div>
+            )}
+          </div>
+        </div>
+        {configured && (
+          <button onClick={() => { setExpanded(false); setMsg(''); setEmail(''); setPassword(''); }}
+            style={{
+              background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+              color: C.sec, borderRadius: 8, padding: '6px 14px',
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}>✕ Ocultar</button>
+        )}
+      </div>
+
+      <p style={{ color: C.sec, fontSize: 14, marginBottom: 16, lineHeight: 1.6 }}>
         Login Chipcare (chipcare.miwteam.com.br). Tenant = nome do ambiente (ex: Sarah ou Arthur).
       </p>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 480 }}>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div>
-          <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>E-mail</label>
-          <input style={INPUT} type="email" placeholder="usuario@email.com" value={email} onChange={e => setEmail(e.target.value)} />
+          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>E-mail Chipcare</label>
+          <input className="ds-input" style={INPUT_STYLE} type="email" placeholder="usuario@email.com" value={email} onChange={e => setEmail(e.target.value)} />
         </div>
         <div>
-          <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>Senha</label>
-          <input style={INPUT} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
+          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Senha</label>
+          <input className="ds-input" style={INPUT_STYLE} type="password" placeholder="••••••••" value={password} onChange={e => setPassword(e.target.value)} />
         </div>
         <div>
-          <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 4 }}>Tenant (ambiente)</label>
-          <input style={INPUT} placeholder="Sarah" value={tenant} onChange={e => setTenant(e.target.value)} />
+          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>Tenant (ambiente)</label>
+          <input className="ds-input" style={INPUT_STYLE} placeholder="Sarah" value={tenant} onChange={e => setTenant(e.target.value)} />
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <button style={BTN('#00ccff', saving)} onClick={save} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
-          {msg && <span style={{ color: msg.startsWith('Erro') ? '#f87171' : '#22c55e', fontSize: 12 }}>{msg}</span>}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+          <button className="ds-btn" style={btnStyle(G.neon, saving)} onClick={save} disabled={saving}>
+            {saving ? '⟳ Salvando...' : '💾 Salvar e Ocultar'}
+          </button>
+          {msg && <span style={{ color: msg.startsWith('Erro') ? C.red : '#10b981', fontSize: 12 }}>{msg}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetaPanel({ onSaved }: { onSaved: () => void }) {
+  const [metaOk, setMetaOk] = useState(false);
+  const [savedWabaIds, setSavedWabaIds] = useState<string[]>([]);
+  const [tok, setTok] = useState('');
+  const [wabaText, setWabaText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    chipcareApi.getCredentials().then(d => {
+      setMetaOk(d.meta_configured || false);
+      if (d.waba_ids?.length) setSavedWabaIds(d.waba_ids);
+      setExpanded(!d.meta_configured);
+      setLoaded(true);
+    }).catch(() => { setExpanded(true); setLoaded(true); });
+  }, []);
+
+  const save = async () => {
+    if (!tok.trim() && !wabaText.trim()) { setMsg('Informe o token ou WABA IDs'); return; }
+    if (!metaOk && !tok.trim()) { setMsg('Primeira gravação exige o token'); return; }
+    setSaving(true);
+    try {
+      const waba_ids = wabaText.split('\n').map(s => s.trim()).filter(Boolean);
+      await chipcareApi.saveMetaCredentials(tok.trim(), waba_ids);
+      setMetaOk(true);
+      if (waba_ids.length) setSavedWabaIds(waba_ids);
+      setTok(''); setWabaText('');
+      setMsg('Salvo!');
+      onSaved();
+      setTimeout(() => { setExpanded(false); setMsg(''); }, 800);
+    } catch (e: any) { setMsg('Erro: ' + (e?.response?.data?.detail || e?.message)); }
+    finally { setSaving(false); }
+  };
+
+  if (!loaded) return null;
+
+  if (!expanded) {
+    const detail = savedWabaIds.length ? `${savedWabaIds.length} WABA(s)` : 'auto-descoberta ativa';
+    return (
+      <CollapsedChip
+        icon="📡" gradient={G.cyan} dotColor="#06b6d4"
+        title="Meta BM OK"
+        detail={detail}
+        onEdit={() => setExpanded(true)}
+      />
+    );
+  }
+
+  return (
+    <div style={glassCard(G.cyan)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12, background: G.cyan,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 22, boxShadow: '0 4px 16px rgba(0,0,0,.3)',
+          }}>📡</div>
+          <div>
+            <h2 style={{ ...sectionTitle(G.cyan), marginBottom: 0 }}>Meta Business Manager</h2>
+            {metaOk && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <PulseDot color="#06b6d4" />
+                <span style={{ color: '#06b6d4', fontSize: 13 }}>Editando configuração existente</span>
+              </div>
+            )}
+          </div>
+        </div>
+        {metaOk && (
+          <button onClick={() => { setExpanded(false); setMsg(''); setTok(''); setWabaText(''); }}
+            style={{
+              background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+              color: C.sec, borderRadius: 8, padding: '6px 14px',
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}>✕ Ocultar</button>
+        )}
+      </div>
+
+      <p style={{ color: C.sec, fontSize: 14, marginBottom: 16, lineHeight: 1.6 }}>
+        Token permanente do System User BM.{' '}
+        <span style={{ color: C.text, fontWeight: 600 }}>WABA IDs são opcionais</span> — o token auto-descobre WABAs ao Refresh.
+      </p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>System User Token</label>
+          <input className="ds-input" style={INPUT_STYLE} type="password" placeholder="EAAOKxO1..." value={tok} onChange={e => setTok(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            WABA IDs
+            <span style={{ color: '#7c3aed', marginLeft: 8, fontWeight: 400, textTransform: 'none', fontSize: 11 }}>opcional — vazio = auto-descoberta</span>
+          </label>
+          <textarea className="ds-input" style={{ ...INPUT_STYLE, height: 72, resize: 'vertical', fontFamily: 'monospace' }}
+            placeholder={'Opcional — token auto-descobre\n123456789'}
+            value={wabaText} onChange={e => setWabaText(e.target.value)} />
+        </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+          <button className="ds-btn" style={btnStyle(G.cyan, saving)} onClick={save} disabled={saving}>
+            {saving ? '⟳ Salvando...' : '💾 Salvar e Ocultar'}
+          </button>
+          {msg && <span style={{ color: msg.startsWith('Erro') ? C.red : '#10b981', fontSize: 12 }}>{msg}</span>}
         </div>
       </div>
     </div>
@@ -86,45 +241,6 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
 }
 
 // ── Channel Grid ──────────────────────────────────────────────────────────────
-
-function ChannelGrid({ channels, onTogglePause }: { channels: any[]; onTogglePause: (id: number, paused: boolean) => void }) {
-  if (!channels.length) return (
-    <div style={{ color: '#64748b', fontSize: 13 }}>
-      Nenhum canal. Clique em "Refresh Canais".
-    </div>
-  );
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {channels.map(ch => {
-        const paused = !!ch.is_paused;
-        const status = ch.status || 'CLOSED';
-        const color = STATUS_COLOR[status] || '#64748b';
-        return (
-          <div key={ch.channel_id} style={{
-            display: 'grid', gridTemplateColumns: '1fr 100px 120px 80px',
-            gap: 12, alignItems: 'center',
-            background: '#0a0a18', border: '1px solid #1e1e3a', borderRadius: 8, padding: '10px 16px',
-          }}>
-            <div>
-              <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 600 }}>
-                {ch.title || ch.channel_id}
-              </span>
-              {ch.description && (
-                <span style={{ color: '#64748b', fontSize: 11, marginLeft: 8 }}>{ch.description}</span>
-              )}
-              {paused && <span style={{ color: '#f59e0b', fontSize: 11, marginLeft: 8 }}>PAUSADO</span>}
-            </div>
-            <span style={{ color, fontSize: 12, fontWeight: 600 }}>{status}</span>
-            <span style={{ color: '#94a3b8', fontSize: 12 }}>{ch.daily_limit ?? 500}/dia</span>
-            <button style={BTN(paused ? '#22c55e' : '#ef4444')} onClick={() => onTogglePause(ch.channel_id, paused)}>
-              {paused ? 'Retomar' : 'Pausar'}
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 // ── Template Selector ─────────────────────────────────────────────────────────
 
@@ -498,52 +614,6 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
   );
 }
 
-// ── Monitor ───────────────────────────────────────────────────────────────────
-
-function MonitorPanel({ dispatches, onActivate, onCancel }: {
-  dispatches: any[];
-  onActivate: (id: string) => void;
-  onCancel: (id: string) => void;
-}) {
-  if (!dispatches.length) return (
-    <div style={{ color: '#64748b', fontSize: 13 }}>Nenhum disparo ativo.</div>
-  );
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {dispatches.map(d => {
-        const channels = d.channel_ids || [];
-        return (
-          <div key={d.id} style={{
-            background: '#0a0a18', border: '1px solid #1e1e3a', borderRadius: 8, padding: '12px 16px',
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-              <div>
-                <span style={{ color: '#e2e8f0', fontSize: 13, fontWeight: 700 }}>{d.campaign_name || d.id.slice(0, 8)}</span>
-                {d.chipcare_campaign_id && (
-                  <span style={{ color: '#64748b', fontSize: 11, marginLeft: 8 }}>Chipcare #{d.chipcare_campaign_id}</span>
-                )}
-                <span style={{ marginLeft: 10, padding: '2px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
-                  background: d.status === 'running' ? '#22c55e22' : '#f59e0b22',
-                  color: d.status === 'running' ? '#22c55e' : '#f59e0b',
-                }}>{d.status.toUpperCase()}</span>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                {d.status === 'paused' && d.chipcare_campaign_id && (
-                  <button style={BTN('#22c55e')} onClick={() => onActivate(d.id)}>▶ Ativar</button>
-                )}
-                <button style={BTN('#ef4444')} onClick={() => onCancel(d.id)}>✕ Cancelar</button>
-              </div>
-            </div>
-            <div style={{ color: '#64748b', fontSize: 12 }}>
-              Template: {d.template_name || '—'} · Canais: {Array.isArray(channels) ? channels.join(', ') : '—'} · Total: {d.total_leads ?? '—'} leads
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── History ───────────────────────────────────────────────────────────────────
 
 function CampaignHistory({ dispatches }: { dispatches: any[] }) {
@@ -579,26 +649,18 @@ function CampaignHistory({ dispatches }: { dispatches: any[] }) {
 
 export default function DisparoChipcare() {
   const [channels, setChannels] = useState<any[]>([]);
-  const [activeDispatches, setActiveDispatches] = useState<any[]>([]);
   const [histDispatches, setHistDispatches] = useState<any[]>([]);
   const [templates, setTemplates] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState('');
   const [loadingTpls, setLoadingTpls] = useState(false);
-  const [msg, setMsg] = useState('');
 
   const loadChannels = () => {
-    chipcareApi.listChannels().then(setChannels).catch(() => {});
-  };
-
-  const loadSnapshot = () => {
-    chipcareApi.getSnapshot().then(d => {
-      setChannels(d.channels || []);
-      setActiveDispatches(d.active_dispatches || []);
-    }).catch(() => {});
+    chipcareApi.listChannels().then(setChannels).catch(() => { });
   };
 
   const loadHistory = () => {
-    chipcareApi.listDispatches().then(setHistDispatches).catch(() => {});
+    chipcareApi.listDispatches().then(setHistDispatches).catch(() => { });
   };
 
   const loadTemplates = async () => {
@@ -607,103 +669,140 @@ export default function DisparoChipcare() {
       const res = await chipcareApi.listTemplates();
       const tpls = Array.isArray(res) ? res : ((res as any).templates ?? []);
       setTemplates(tpls);
-    } catch (e: any) {
-      setMsg('Erro ao carregar templates: ' + (e?.response?.data?.detail || e?.message));
-    } finally { setLoadingTpls(false); }
+    } catch { /* templates não bloqueia */ }
+    finally { setLoadingTpls(false); }
   };
 
   useEffect(() => {
-    loadSnapshot();
+    loadChannels();
     loadHistory();
     loadTemplates();
-    const iv = setInterval(loadSnapshot, 15000);
-    return () => clearInterval(iv);
   }, []);
 
   const handleRefreshChannels = async () => {
-    setRefreshing(true); setMsg('');
+    setRefreshing(true); setRefreshMsg('');
     try {
       const res = await chipcareApi.refreshChannels();
-      setMsg(`✅ ${res.channels.length} canal(is) sincronizado(s)`);
-      loadChannels();
+      const parts: string[] = [];
+      parts.push(`✅ ${(res.channels || []).length} números`);
+      if (res.meta_total) parts.push(`${res.meta_total} da BM Meta`);
+      if (res.meta_matched != null) parts.push(`${res.meta_matched} cruzados c/ Chipcare`);
+      if (res.chipcare_error) parts.push(`⚠ Chipcare: ${String(res.chipcare_error).slice(0, 80)}`);
+      if (res.meta_error) parts.push(`⚠ Meta: ${String(res.meta_error).slice(0, 80)}`);
+      setRefreshMsg(parts.join(' · '));
+      setChannels(res.channels || []);
     } catch (e: any) {
-      setMsg('Erro: ' + (e?.response?.data?.detail || e?.message));
+      setRefreshMsg('Erro: ' + (e?.response?.data?.detail || e?.message));
     } finally { setRefreshing(false); }
   };
 
-  const handleTogglePause = async (channelId: number, paused: boolean) => {
-    if (paused) await chipcareApi.resumeChannel(channelId);
-    else await chipcareApi.pauseChannel(channelId);
-    loadChannels();
-  };
-
-  const handleActivate = async (dispatchId: string) => {
-    await chipcareApi.activateDispatch(dispatchId).catch(() => {});
-    loadSnapshot();
-  };
-
-  const handleCancel = async (dispatchId: string) => {
-    await chipcareApi.cancelDispatch(dispatchId).catch(() => {});
-    loadSnapshot(); loadHistory();
+  const handleTogglePause = async (iidStr: string, paused: boolean) => {
+    const cid = Number(iidStr);
+    if (Number.isNaN(cid) || cid < 0) return; // meta-only não pode pausar
+    try {
+      if (paused) await chipcareApi.resumeChannel(cid);
+      else await chipcareApi.pauseChannel(cid);
+      loadChannels();
+    } catch (e) {
+      console.error('[DisparoChipcare] togglePause falhou:', e);
+    }
   };
 
   return (
-    <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 24, maxWidth: 1100, margin: '0 auto' }}>
-      <h1 style={{ color: '#00ccff', margin: 0, fontSize: 22, fontWeight: 700 }}>
-        Disparo Chipcare <span style={{ color: '#334155', fontSize: 14, fontWeight: 400 }}>WhatsApp Oficial · Templates HSM</span>
-      </h1>
+    <div style={{ padding: '32px 40px 64px', display: 'flex', flexDirection: 'column', gap: 24, width: '100%', background: C.bg, minHeight: '100vh' }}>
+      <style>{SHARED_CSS}</style>
 
-      {msg && (
-        <div style={{
-          color: msg.startsWith('Erro') ? '#f87171' : '#22c55e',
-          fontSize: 13, padding: '10px 14px',
-          background: msg.startsWith('Erro') ? '#1e0a0a' : '#0a1a0a', borderRadius: 8,
-        }}>{msg}</div>
-      )}
-
-      {/* Credentials */}
-      <CredentialsPanel onSaved={loadChannels} />
-
-      {/* Channels */}
-      <div style={CARD}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ ...H2('#00ccff'), marginBottom: 0 }}>Canais WA Oficial</h2>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button style={BTN('#00ccff', refreshing)} onClick={handleRefreshChannels} disabled={refreshing}>
-              {refreshing ? 'Atualizando...' : '🔄 Refresh Canais'}
-            </button>
-            <button style={BTN('#6366f1', loadingTpls)} onClick={loadTemplates} disabled={loadingTpls}>
-              {loadingTpls ? 'Carregando...' : '📋 Atualizar Templates'}
-            </button>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+            <div style={{ width: 56, height: 56, borderRadius: 14, background: G.primary, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, boxShadow: '0 4px 20px rgba(124,58,237,.5)' }}>
+              📨
+            </div>
+            <div>
+              <h1 style={{
+                margin: 0, fontSize: 34, fontWeight: 800, lineHeight: 1.1,
+                background: G.primary, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',
+              }}>Disparo Chipcare</h1>
+              <div style={{ color: C.sec, fontSize: 14, marginTop: 4 }}>WhatsApp Oficial · Templates HSM</div>
+            </div>
           </div>
         </div>
-        <ChannelGrid channels={channels} onTogglePause={handleTogglePause} />
+
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {refreshMsg && (
+            <span style={{
+              color: refreshMsg.startsWith('Erro') ? C.red : '#10b981', fontSize: 12,
+              padding: '6px 12px', background: refreshMsg.startsWith('Erro') ? 'rgba(239,68,68,.08)' : 'rgba(16,185,129,.08)',
+              border: `1px solid ${refreshMsg.startsWith('Erro') ? 'rgba(239,68,68,.2)' : 'rgba(16,185,129,.2)'}`,
+              borderRadius: 8, maxWidth: 480,
+            }}>{refreshMsg}</span>
+          )}
+          <button className="ds-btn" onClick={loadTemplates} disabled={loadingTpls}
+            title="Recarrega lista de templates HSM aprovados no Chipcare"
+            style={{
+              background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+              color: loadingTpls ? C.muted : C.text, borderRadius: 12, padding: '14px 20px',
+              cursor: loadingTpls ? 'not-allowed' : 'pointer', fontSize: 13, fontWeight: 600,
+            }}>
+            {loadingTpls ? '⟳ Templates...' : '📋 Templates'}
+          </button>
+          <button className="ds-btn" onClick={handleRefreshChannels} disabled={refreshing}
+            title="Bate no token Meta + Chipcare, puxa qualidade, restrições, pagamento, nome de exibição."
+            style={{
+              background: refreshing ? 'rgba(255,255,255,.04)' : G.primary,
+              border: refreshing ? '1px solid rgba(255,255,255,.1)' : 'none',
+              color: refreshing ? C.muted : '#fff', borderRadius: 12, padding: '14px 24px',
+              cursor: refreshing ? 'not-allowed' : 'pointer', fontSize: 15, fontWeight: 700,
+              boxShadow: refreshing ? 'none' : '0 4px 16px rgba(124,58,237,.4)',
+            }}>
+            {refreshing ? '⟳ Sincronizando todos os status...' : '⟳ Atualizar Status (Refresh)'}
+          </button>
+        </div>
       </div>
 
-      {/* Wizard */}
-      <div style={CARD}>
-        <h2 style={H2('#00ccff')}>Novo Disparo</h2>
+      {/* Credentials 2-col */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <ChipcareCredsPanel onSaved={loadChannels} />
+        <MetaPanel onSaved={loadChannels} />
+      </div>
+
+      {/* IA Monitor */}
+      <Section title="Inteligência Artificial · Monitora Disparo e Qualidade" gradient={G.neon} icon="🧠">
+        <AIMonitorPanel
+          instances={channels}
+          getSnapshot={async () => {
+            const r = await chipcareApi.getSnapshot();
+            return { instances: r.channels, active_dispatches: r.active_dispatches };
+          }}
+          onRefresh={handleRefreshChannels}
+          refreshing={refreshing}
+        />
+      </Section>
+
+      {/* Novo disparo (CsvUploadWizard chipcare-específico, templates HSM) */}
+      <Section title="Novo Disparo" gradient={G.primary} icon="🚀">
         <CsvUploadWizard
           templates={templates}
-          onDispatched={() => { loadSnapshot(); loadHistory(); }}
+          onDispatched={() => { loadChannels(); loadHistory(); }}
         />
-      </div>
+      </Section>
 
-      {/* Monitor */}
-      <div style={CARD}>
-        <h2 style={H2('#f59e0b')}>Monitor Ativo <span style={{ color: '#334155', fontSize: 12, fontWeight: 400 }}>· atualiza a cada 15s</span></h2>
-        <MonitorPanel
-          dispatches={activeDispatches}
-          onActivate={handleActivate}
-          onCancel={handleCancel}
+      {/* Qualidade dos números (canais Chipcare + Meta-only enriquecidos) */}
+      <Section title="Qualidade dos Números da sua BM" gradient={G.cyan} icon="📱">
+        <NumberQualityGrid
+          instances={channels}
+          onTogglePause={handleTogglePause}
+          crmLabel="CRM CHIPCARE"
+          metaOnlyLabel="SÓ META"
+          emptyHint='Nenhum número. Salve credenciais Chipcare + token Meta e clique em "Atualizar Status".'
         />
-      </div>
+      </Section>
 
-      {/* History */}
-      <div style={CARD}>
-        <h2 style={H2('#94a3b8')}>Histórico de Campanhas</h2>
+      {/* Histórico — sempre por último */}
+      <Section title="Histórico de Disparos" gradient={G.purple} icon="📋">
         <CampaignHistory dispatches={histDispatches} />
-      </div>
+      </Section>
     </div>
   );
 }

@@ -579,3 +579,307 @@ Stats: 18 obs (6,172t read) | 137,234t work | 96% savings
 
 Access 137k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>
+
+---
+
+## 🔑 REGRA PADRÃO — Token Meta + Refresh Universal (2026-06-04)
+
+**Status:** Aesir ✅ · VendeAI ✅ · Chipcare ✅ (todos 3 disparadores aplicam mesmo pattern)
+
+**Promessa pro usuário:** colou token Meta → salvou → apertou Refresh → puxa todos números da BM. SEM erro. SEM gargalo.
+
+### O que quebrava antes
+
+1. `discover_wabas()` retornava lista vazia pra token CLAUDE DISPARO
+   - `granular_scopes[whatsapp_business_management]` SEM `target_ids`
+   - `/me/businesses` → `[]`
+   - `/me/assigned_whatsapp_business_accounts` → `[]`
+   - Meta intencionalmente esconde WABAs desse tipo de System User token
+
+2. Refresh do CRM (Aesir/VendeAI/Chipcare) falhava com 401/500 → `raise HTTPException` matava o endpoint inteiro
+   - Meta nunca era chamado
+   - Usuário via 0 números mesmo com token válido
+
+3. Bolinha verde quando número estava `can_send: LIMITED` (display name não aprovado) — sinal falso
+
+### Como fizemos funcionar de primeira
+
+#### 1. Backend `meta_client.py` — `discover_wabas()` 4 estratégias
+
+Tenta em sequência, cada uma não-fatal:
+
+```python
+async def discover_wabas(self) -> list[str]:
+    # Strategy 1: debug_token → granular_scopes target_ids → owned_whatsapp_business_accounts
+    # Strategy 2: /me/businesses → /{biz}/owned_whatsapp_business_accounts
+    # Strategy 3: /me/assigned_whatsapp_business_accounts
+    # Strategy 4: env META_WABA_FALLBACK_IDS validado 1-by-1 via GET /{wid}?fields=id,name
+```
+
+**Strategy 4 é a única que funciona pra token CLAUDE DISPARO.** Os 8 WABA IDs ficam em `.env`:
+
+```bash
+META_WABA_FALLBACK_IDS=1478112344051517,1530204361861055,1503376931137355,1292638789018602,4272402256310443,1306012624797547,979919711450878,26833705632933404
+```
+
+**NUNCA REMOVER** essa env. Sem ela, refresh-numbers retorna 0 pra esse token. Descobertas via header trick (sessão 2026-05-26 — ver `feedback_meta_waba_template_create.md` na memory).
+
+#### 2. Backend resilience — erros NUNCA matam o endpoint
+
+Todos 3 routers seguem:
+
+```python
+@router.post("/refresh-...")
+async def refresh(user_id):
+    # Step 1: Meta discovery (independente do CRM)
+    meta_error = None
+    try:
+        meta_phones = await meta.get_all_phones_auto()
+    except Exception as e:
+        meta_error = str(e)
+
+    # Step 2: CRM — non-fatal
+    crm_error = None
+    try:
+        crm_data = await crm_client.list_...()
+    except Exception as e:
+        crm_error = str(e)
+
+    # Step 3: Upsert cross-referenced (CRM + Meta)
+    # Step 4: Upsert Meta-only orphans (instance_id="meta:{phone_id}" ou channel_id negativo SHA256)
+
+    return {"ok": True, "meta_total": N, "meta_matched": M, "meta_error": ..., "crm_error": ...}
+```
+
+Nunca `raise HTTPException` em erro de API externa.
+
+#### 3. WABA-level enrichment via `get_waba_info()`
+
+`get_all_phones_auto()` enriquece cada phone com: `account_review_status`, `business_verification_status`, `waba_currency`, `waba_country`, `waba_name`.
+
+#### 4. Phone-level via `_parse_phone()` — 18 campos
+
+`phone_id`, `waba_id`, `display_phone`, `verified_name`, `is_official_business_account`, `quality_rating`, `messaging_tier`, `daily_limit`, `can_send`, `name_status`, `restrictions[{code,label,entity}]`, `additional_info[]`, `has_payment_issue`, `display_name_pending`, `account_mode`, `code_verification_status`.
+
+Códigos cosméticos `{138024, 138025}` (SIP) **sempre filtrados**.
+
+#### 5. Frontend `effectiveQuality()` — qualidade efetiva, não rating cru
+
+```ts
+function effectiveQuality(inst): 'GREEN' | 'YELLOW' | 'RED' | 'UNKNOWN' {
+  if (inst.has_payment_issue) return 'RED';
+  if (inst.can_send === 'BLOCKED') return 'RED';
+  if (inst.quality_rating === 'RED') return 'RED';
+  if (inst.restrictions?.length > 0) return 'YELLOW';
+  if (inst.can_send === 'LIMITED') return 'YELLOW';
+  if (inst.display_name_pending) return 'YELLOW';
+  if (inst.quality_rating === 'YELLOW') return 'YELLOW';
+  if (inst.quality_rating === 'GREEN') return 'GREEN';
+  return 'UNKNOWN';
+}
+```
+
+Bolinha lateral = `QUALITY_COLOR[effectiveQuality(inst)]`. **Nunca rating cru** — esconde LIMITED.
+
+#### 6. UI por número — 4 cards + alertas
+
+```
+● 📞 1078234918710712  🏢 1478112344051517
+  +55 18 98184-4690 · Diamond ✔   [✓ CRM AESIR] [⏸ Pausar]
+  BM Diamond · BR
+  ┌──────────┬──────────┬──────────┬──────────┐
+  │CAPACIDADE│QUALIDADE │PAGAMENTO │NOME EXIB │
+  │ 250/dia  │ Saudável │   OK     │ Aprovado │
+  └──────────┴──────────┴──────────┴──────────┘
+  [● Conta aprovada] [● BM verificada]
+```
+
+### Database — 14 colunas Meta em CADA tabela
+
+Aesir `aesir_instances` (mig 029+030+031) · VendeAI `broadcast_numbers` (mig 032) · Chipcare `chipcare_channels` + `chipcare_settings.meta_token_enc` (mig 033).
+
+Colunas: `phone_id, waba_id, verified_name, name_status, account_mode, restrictions JSONB, additional_info JSONB, has_payment_issue BOOL, display_name_pending BOOL, waba_name, account_review_status, business_verification_status, waba_currency, waba_country, quality_updated_at`.
+
+### Frontend `disparo-shared/` — UI compartilhada
+
+`frontend/src/components/disparo-shared/`:
+- `tokens.ts` — C, G (gradients), glassCard, sectionTitle, btnStyle, INPUT_STYLE, SHARED_CSS, QUALITY_COLOR, QUALITY_GRAD
+- `quality.ts` — effectiveQuality, statusCards, extraWarnings, topLevel
+- `Section.tsx` — Section, PulseDot, GradientBar
+- `AICore.tsx` — AICore (cérebro animado), AIMonitorPanel
+- `NumberQualityGrid.tsx` — cards 4-col + IDs + alertas
+- `index.ts` — re-exports
+
+VendeAI + Chipcare importam do shared. Aesir mantém local (não quebrar o que funciona — refactor diferido).
+
+### Padrão de seções (todos 3 disparadores)
+
+1. Credenciais 2-col (CRM + Meta)
+2. Analytics strip (3 métricas grandes 48px)
+3. **Inteligência Artificial · Monitora Disparo e Qualidade** (cérebro animado + stats)
+4. Novo Disparo (CsvUploadWizard específico do CRM)
+5. **Qualidade dos Números da sua BM** (cards 4-col)
+6. Histórico de Disparos (sempre último — não polui inputs)
+
+### Botão Refresh
+
+Texto: **"⟳ Atualizar Status (Refresh)"** gradient roxo, 14px 24px, boxShadow.
+Loading: "⟳ Sincronizando todos os status..."
+Tooltip: "Bate no token Meta + CRM, puxa qualidade, restrições, pagamento, nome de exibição, verificação BM, todos os status."
+Header msg: `✅ 8 números · 8 da BM Meta · 0 cruzados c/ Aesir · ⚠ Aesir: 401 ...`
+
+### Restriction codes PT-BR
+
+```python
+RESTRICTION_LABELS = {
+    131056: "limite de mensagens excedido (24h)",
+    133004: "número não verificado",
+    133015: "nome de exibição reprovado",
+    131048: "qualidade ruim (RED)",
+    131049: "spam reportado por usuários",
+    130472: "conta bloqueada por falta de pagamento",
+    133010: "número desabilitado pela Meta",
+    131045: "número não registrado",
+    133006: "verificação OTP pendente",
+    133007: "número em revisão Meta",
+}
+COSMETIC_CODES = {138024, 138025}  # SIP — sempre ignorar
+```
+
+### Saldo devedor R$
+
+**NÃO É POSSÍVEL** via Graph API. Testei `/credit_lines`, `/payment_methods`, `/billing_status`, `/owned_ad_accounts` — todos falham ou retornam vazio. Detecção é só binária via code 130472 (`has_payment_issue`). Pra R$ real precisaria scrape de business.facebook.com.
+
+### Bug crítico corrigido (Chipcare meta-only synth_id)
+
+`channel_id = -(abs(hash(phone_id)) % 2_000_000_000)` era randomizado per-process → linhas duplicadas a cada Refresh.
+
+Fix:
+```python
+seed = (p.get("phone_id") or key).encode("utf-8")
+digest = hashlib.sha256(seed).digest()
+synth_id = -(int.from_bytes(digest[:6], "big") % 2_000_000_000)
+```
+
+SHA256 determinístico → mesmo phone_id sempre vira mesmo channel_id.
+
+### Quando replicar pra novo disparador
+
+1. Backend `refresh-...` segue pattern 4 steps (Meta independente + CRM non-fatal + cross-ref + Meta-only orphans com SHA256)
+2. Migration: 14 colunas Meta na tabela de instâncias/canais
+3. Frontend: importar de `disparo-shared`, mesmo layout de 6 seções, botão Refresh padrão
+4. Salvar Meta token: `chipcareApi.saveMetaCredentials(token, waba_ids)` ou equivalente
+5. Não esquecer `effectiveQuality()` na bolinha lateral
+6. Não esquecer Phone ID + WABA ID acima do número
+7. Restriction codes em PT-BR
+
+### NUNCA fazer
+
+- `raise HTTPException` em erro de CRM ou Meta no refresh — capturar em var e devolver JSON
+- Usar `quality_rating` cru pra cor de bolinha — usa `effectiveQuality()`
+- Esconder restriction codes não-cosméticos
+- Esquecer Phone ID + WABA ID acima do número
+- Tirar `META_WABA_FALLBACK_IDS` do `.env`
+- `hash()` builtin pra IDs persistidos — sempre `hashlib.sha256()`
+- Mostrar `additional_info` Meta no UI (vem em inglês)
+- Esquecer de aplicar migration antes do upsert
+
+### Arquivos-chave
+
+- `backend/app/services/broadcast/meta_client.py:78-218` — `discover_wabas()` 4 strategies
+- `backend/app/services/broadcast/meta_client.py:23-90` — `_parse_phone()`
+- `backend/app/services/broadcast/meta_client.py:180-194` — `get_waba_info()` + `get_all_phones_auto()` enrichment
+- `backend/app/routers/aesir_broadcast.py:204` — refresh_numbers (referência)
+- `backend/app/routers/broadcast.py:140` — refresh_numbers VendeAI
+- `backend/app/routers/chipcare_broadcast.py:252` — refresh_channels Chipcare (channel_id SHA256)
+- `frontend/src/components/disparo-shared/quality.ts:14` — `effectiveQuality()`
+- `frontend/src/components/disparo-shared/NumberQualityGrid.tsx` — UI compartilhada
+- `frontend/src/components/disparo-shared/AICore.tsx` — Cérebro animado + AIMonitorPanel + CapacityBlock (bárras por número)
+- `frontend/src/components/disparo-shared/CollapsedChip.tsx` — Chip colapsável reusado em todas credenciais
+- `frontend/src/components/disparo-shared/BMSummary.tsx` — 5 cards (Total/Capacidade/OK/Graves/Leves)
+- `migrations/029_aesir_instance_waba_id.sql` até `033_chipcare_meta_fields.sql`
+- `.env:META_WABA_FALLBACK_IDS=...` — 8 WABA IDs CLAUDE DISPARO
+
+---
+
+## 🆕 Adições 2026-06-05 (sessão final)
+
+### Painel "Qualidade dos Números da sua BM" — 5 cards no topo
+
+`BMSummary` mostra: Total · Capacidade/dia · OK p/ Disparar · Problemas Graves · Problemas Leves.
+
+Classificação (`disparo-shared/quality.ts`):
+- **Grave:** `can_send=BLOCKED` OU `quality_rating=RED` OU conta suspensa OU BM expirada
+- **Leve:** `has_payment_issue` OU `display_name_pending` OU `can_send=LIMITED` OU `name_status` em (DECLINED, EXPIRED, PENDING_REVIEW)
+- **OK:** `quality_rating=GREEN` + `can_send=AVAILABLE` + sem problemas
+
+Capacidade total = soma `daily_limit` dos números **não-pausados E não-graves** (bloqueados não disparam → não contam).
+
+Ordem da lista: GREEN → YELLOW → RED → UNKNOWN (saudáveis primeiro).
+
+### Cérebro IA como botão de Refresh
+
+`AICore` agora recebe `{ refreshing, onClick }`. Click no cérebro = chama `onRefresh` (mesmo handler do botão "⟳ Atualizar Status").
+
+Bloco "Capacidade Hoje" abaixo das campanhas — barras por número com `sent_today/daily_limit`, cor pela qualidade efetiva, % colorido (verde<70, amarelo 70-90, vermelho 90+).
+
+### Credenciais colapsáveis (`CollapsedChip`)
+
+Pattern unificado em todos os 4 panels (VendeAI · Aesir · Chipcare · Chatwoot):
+- Já configurado → chip compacto verde com botão `✎ Editar`
+- Primeira vez OR `✎ Editar` → painel completo expande
+- Após salvar → auto-colapsa 800ms
+
+Email pré-preenchido (identifier, NÃO secret). Senhas/tokens com placeholder `••••••••  (salvo — em branco = manter)`.
+
+### Multi-tenant validado
+
+Auditado por agente: 0 critical findings, 0 data leaks.
+- `_seed_admin_credentials` em `main.py` REMOVIDO
+- `ADMIN_OWNER_ID/EMAIL/PASSWORD/META_TOKEN/CRM_TOKEN` no `.env` COMENTADOS
+- `ADMIN_USER_IDS` mantido (só controle de acesso a rotas /admin)
+- Cada user salva credenciais em DB scoped por `owner_id` (RLS ativo)
+- JWT cache Chipcare keyed por user_id
+- WABA fallback validado per-token
+
+### Chatwoot CRM (`/chatwoot`)
+
+Painel inline `ChatwootCredsPanel` (substitui modal antigo "⚙️ Configurar"). 4 campos: URL · Account ID · API Token · Inbox IDs (opcional). Colapsa após salvar.
+
+Multi-tenant: `chatwoot_settings` PK `owner_id` + RLS + token Fernet-encrypted. `getSettings` NUNCA retorna o token plaintext.
+
+### Credenciais VendeAI estendidas
+
+`POST /api/broadcast/credentials` aceita `email`, `password`, `meta_token`, `account_id`, `crm_token` — partial update.
+
+`GET /api/broadcast/credentials` retorna `configured`, `meta_configured`, `account_id`, `crm_token_configured`, `email` (decifrado como identifier). NUNCA retorna senhas/tokens.
+
+Campos extras (account_id Chatwoot + CRM token) movidos de `/configuracoes` pra `/disparo` direto. Configurações antigas removidas.
+
+### Fix crítico Chipcare
+
+`chipcare_broadcast.py:317` — `_get_client_and_settings` chamava client antes de checar creds. Quebrava modo Meta-only (sem Chipcare). Fix: `if not chipcare_email or not chipcare_pass: chipcare_error = "Modo Meta-only"`.
+
+### Sincronização WABA IDs
+
+Aesir/Chipcare ganharam os mesmos 16 WABA IDs do VendeAI via SQL:
+```sql
+UPDATE aesir_settings SET waba_ids = (SELECT waba_ids FROM vendeai_settings WHERE owner_id=...) WHERE owner_id=...
+```
+
+Antes: Aesir mostrava 8 (fallback env), VendeAI mostrava 14. Agora ambos puxam dos mesmos 16 IDs (14 acessíveis pelo token).
+
+### Bugs corrigidos
+
+- `batches.py:57` — `NameError: MAX_ROWS` não importado → adicionado
+- `chipcare_broadcast.py:389` — `hash()` builtin randomizado per-process → `hashlib.sha256()` determinístico
+- DisparoAesir AIMonitorPanel/AICore local removido → importa shared (consistência)
+
+### Estado final
+
+| Disparador | Token Meta | Refresh | UI shared | Multi-tenant | Cérebro clicável | Capacidade bars | 5 cards summary |
+|---|---|---|---|---|---|---|---|
+| VendeAI | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Aesir | ✅ | ✅ | ✅ (parcial — local NumberQualityGrid) | ✅ | ✅ | ✅ | ✅ |
+| Chipcare | ✅ (Meta-only OK também) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Chatwoot | N/A | ✅ (sync) | ✅ (chip colapsável) | ✅ | N/A | N/A | N/A |

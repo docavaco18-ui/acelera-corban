@@ -1,5 +1,190 @@
 import { useEffect, useRef, useState } from "react";
 import { chatwootApi } from "../lib/api";
+import {
+  C as DSC, G, glassCard, sectionTitle, btnStyle, INPUT_STYLE, SHARED_CSS,
+  PulseDot,
+} from "../components/disparo-shared";
+
+// ── Painel inline de credenciais (substitui o modal "⚙️ Configurar") ──────────
+
+function ChatwootCredsPanel({ onSaved }: { onSaved: () => void }) {
+  const [url, setUrl] = useState("");
+  const [accId, setAccId] = useState("");
+  const [token, setToken] = useState("");
+  const [inboxIds, setInboxIds] = useState("");
+  const [tokenConfigured, setTokenConfigured] = useState(false);
+  const [configured, setConfigured] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [expanded, setExpanded] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    chatwootApi.getSettings().then((s: any) => {
+      if (s.configured) {
+        setUrl(s.chatwoot_url || "");
+        setAccId(s.account_id || "");
+        setInboxIds(s.inbox_ids || "");
+        setTokenConfigured(true);
+        setConfigured(true);
+        setExpanded(false);  // já configurado = colapsado
+      } else {
+        setExpanded(true);   // primeiro uso = aberto
+      }
+      setLoaded(true);
+    }).catch(() => { setExpanded(true); setLoaded(true); });
+  }, []);
+
+  const save = async () => {
+    if (!url.trim() || !accId.trim()) {
+      setMsg("URL e Account ID obrigatórios");
+      return;
+    }
+    setSaving(true);
+    try {
+      await chatwootApi.putSettings({
+        chatwoot_url: url.trim(),
+        account_id: accId.trim(),
+        api_token: token.trim() || undefined,
+        inbox_ids: inboxIds.trim() || null,
+      });
+      if (token.trim()) setTokenConfigured(true);
+      setConfigured(true);
+      setToken("");
+      setMsg("Salvo!");
+      onSaved();
+      setTimeout(() => { setExpanded(false); setMsg(""); }, 800);  // auto-colapsa
+    } catch (e: any) {
+      setMsg("Erro: " + (e?.response?.data?.detail || e?.message));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!loaded) return null;
+
+  // ── Modo colapsado: chip verde com toggle ──
+  if (!expanded) {
+    return (
+      <div style={{
+        background: 'linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, ' + G.purple + ' border-box',
+        border: '1px solid transparent', borderRadius: 14,
+        padding: '12px 18px',
+        display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'space-between',
+        boxShadow: '0 4px 20px rgba(0,0,0,.4)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 10, background: G.purple,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
+          }}>💬</div>
+          <PulseDot color="#10b981" />
+          <span style={{ color: '#10b981', fontSize: 13, fontWeight: 700, flexShrink: 0 }}>
+            Credenciais Chatwoot OK
+          </span>
+          <span style={{ color: DSC.muted, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            · {url.replace(/^https?:\/\//, '')} · Account {accId}{tokenConfigured ? ' · token OK' : ''}
+          </span>
+        </div>
+        <button className="ds-btn" onClick={() => setExpanded(true)}
+          style={{
+            background: 'rgba(124,58,237,.12)', border: '1px solid rgba(124,58,237,.3)',
+            color: '#a78bfa', borderRadius: 8, padding: '6px 14px',
+            cursor: 'pointer', fontSize: 12, fontWeight: 700, flexShrink: 0,
+          }}>
+          ✎ Editar
+        </button>
+      </div>
+    );
+  }
+
+  // ── Modo expandido ──
+  return (
+    <div style={glassCard(G.purple, 24)}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 20, justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{
+            width: 44, height: 44, borderRadius: 12, background: G.purple,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: 22, boxShadow: "0 4px 16px rgba(0,0,0,.3)",
+          }}>💬</div>
+          <div>
+            <h2 style={{ ...sectionTitle(G.purple), marginBottom: 0 }}>Credenciais Chatwoot</h2>
+            {configured && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+                <PulseDot color="#a78bfa" />
+                <span style={{ color: "#a78bfa", fontSize: 13 }}>Editando configuração existente</span>
+              </div>
+            )}
+          </div>
+        </div>
+        {configured && (
+          <button className="ds-btn" onClick={() => setExpanded(false)}
+            style={{
+              background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+              color: DSC.sec, borderRadius: 8, padding: '6px 14px',
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}>
+            ✕ Ocultar
+          </button>
+        )}
+      </div>
+
+      <p style={{ color: DSC.sec, fontSize: 13, marginBottom: 14, lineHeight: 1.5 }}>
+        Token vazio = mantém o atual. Inbox IDs opcional (separados por vírgula).
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <label style={{ color: DSC.sec, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            URL Chatwoot
+          </label>
+          <input className="ds-input" style={INPUT_STYLE} placeholder="https://crm.exemplo.com.br"
+            value={url} onChange={e => setUrl(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ color: DSC.sec, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Account ID
+          </label>
+          <input className="ds-input" style={INPUT_STYLE} placeholder="6927"
+            value={accId} onChange={e => setAccId(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ color: DSC.sec, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            API Token
+          </label>
+          <input className="ds-input" style={INPUT_STYLE} type="password"
+            placeholder={tokenConfigured ? "Em branco = manter" : "cole o token aqui"}
+            value={token} onChange={e => setToken(e.target.value)} />
+        </div>
+        <div>
+          <label style={{ color: DSC.sec, fontSize: 12, fontWeight: 600, display: "block", marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Inbox IDs <span style={{ color: DSC.muted, textTransform: "none", fontWeight: 400 }}>(opcional)</span>
+          </label>
+          <input className="ds-input" style={INPUT_STYLE} placeholder="63010, 59842, ..."
+            value={inboxIds} onChange={e => setInboxIds(e.target.value)} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 14 }}>
+        <button className="ds-btn" style={btnStyle(G.purple, saving)} onClick={save} disabled={saving}>
+          {saving ? "⟳ Salvando..." : "💾 Salvar e Ocultar"}
+        </button>
+        {configured && (
+          <button className="ds-btn" onClick={() => { setExpanded(false); setMsg(""); }}
+            style={{
+              background: 'transparent', border: '1px solid rgba(255,255,255,.1)',
+              color: DSC.sec, borderRadius: 10, padding: '12px 18px',
+              cursor: 'pointer', fontSize: 13, fontWeight: 600,
+            }}>
+            Cancelar
+          </button>
+        )}
+        {msg && <span style={{ color: msg.startsWith("Erro") ? DSC.red : "#10b981", fontSize: 12 }}>{msg}</span>}
+      </div>
+    </div>
+  );
+}
 
 const C = {
   bg: "#080818",
@@ -173,24 +358,27 @@ export default function Chatwoot() {
 
   return (
     <div style={{ background: C.bg, minHeight: "100vh", padding: "24px 28px", color: "#e0e0f0", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+      <style>{SHARED_CSS}</style>
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onSaved={refreshAll} />}
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
-          <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: 0 }}>Disparo Chatwoot</h1>
+          <h1 style={{ fontSize: "1.5rem", fontWeight: 800, color: "#fff", margin: 0 }}>CRM Chatwoot</h1>
           <p style={{ color: "#64748b", fontSize: ".88rem", margin: "4px 0 0 0" }}>
             Cruzamento dos leads higienizados com as conversas no CRM.
           </p>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setShowSettings(true)} style={btn("#94a3b8", "transparent")}>
-            ⚙️ Configurar
-          </button>
           <button onClick={startSync} disabled={isRunning || !settings?.configured} style={btn(C.purple, `${C.purple}22`)}>
             {isRunning ? "🔄 Sincronizando…" : "↻ Sincronizar agora"}
           </button>
         </div>
+      </div>
+
+      {/* Painel de credenciais inline (substitui o modal antigo) */}
+      <div style={{ marginBottom: 20 }}>
+        <ChatwootCredsPanel onSaved={refreshAll} />
       </div>
 
       {/* Status do sync */}
