@@ -138,8 +138,8 @@ export function AIMonitorPanel({
 
   const active = snapshot?.active_dispatches || [];
   const totalSent = active.reduce((s: number, d: any) => {
-    const asns = d.assignments_json || [];
-    return s + asns.reduce((ss: number, a: any) => ss + (a.sent || 0), 0);
+    const asns = d.broadcast_dispatch_assignments || [];
+    return s + asns.reduce((ss: number, a: any) => ss + (a.sent_count || 0), 0);
   }, 0);
 
   const qBreak = { GREEN: 0, YELLOW: 0, RED: 0, UNKNOWN: 0 };
@@ -219,9 +219,9 @@ export function AIMonitorPanel({
               {active.length} {active.length === 1 ? campaignsLabel : campaignsLabelPlural}
             </div>
             {active.slice(0, 4).map((d: any) => {
-              const asns = d.assignments_json || [];
-              const sent = asns.reduce((s: number, a: any) => s + (a.sent || 0), 0);
-              const planned = asns.reduce((s: number, a: any) => s + (a.planned || 0), 0);
+              const asns = d.broadcast_dispatch_assignments || [];
+              const sent = asns.reduce((s: number, a: any) => s + (a.sent_count || 0), 0);
+              const planned = asns.reduce((s: number, a: any) => s + (a.planned_count || 0), 0);
               const pct = planned > 0 ? Math.round(sent * 100 / planned) : 0;
               return (
                 <div key={d.id} style={{
