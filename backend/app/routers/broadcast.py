@@ -519,8 +519,25 @@ async def get_snapshot(user_id: str = Depends(_get_user_id)):
     alerts = db.table("broadcast_alerts") \
         .select("*").eq("owner_id", user_id) \
         .order("ts", desc=True).limit(20).execute()
+
+    # Compute sent_today per phone_id from all assignments today (no DB column needed)
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_asns = db.table("broadcast_dispatch_assignments") \
+        .select("phone_id, sent_count") \
+        .eq("owner_id", user_id) \
+        .gte("created_at", today) \
+        .execute()
+    sent_today: dict[str, int] = {}
+    for row in (today_asns.data or []):
+        pid = row["phone_id"]
+        sent_today[pid] = sent_today.get(pid, 0) + (row.get("sent_count") or 0)
+
+    numbers_data = numbers.data or []
+    for num in numbers_data:
+        num["sent_today"] = sent_today.get(num["phone_id"], 0)
+
     return {
-        "numbers": numbers.data or [],
+        "numbers": numbers_data,
         "active_dispatches": dispatches.data or [],
         "alerts": alerts.data or [],
     }
