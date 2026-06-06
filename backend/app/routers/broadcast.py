@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 import redis.asyncio as aioredis
@@ -444,7 +445,29 @@ async def confirm_dispatch(
         except Exception as exc:
             raise HTTPException(502, f"Erro VendeAI para {phone_id}: {exc}")
 
-        mailing_id = resp.get("id") or resp.get("mailing_id")
+        mailing_id = (
+            resp.get("id")
+            or resp.get("mailing_id")
+            or (resp.get("mailing") or {}).get("id")
+            or (resp[0].get("id") if isinstance(resp, list) and resp else None)
+        )
+
+        # Fallback: VendeAI response didn't include mailing id — find it by inbox_phone + recency
+        if not mailing_id:
+            try:
+                num_resp = db.table("broadcast_numbers").select("display_phone") \
+                    .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
+                display_phone = num_resp.data[0].get("display_phone", "") if num_resp.data else ""
+                display_digits = re.sub(r"\D", "", display_phone)
+                cutoff = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+                ml_data = await vendeai.list_mailings(page=1, page_size=5)
+                for m in ml_data.get("results", []):
+                    inbox_digits = re.sub(r"\D", "", m.get("inbox_phone", ""))
+                    if inbox_digits == display_digits and m.get("created_at", "") >= cutoff:
+                        mailing_id = str(m["id"])
+                        break
+            except Exception:
+                pass
 
         # Capture quality at dispatch time
         num_rec = db.table("broadcast_numbers").select("quality_rating") \

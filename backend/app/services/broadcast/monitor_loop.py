@@ -22,7 +22,7 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 logger = logging.getLogger(__name__)
-POLL_INTERVAL = 60
+POLL_INTERVAL = 20
 
 
 async def monitor_tick(redis_client: aioredis.Redis) -> None:
@@ -106,7 +106,7 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
                     if mailing_id in tracked_ids:
                         db.table("broadcast_dispatch_assignments").update({
                             "sent_count": mailing.get("sent_count", 0),
-                            "failed_count": max(0, (mailing.get("dispatch_total", 0) or 0) - (mailing.get("sent_count", 0) or 0)),
+                            "failed_count": mailing.get("failed_count", 0),
                             "last_poll_at": _utcnow(),
                         }).eq("id", tracked_ids[mailing_id]).execute()
                         found += 1
