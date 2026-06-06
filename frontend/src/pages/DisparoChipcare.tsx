@@ -394,6 +394,7 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         activate_immediately: false,
         dry_run: true,
       });
+      if (!res) { setErr('Dry-run retornou resposta vazia'); return; }
       setDryRunResult(res);
       setStep('confirm');
     } catch (e: any) { setErr(e?.response?.data?.detail || e?.message || 'Erro no dry-run'); }
@@ -654,6 +655,7 @@ export default function DisparoChipcare() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState('');
   const [loadingTpls, setLoadingTpls] = useState(false);
+  const [loadErr, setLoadErr] = useState('');
 
   const loadChannels = () => {
     chipcareApi.listChannels().then(setChannels).catch(() => { });
@@ -703,14 +705,29 @@ export default function DisparoChipcare() {
       if (paused) await chipcareApi.resumeChannel(cid);
       else await chipcareApi.pauseChannel(cid);
       loadChannels();
-    } catch (e) {
+    } catch (e: any) {
       console.error('[DisparoChipcare] togglePause falhou:', e);
+      setLoadErr(`Falha ao ${paused ? 'retomar' : 'pausar'} canal: ` + (e?.response?.data?.detail || e?.message || 'erro desconhecido'));
     }
   };
 
   return (
     <div style={{ padding: '32px 40px 64px', display: 'flex', flexDirection: 'column', gap: 24, width: '100%', background: C.bg, minHeight: '100vh' }}>
       <style>{SHARED_CSS}</style>
+
+      {loadErr && (
+        <div style={{
+          color: C.red, fontSize: 13, padding: 12,
+          background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.4)',
+          borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <span>⚠ {loadErr}</span>
+          <button onClick={() => setLoadErr('')} style={{
+            background: 'transparent', border: '1px solid rgba(239,68,68,.4)', color: C.red,
+            borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+          }}>✕</button>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>

@@ -526,6 +526,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
     task = asyncio.create_task(_run())
     _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
     return {"dispatch_id": body.dispatch_id, "status": "running"}
 
 
@@ -535,11 +536,12 @@ def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db) -> N
     if not resp.data:
         return
     assignments = resp.data[0].get("assignments_json") or []
-    for asn in assignments:
-        if asn.get("instance_id") == instance_id:
-            asn.update(patch)
+    merged = [
+        {**asn, **patch} if asn.get("instance_id") == instance_id else asn
+        for asn in assignments
+    ]
     db.table("aesir_dispatches").update({
-        "assignments_json": assignments,
+        "assignments_json": merged,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).execute()
 

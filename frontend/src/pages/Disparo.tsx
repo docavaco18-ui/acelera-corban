@@ -334,18 +334,29 @@ export default function Disparo() {
   const [analytics, setAnalytics] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState('');
+  const [loadErr, setLoadErr] = useState('');
 
   const loadData = async () => {
+    let numbersOk = false;
     try {
       const numsResp = await broadcastApi.listNumbers();
       setNumbers((numsResp as any).data || []);
-    } catch (e) {
+      numbersOk = true;
+    } catch (e: any) {
       console.error('[Disparo] listNumbers falhou:', e);
+      const detail = e?.response?.data?.detail || e?.message || String(e);
+      setLoadErr('Não foi possível carregar números: ' + detail);
     }
     try {
       const analyticsResp = await broadcastApi.getAnalytics();
       setAnalytics(analyticsResp.data || []);
-    } catch { /* analytics não bloqueia */ }
+      if (numbersOk) setLoadErr('');
+    } catch (e: any) {
+      /* analytics não bloqueia render */
+      console.error('[Disparo] getAnalytics falhou:', e);
+      const detail = e?.response?.data?.detail || e?.message || String(e);
+      setLoadErr('Aviso: analytics indisponível — ' + detail);
+    }
   };
 
   useEffect(() => { loadData(); }, []);
@@ -380,8 +391,10 @@ export default function Disparo() {
       if (paused) await broadcastApi.resumeNumber(phoneId);
       // VendeAI não tem pauseNumber explícito — só resume
       await loadData();
-    } catch (e) {
+    } catch (e: any) {
       console.error('[Disparo] togglePause falhou:', e);
+      const detail = e?.response?.data?.detail || e?.message || String(e);
+      setLoadErr('Não foi possível atualizar status do número: ' + detail);
     }
   };
 
@@ -428,6 +441,13 @@ export default function Disparo() {
           </button>
         </div>
       </div>
+
+      {loadErr && (
+        <div style={{
+          border: '1px solid rgba(239,68,68,.4)', background: 'rgba(239,68,68,.08)',
+          padding: 12, borderRadius: 8, color: C.red, fontSize: 13,
+        }}>{loadErr}</div>
+      )}
 
       {/* Credentials 2-col */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>

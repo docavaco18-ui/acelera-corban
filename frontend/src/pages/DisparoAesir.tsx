@@ -1027,9 +1027,11 @@ export default function DisparoAesir() {
   const [instances, setInstances] = useState<any[]>([]);
   const [refreshingInst, setRefreshingInst] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState('');
+  const [loadErr, setLoadErr] = useState('');
 
   const loadInstances = async () => {
-    try { const d = await aesirApi.listInstances(); setInstances(d || []); } catch { }
+    try { const d = await aesirApi.listInstances(); setInstances(d || []); setLoadErr(''); }
+    catch (e: any) { setLoadErr('Falha ao carregar instâncias: ' + (e?.response?.data?.detail || e?.message || 'erro desconhecido')); }
   };
 
   const togglePause = async (iid: string, paused: boolean) => {
@@ -1037,7 +1039,9 @@ export default function DisparoAesir() {
       if (paused) await aesirApi.resumeInstance(iid);
       else await aesirApi.pauseInstance(iid);
       loadInstances();
-    } catch { }
+    } catch (e: any) {
+      setLoadErr(`Falha ao ${paused ? 'retomar' : 'pausar'} número: ` + (e?.response?.data?.detail || e?.message || 'erro desconhecido'));
+    }
   };
 
   const refreshNumbers = async () => {
@@ -1061,6 +1065,20 @@ export default function DisparoAesir() {
   return (
     <div style={{ padding: '32px 40px 64px', display: 'flex', flexDirection: 'column', gap: 24, width: '100%', background: C.bg, minHeight: '100vh' }}>
       <style>{CSS}</style>
+
+      {loadErr && (
+        <div style={{
+          color: C.red, fontSize: 13, padding: 12,
+          background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.4)',
+          borderRadius: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12,
+        }}>
+          <span>⚠ {loadErr}</span>
+          <button onClick={() => setLoadErr('')} style={{
+            background: 'transparent', border: '1px solid rgba(239,68,68,.4)', color: C.red,
+            borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 11, fontWeight: 600,
+          }}>✕</button>
+        </div>
+      )}
 
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>

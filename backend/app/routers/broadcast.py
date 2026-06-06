@@ -340,8 +340,8 @@ async def analyze_csv(
     }).execute()
 
     # Store csv bytes temporarily in Redis
-    r = aioredis.from_url(settings.redis_url)
-    await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
+    async with aioredis.from_url(settings.redis_url) as r:
+        await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
 
     return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split, "csv_columns": csv_columns}
 
@@ -386,10 +386,14 @@ async def confirm_dispatch(
     password = safe_decrypt(creds.data.get("password_enc"))
     if not email or not password:
         raise HTTPException(400, "Credenciais VendeAI corrompidas. Re-salve em Configurações.")
-    vendeai = VendeAIClient(email, password)
+    vendeai = VendeAIClient(
+        email, password,
+        account_id=creds.data.get("account_id"),
+        crm_token=safe_decrypt(creds.data.get("crm_token_enc") or ""),
+    )
 
-    r = aioredis.from_url(settings.redis_url)
-    csv_bytes = await r.get(f"broadcast:csv:{body.dispatch_id}")
+    async with aioredis.from_url(settings.redis_url) as r:
+        csv_bytes = await r.get(f"broadcast:csv:{body.dispatch_id}")
     if not csv_bytes:
         raise HTTPException(400, "CSV expirou. Faça upload novamente.")
     # Strip BOM defensively (in case CSV was stored before the fix)
@@ -538,7 +542,11 @@ async def _get_vendeai_for_user(user_id: str) -> VendeAIClient:
     password = safe_decrypt(creds.data.get("password_enc"))
     if not email or not password:
         raise HTTPException(400, "Credenciais VendeAI corrompidas. Re-salve em Configurações.")
-    return VendeAIClient(email, password)
+    return VendeAIClient(
+        email, password,
+        account_id=creds.data.get("account_id"),
+        crm_token=safe_decrypt(creds.data.get("crm_token_enc") or ""),
+    )
 
 
 @router.post("/dispatches/{dispatch_id}/pause")

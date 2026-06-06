@@ -35,13 +35,19 @@ export default function Presenca() {
   const [loadingStats, setLoadingStats] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryMsg, setRetryMsg] = useState<string | null>(null);
+  const [retryOk, setRetryOk] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
 
   const refreshStats = useCallback(() => {
     setLoadingStats(true);
-    Promise.all([presencaApi.statsDashboard(), presencaApi.listBatches()])
-      .then(([s, b]) => {
-        setStats(s);
-        setBatches(b || []);
+    Promise.allSettled([presencaApi.statsDashboard(), presencaApi.listBatches()])
+      .then(([sRes, bRes]) => {
+        const errs: string[] = [];
+        if (sRes.status === "fulfilled") setStats(sRes.value);
+        else errs.push(`stats: ${(sRes.reason as Error)?.message || "falha"}`);
+        if (bRes.status === "fulfilled") setBatches(bRes.value || []);
+        else errs.push(`batches: ${(bRes.reason as Error)?.message || "falha"}`);
+        setLoadErr(errs.length ? errs.join(" | ") : null);
       })
       .finally(() => setLoadingStats(false));
   }, []);
@@ -55,35 +61,43 @@ export default function Presenca() {
   const handleRetry = useCallback(async () => {
     setRetrying(true);
     setRetryMsg(null);
+    setRetryOk(false);
     try {
       const { resetados } = await presencaApi.retryErrors();
       setRetryMsg(`↺ ${resetados} leads recolocados na fila`);
+      setRetryOk(true);
       refreshStats();
-    } catch {
-      setRetryMsg("Erro ao retentar");
+    } catch (e) {
+      setRetryMsg(`Erro ao retentar: ${(e as Error)?.message || "falha"}`);
+      setRetryOk(false);
     } finally {
       setRetrying(false);
     }
   }, [refreshStats]);
 
   const handleExport = useCallback(async () => {
-    const token = await getAccessToken();
-    const base = import.meta.env.VITE_API_URL || "";
-    const url = `${base}/api/presenca/leads/export?status=elegivel`;
-    const a = document.createElement("a");
-    a.href = url;
-    a.setAttribute("download", "presenca_elegiveis.csv");
-    // attach token via fetch + blob for auth
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => r.blob())
-      .then((blob) => {
-        const href = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = href;
-        link.download = "presenca_elegiveis.csv";
-        link.click();
-        URL.revokeObjectURL(href);
-      });
+    try {
+      const token = await getAccessToken();
+      const base = import.meta.env.VITE_API_URL || "";
+      const url = `${base}/api/presenca/leads/export?status=elegivel`;
+      const r = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const peek = (await blob.slice(0, 16).text()).trim();
+      if (peek.startsWith('{"detail')) {
+        const full = await blob.text();
+        throw new Error(`Backend: ${full.slice(0, 200)}`);
+      }
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = "presenca_elegiveis.csv";
+      link.click();
+      URL.revokeObjectURL(href);
+      setLoadErr(null);
+    } catch (e) {
+      setLoadErr(`Export falhou: ${(e as Error)?.message || "falha"}`);
+    }
   }, []);
 
   const statCards = [
@@ -107,7 +121,17 @@ export default function Presenca() {
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           {retryMsg && (
-            <span style={{ fontSize: 12, color: C.yellow }}>{retryMsg}</span>
+            <span
+              style={{
+                fontSize: 12, fontWeight: 600,
+                padding: "6px 10px", borderRadius: 6,
+                color: retryOk ? C.green : C.red,
+                border: `1px solid ${retryOk ? C.green : C.red}`,
+                background: retryOk ? "rgba(34,197,94,0.08)" : "rgba(239,68,68,0.08)",
+              }}
+            >
+              {retryMsg}
+            </span>
           )}
           <button
             onClick={handleRetry}
@@ -132,6 +156,32 @@ export default function Presenca() {
           </button>
         </div>
       </div>
+
+      {loadErr && (
+        <div
+          style={{
+            marginTop: 14,
+            padding: 12,
+            borderRadius: 8,
+            border: `1px solid ${C.red}`,
+            background: "rgba(239,68,68,0.10)",
+            color: C.red,
+            fontSize: 13, fontWeight: 600,
+            display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12,
+          }}
+        >
+          <span>⚠ {loadErr}</span>
+          <button
+            onClick={() => setLoadErr(null)}
+            style={{
+              background: "transparent", border: "none", color: C.red,
+              fontSize: 16, fontWeight: 700, cursor: "pointer", padding: 0,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* Stats cards */}
       <div style={{ display: "flex", gap: 12, marginBottom: 24, marginTop: 20, flexWrap: "wrap" }}>

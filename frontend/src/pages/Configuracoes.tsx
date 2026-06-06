@@ -34,6 +34,7 @@ export default function Configuracoes() {
     : "Login (e-mail V8)";
 
   const [current, setCurrent] = useState<BankSummary | null | undefined>(undefined);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [proxies, setProxies] = useState("");
@@ -53,6 +54,7 @@ export default function Configuracoes() {
       const data = await credentialsApi.list();
       const c = data[bank];
       setCurrent(c);
+      setLoadErr(null);
       if (c) {
         setLogin(c.login || "");
         setProxies((c.proxies || []).join("\n"));
@@ -62,8 +64,9 @@ export default function Configuracoes() {
       }
       setPassword("");
       setMsg(null);
-    } catch {
+    } catch (e: any) {
       setCurrent(null);
+      setLoadErr(e?.response?.data?.detail || e?.message || "Falha ao carregar credenciais");
     }
     if (isAdmin) {
       try {
@@ -74,7 +77,7 @@ export default function Configuracoes() {
   };
 
   // Recarrega ao trocar bank
-  useEffect(() => { setCurrent(undefined); load(); }, [bank]);
+  useEffect(() => { setCurrent(undefined); setLoadErr(null); load(); }, [bank]);
 
   const save = async () => {
     setBusy(true);
@@ -106,6 +109,32 @@ export default function Configuracoes() {
 
   if (current === undefined) {
     return <div style={{ padding: 40, color: "#94a3b8" }}>Carregando…</div>;
+  }
+
+  if (current === null) {
+    return (
+      <div style={{ background: C.bg, minHeight: "100vh", padding: "24px 28px", color: "#e0e0f0", fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
+        <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 14, padding: 22, maxWidth: 760 }}>
+          <h2 style={{ fontSize: "1rem", color: "#fff", margin: "0 0 10px 0" }}>⚠️ Erro ao carregar credenciais</h2>
+          <p style={{ color: "#94a3b8", fontSize: ".88rem", margin: "0 0 8px 0" }}>
+            Não foi possível carregar credenciais. Tente recarregar a página.
+          </p>
+          {loadErr && (
+            <p style={{ color: C.red, fontSize: ".78rem", margin: "0 0 14px 0" }}>{loadErr}</p>
+          )}
+          <button
+            onClick={() => window.location.reload()}
+            style={{
+              padding: "9px 20px", background: "rgba(0,191,255,.15)", color: C.blue,
+              border: `1px solid rgba(0,191,255,.4)`, borderRadius: 18, cursor: "pointer",
+              fontSize: ".82rem", fontWeight: 700,
+            }}
+          >
+            🔄 Recarregar
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const proxyCount = proxies.split(/\r?\n|,/).map(p => p.trim()).filter(Boolean).length;
