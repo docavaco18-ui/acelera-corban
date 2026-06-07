@@ -512,13 +512,13 @@ Feature pra agendar disparo automático de bot. Implementado em **Presença**. P
 <claude-mem-context>
 # Memory Context
 
-# [ACELERA CORBAN] recent context, 2026-06-03 7:15pm GMT-3
+# [ACELERA CORBAN] recent context, 2026-06-06 11:04pm GMT-3
 
 Legend: 🎯session 🔴bugfix 🟣feature 🔄refactor ✅change 🔵discovery ⚖️decision 🚨security_alert 🔐security_note
 Format: ID TIME TYPE TITLE
 Fetch details: get_observations([IDs]) | Search: mem-search skill
 
-Stats: 18 obs (6,172t read) | 137,234t work | 96% savings
+Stats: 28 obs (11,326t read) | 545,176t work | 98% savings
 
 ### Jun 3, 2026
 3058 6:49p 🔵 Acelera Corban Project Stack and Context
@@ -539,45 +539,19 @@ Stats: 18 obs (6,172t read) | 137,234t work | 96% savings
 3073 6:56p ✅ Supabase MCP Auth Status Changed to OAuth — Codex Setup Complete
 3074 " ⚖️ Standardized Agent Handoff Protocol Defined for Acelera Corban
 3075 7:14p 🔵 Shape em Dia — Flutter Fitness App State Discovered
-3076 8:10p ✅ Aesir ERP — Disparo WhatsApp integrado (commit 9403920, migration 024 aplicada)
+3076 " 🔵 Shape em Dia — Pending Staging Artifacts Found at Codex Handoff Location
+### Jun 6, 2026
+3191 9:39p 🔵 Acelera Corban — Full Project Structure Mapped
+3192 " 🔵 Acelera Corban — Complete Feature Map for "Modo de Uso" Documentation
+3193 9:40p 🔵 Complete Database Schema — 33 Migrations, All Tables Mapped
+3194 " 🔵 Per-Feature Workflow Details — Complete User Action Flows for Each Module
+3195 " 🔵 Higienização Module — Business Logic and UI Tabs Explained by Owner
+3196 9:55p ✅ Higienização "Modo de Uso" Notes Written to Memory File
+3197 9:59p ⚖️ PowerHub module clarified + "Modo de Uso" page implementation approved
+3198 10:12p 🔵 Frontend design patterns confirmed for "Modo de Uso" implementation
+3199 10:14p 🟣 ModoDeUso.tsx page created — full user guide for ACELERA CORBAN
 
-## Aesir ERP — Disparo WhatsApp (2º CRM)
-
-**Status:** ✅ Implementado e commitado. Migration 024 aplicada Supabase. Aguarda teste local + deploy VPS.
-
-### Arquivos
-
-- `backend/app/services/broadcast/aesir_client.py` — `AesirClient`
-- `backend/app/routers/aesir_broadcast.py` — 9 endpoints `/api/aesir-broadcast/`
-- `frontend/src/pages/DisparoAesir.tsx` — página `/disparo-aesir`
-- `migrations/024_aesir_broadcast.sql` — ✅ aplicada Supabase `gfyharrnkcncpngbvhpj`
-
-### Credenciais
-
-- **Account ID:** `532`
-- **Token:** `aesir_v1_CnZBukLIPXyi9wTFkBUiUGxy6ivwYbc1MajxJEuK`
-- **Headers:** `X-Token` + `X-Account-ID` — NUNCA `Authorization: Bearer`
-- **Base URL:** `https://api.aesirerp.com/api/v1`
-- **Endpoints:** `GET /whatsapp/instances`, `POST /whatsapp/send-message`
-
-### Armadilhas
-
-- Headers são `X-Token` + `X-Account-ID` — não Bearer (bug original corrigido)
-- Sem botão Pausar — CSV não salvo em Redis, impossível resumir. Só Cancelar.
-- `list_instances` não remove instâncias deletadas no Aesir (ghost instances)
-- `total_contacts` fica 0 durante run, atualiza só ao concluir
-
-### Próximos passos
-
-1. `localhost:3002/disparo-aesir` → salvar credenciais → Refresh Instâncias → testar disparo
-2. Deploy VPS após local OK:
-   ```bash
-   cd /root/acelera-corban && git pull && \
-   docker compose -f docker-compose.prod.yml build --no-cache backend frontend && \
-   docker compose -f docker-compose.prod.yml up -d backend frontend
-   ```
-
-Access 137k tokens of past work via get_observations([IDs]) or mem-search skill.
+Access 545k tokens of past work via get_observations([IDs]) or mem-search skill.
 </claude-mem-context>
 
 ---
@@ -883,3 +857,196 @@ Antes: Aesir mostrava 8 (fallback env), VendeAI mostrava 14. Agora ambos puxam d
 | Aesir | ✅ | ✅ | ✅ (parcial — local NumberQualityGrid) | ✅ | ✅ | ✅ | ✅ |
 | Chipcare | ✅ (Meta-only OK também) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Chatwoot | N/A | ✅ (sync) | ✅ (chip colapsável) | ✅ | N/A | N/A | N/A |
+---
+
+## Clientes Cadastrados
+
+### EDVAN — Fênix Soluções (onboarding 2026-06-06)
+
+| Campo | Valor |
+|-------|-------|
+| UID | `436f1900-b571-412a-be27-35542ffb7a93` |
+| Email app | `edvan@gmail.com` |
+| VendeAI email | `nova_9343@vendeai.com` |
+| Account ID | `448` |
+| WABA | `2166149357452585` (Fênix Soluções) |
+| Número | `+55 91 8107-0115` (phone_id `1201964722996302`) |
+| can_send | LIMITED · 250/dia · pagamento regularizado |
+| Templates | ❌ 0 aprovados — bloqueia disparo |
+| BFF JWT | ❌ 401 — senha BFF não confirmada |
+| IA API | ✅ funciona via crm_token |
+
+**Credenciais completas:** `/Users/macbookdegabriel/projetos/EDVAN fenix/CREDENTIALS.md`
+
+**Pendências:**
+1. Templates Meta criados e aprovados
+2. Confirmar senha BFF VendeAI (`bff.vendeaitecnologia.com.br`)
+
+---
+
+## Sessão 06/06/2026 — Dashboard Métricas Disparo (estado pós-sessão)
+
+**Commits:** `1689d4c` → `6bd326f` → `97563cc`  
+**Local:** ✅ funcionando — 1.421 enviados visíveis no dashboard  
+**VPS:** ❌ deploy pendente
+
+### Bugs corrigidos
+
+**1. vendeai_mailing_id sempre null (`broadcast.py`)**
+- VendeAI `/schedule-csv` não retorna ID do mailing na resposta
+- Fix: após dispatch, busca mailing por `inbox_phone` + `created_at >= now-3min`
+- Match: `re.sub(r"\D", "", display_phone) == re.sub(r"\D", "", inbox_phone)`
+
+**2. AIMonitorPanel campos errados (`disparo-shared/AICore.tsx`)**
+- `assignments_json` → `broadcast_dispatch_assignments`
+- `a.sent` → `a.sent_count`
+- `a.planned` → `a.planned_count`
+- ⚠️ Frontend rebuild obrigatório: `docker compose build frontend && up -d`
+
+**3. sent_today não existe em broadcast_numbers (`broadcast.py` snapshot)**
+- Agrega em runtime no endpoint `/api/broadcast/snapshot`
+- Soma `sent_count` das assignments do dia por `phone_id`
+- Sem migration, sem coluna extra
+
+**4. monitor_loop.py**
+- `POLL_INTERVAL`: 60s → 20s
+- `failed_count`: usa campo direto da API (não `dispatch_total - sent_count`)
+
+### Deploy VPS (próxima sessão)
+
+```bash
+cd /root/acelera-corban && git pull && \
+docker compose -f docker-compose.prod.yml build --no-cache backend frontend && \
+docker compose -f docker-compose.prod.yml up -d backend frontend
+```
+
+---
+
+## Sessão 07/06/2026 — Cópia CODEX + Central de Controle
+
+**Contexto:** o projeto original foi duplicado para `/Users/macbookdegabriel/projetos/ACELERA CORBAN CODEX` para evoluir melhorias comerciais sem risco de quebrar o original. O original permanece em `/Users/macbookdegabriel/projetos/ACELERA CORBAN`.
+
+### Runtime local da cópia CODEX
+
+- Frontend: `http://localhost:3004`
+- Backend: `http://localhost:8001`
+- Redis: `redis://localhost:6381`
+- A tela aprovada pelo usuário foi `http://localhost:3004/central-controle`
+- Manter **Modo de Uso** como último item da navegação. **Central de Controle** fica antes dele.
+
+### Feature criada — Central de Controle
+
+Arquivos:
+
+- `backend/app/routers/command_center.py`
+- `backend/app/main.py`
+- `backend/app/services/broadcast/meta_client.py`
+- `frontend/src/pages/CentralControle.tsx`
+- `frontend/src/App.tsx`
+- `frontend/src/lib/api.ts`
+
+Escopo da tela:
+
+- Score Geral da Operação
+- Health Check das Integrações
+- Central de Entregabilidade BM
+- Checklist Pré-Disparo
+- Alerta de Risco de Bloqueio
+- Simulador de Capacidade de Disparo
+- Auditoria de Token Meta
+- Monitor de Templates, principalmente utilidade vs marketing
+- Radar de Erros por Motivo
+- Central de Incidentes
+
+### Decisões técnicas
+
+- Sem migrations.
+- Sem mudanças destrutivas.
+- A Central de Controle agrega dados existentes e diagnosticos derivados.
+- Endpoint rápido padrão: `GET /api/command-center/overview`
+- Auditoria Meta ao vivo apenas sob demanda: `GET /api/command-center/overview?live_meta=true`
+- Motivo: consultas live de Meta/templates podem demorar e pareciam Network Error quando eram feitas no carregamento inicial.
+- Erros externos devem degradar o diagnóstico e não derrubar a tela inteira.
+
+### Network Error corrigido na cópia CODEX
+
+1. `frontend/.env.local` herdado apontava `VITE_API_URL=http://localhost:8002`, fazendo o frontend CODEX falar com backend antigo.
+2. Backend local precisou rodar com `SSL_CERT_FILE` e `REQUESTS_CA_BUNDLE` do certifi para validar JWKS/Supabase.
+3. Auditoria Meta ao vivo foi movida para botão manual para manter o primeiro load rápido.
+
+### Validações já feitas
+
+- `curl http://localhost:3004/api/health` retornou `{"status":"ok"}`.
+- `curl -I http://localhost:3004/central-controle` retornou HTTP 200.
+- Requisição autenticada para `/api/command-center/overview` retornou HTTP 200 com JSON de score/diagnóstico.
+- Corrigido TypeScript em `CentralControle.tsx`: retry usa `() => load(false)`.
+
+### Atenção
+
+- Não misturar automaticamente a pasta CODEX com o projeto original.
+- Não commitar automaticamente essa feature até o usuário pedir.
+- `backend/app/services/broadcast/intervention.py` já estava modificado antes dessa feature; não considerar como parte da Central de Controle sem revisar diff.
+- Não salvar tokens/JWTs/credenciais em resumos ou notas novas.
+
+---
+
+## Sessão 07/06/2026 — Audit + Redesign + Modo de Uso + Spotlight
+
+### Runtime confirmado
+
+- Frontend CODEX agora em `http://localhost:3004` (vite dev, não nginx) — `npm run dev -- --port 3004 --strictPort`
+- Backend CODEX agora em `http://localhost:8003` (uvicorn local) — não 8001 como na nota anterior. CORS_ORIGINS deve incluir `http://localhost:3004` no `.env` ou via env override.
+- `frontend/.env.local` precisa `VITE_API_URL=http://localhost:8003` e `VITE_WS_URL=ws://localhost:8003/ws`.
+- Redis 6381 compartilhado com o stack do original (sem conflito).
+
+### Audit do código do Codex — 3 bugs críticos corrigidos
+
+1. **Multi-tenant scoping bug em `_build_health` (command_center.py)** — Codex puxava até 1000 linhas de `user_bank_credentials` de TODOS os usuários (RLS bypassed pelo service_role) e filtrava em Python pelo `user_id`. Tabela usa coluna `user_id` (não `owner_id`). Fix: query direta `db.table(...).select(...).eq("user_id", owner_id).execute()`. Sem pull-all-then-filter.
+2. **Sem timeout no `live_meta=true`** — 3 dispatchers × até 20 WABAs × chamadas httpx sequenciais podia travar minutos. Fix: `asyncio.wait_for(_audit_meta_tokens_live(settings), timeout=45)` com fallback automático para cache + flag `live_meta_timed_out: true` na resposta.
+3. **Dead key `assignments_table`** em DISPATCHERS nunca lida — removido.
+
+### Outras correções
+
+- `_build_capacity` gerava 7 linhas vazias quando `total == 0`. Agora retorna `plan=[]` + `estimated_days=None`.
+- Badge "live/cache" no header de Auditoria Meta agora deriva de `data.meta_audits.some(a => a.live)` em vez do estado local — cobre fallback por timeout.
+
+### Redesign Central de Controle
+
+Codex tinha entregado UI funcional mas com paleta própria flat (#070712, #101225) ignorando o design system existente `frontend/src/components/disparo-shared/`. Redesenhada usando `glassCard()`, `sectionTitle()`, `PulseDot`, `GradientBar`, gradientes `G.*`. Hero hero com cérebro animado 🧠. Tipagem TS completa (saiu `any[]` em todo lado). Responsivo via `@media` queries proper (não brittle attribute selectors). Usuário aprovou: "ficou pika".
+
+### Modo de Uso redesenhado
+
+Mesmo design system. Sidebar glassmorphism com gradient borders. Brain badge. Progress bar. Adicionado **novo guia "Central de Controle"** (8º item da sidebar, ícone 🧠) com manual completo de 11 blocos: Score, KPIs, Checklist, Simulador, Risco, Health, Incidentes, Entregabilidade, Radar, Auditoria, Templates. Checklist de 7 passos pra rotina diária com a Central. Guia "Rotina recomendada" atualizado mencionando abrir Central antes de disparos grandes.
+
+### Bug de contraste corrigido
+
+Primeira versão de botões `LinkButton` no Modo de Uso usava `color: active.accent` sobre fundo `${color}17`. Resultado: texto verde sobre fundo verde (Higienização), laranja sobre laranja (CRM), roxo sobre roxo (Central Controle). Ilegível. Fix: texto branco solid + border gradient + text-shadow + box-shadow accent. Aplicado também em títulos pequenos (`Fluxo recomendado`, `Como funciona`, `Checklist rápido`) que usavam `sectionTitle()` gradient — agora solid white uppercase. Mantido gradient apenas nos kickers grandes do Hero.
+
+### Spotlight pattern shipped
+
+Usuário pediu efeito hover (card brilha + outros escurecem). Aplicado primeiro nos 4 cards do Monitor de Templates (Marketing/Utility/Auth/Rejeitados). Aprovado: "MUITO FODA". Pattern extraído pra `frontend/src/components/disparo-shared/tokens.ts` no `SHARED_CSS` como CSS reusable:
+
+- `.spot-grid` + `.spot-card` + `.spot-glow` + `.spot-shine` — para grids de cards
+- `.spot-list` + `.spot-row` + `.spot-glow` — para listas de rows
+- CSS var `--spot-color` controla cor do glow por card
+- Cubic-bezier(.2,.7,.2,1) easing tipo Apple
+- CSS-only, zero re-render React
+
+### TODO próxima sessão
+
+Aplicar `.spot-*` em TODOS os cards/listas do CODEX. Lista completa em `~/.claude/projects/-Users-macbookdegabriel/memory/next_session_codex_spotlight.md`.
+
+### Validações 07/06
+
+- ✅ `npx tsc --noEmit` zero erros em todas as iterações
+- ✅ `npx vite build` 1.4MB bundle / 386KB gzip
+- ✅ `python -c "from app.main import app"` rota `/api/command-center/overview` registrada
+- ✅ `curl /api/health` 200 OK no backend 8003
+- ✅ CORS liberado pra 3004
+- ✅ Usuário validou visualmente Central de Controle + Modo de Uso + Spotlight
+
+### Não esquecer
+
+- Não commitar até pedido explícito do usuário
+- Original em `/Users/macbookdegabriel/projetos/ACELERA CORBAN` permanece intocado
+- Decisão de merge CODEX → original ainda pendente

@@ -1,7 +1,7 @@
 import json
 from dataclasses import dataclass, field
 from typing import Any
-from .crypto import encrypt, decrypt
+from .crypto import encrypt, decrypt, safe_decrypt
 
 
 @dataclass
@@ -35,10 +35,10 @@ class CredentialService:
         return BankCredentials(
             user_id=user_id,
             bank_code=bank_code,
-            login=decrypt(row.get("login_enc")),
-            password=decrypt(row.get("password_enc")),
-            extra=json.loads(decrypt(row.get("extra_enc")) or "{}") if row.get("extra_enc") else {},
-            proxies=json.loads(decrypt(row.get("proxies_enc")) or "[]") if row.get("proxies_enc") else [],
+            login=safe_decrypt(row.get("login_enc")),
+            password=safe_decrypt(row.get("password_enc")),
+            extra=json.loads(safe_decrypt(row.get("extra_enc")) or "{}") if row.get("extra_enc") else {},
+            proxies=json.loads(safe_decrypt(row.get("proxies_enc")) or "[]") if row.get("proxies_enc") else [],
         )
 
     def upsert(

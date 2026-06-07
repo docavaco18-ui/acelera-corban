@@ -21,12 +21,23 @@ async def evaluate_and_intervene(
     now = datetime.now(timezone.utc)
     window_hour = now.strftime("%Y%m%d%H")
 
-    # Load active assignments with their dispatch + number info
+    # Load active assignments with dispatch info (no FK to broadcast_numbers — fetch separately)
     assignments_resp = db.table("broadcast_dispatch_assignments") \
-        .select("*, broadcast_dispatches!inner(owner_id, status), broadcast_numbers!inner(quality_rating, is_paused)") \
+        .select("*, broadcast_dispatches!inner(owner_id, status)") \
         .eq("owner_id", owner_id) \
         .in_("status", ["running", "scheduled"]) \
         .execute()
+
+    # Bulk-fetch number quality for all phone_ids in one query
+    phone_ids = list({asn["phone_id"] for asn in (assignments_resp.data or []) if asn.get("phone_id")})
+    numbers_map: dict[str, dict] = {}
+    if phone_ids:
+        nums_resp = db.table("broadcast_numbers") \
+            .select("phone_id, quality_rating, is_paused") \
+            .eq("owner_id", owner_id) \
+            .in_("phone_id", phone_ids) \
+            .execute()
+        numbers_map = {n["phone_id"]: n for n in (nums_resp.data or [])}
 
     for asn in (assignments_resp.data or []):
         dispatch_status = asn.get("broadcast_dispatches", {}).get("status")
@@ -37,7 +48,7 @@ async def evaluate_and_intervene(
         dispatch_id = asn["dispatch_id"]
         sent = asn.get("sent_count", 0)
         failed = asn.get("failed_count", 0)
-        quality = asn.get("broadcast_numbers", {}).get("quality_rating", "UNKNOWN")
+        quality = numbers_map.get(phone_id, {}).get("quality_rating", "UNKNOWN")
         mailing_id = asn.get("vendeai_mailing_id")
 
         # Trigger 1: quality RED

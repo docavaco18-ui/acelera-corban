@@ -652,6 +652,25 @@ export const broadcastApi = {
     broadcastAxios.post("/api/broadcast/dispatch", data),
   listDispatches: () => broadcastAxios.get("/api/broadcast/dispatches"),
   getDispatch: (id: string) => broadcastAxios.get(`/api/broadcast/dispatches/${id}`),
+  getDispatchMetrics: (id: string) => broadcastAxios.get<{
+    dispatch_id: string;
+    total_recipients: number;
+    planned_count: number;
+    queued_count: number;
+    sent_count: number;
+    failed_count: number;
+    delivered_count: number;
+    read_count: number;
+    reply_count: number;
+    conversion_count: number;
+    has_per_recipient_data: boolean;
+    has_delivered_data: boolean;
+    has_read_data: boolean;
+    has_reply_data: boolean;
+    has_conversion_data: boolean;
+  }>(`/api/broadcast/dispatches/${id}/metrics`),
+  listDispatchRecipients: (id: string, params?: { status?: string; phone_id?: string; q?: string; limit?: number; offset?: number }) =>
+    broadcastAxios.get<{ recipients: any[]; limit: number; offset: number }>(`/api/broadcast/dispatches/${id}/recipients`, { params }),
   pauseDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/pause`),
   resumeDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/resume`),
   revokeDispatch: (id: string) => broadcastAxios.post(`/api/broadcast/dispatches/${id}/revoke`),
@@ -661,4 +680,9 @@ export const broadcastApi = {
   saveWabaIds: (waba_ids: string[]) => broadcastAxios.post("/api/broadcast/waba-ids", { waba_ids }),
   getTemplates: () => broadcastAxios.get("/api/broadcast/templates"),
   getSnapshot: () => broadcastAxios.get("/api/broadcast/snapshot"),
+};
+
+export const commandCenterApi = {
+  overview: (params?: { live_meta?: boolean }) =>
+    broadcastAxios.get<any>("/api/command-center/overview", { params }).then((r) => r.data),
 };

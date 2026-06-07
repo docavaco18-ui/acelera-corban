@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .config import settings
 from .logging_config import setup_logging
-from .routers import leads, bot, stats, webhook, ws, admin, batches, crm, chatwoot
+from .routers import leads, bot, stats, webhook, ws, admin, batches, crm, chatwoot, command_center
 from .routers import vctex as vctex_router
 from .routers import mercantil as mercantil_router
 from .routers import presenca as presenca_router
@@ -83,6 +83,7 @@ app.include_router(broadcast_router.router)
 app.include_router(powerhub_router.router)
 app.include_router(aesir_broadcast_router.router)
 app.include_router(chipcare_broadcast_router.router)
+app.include_router(command_center.router)
 
 @app.get("/health")
 @app.get("/api/health")

@@ -122,4 +122,37 @@ export const SHARED_CSS = `
   .ds-ai-core{cursor:pointer;transition:transform .3s}
   .ds-ai-core:hover{transform:scale(1.04)}
   .ds-ai-core:active{transform:scale(.97)}
+
+  /* Spotlight pattern reutilizavel. Uso:
+     <div class="spot-grid">
+       <div class="spot-card" style="--spot-color:#10b981">
+         <div class="spot-glow"></div>
+         <div class="spot-shine"></div>
+         ...conteudo
+       </div>
+     </div>
+  */
+  @keyframes spot-rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+  .spot-card{position:relative;overflow:hidden;cursor:pointer;will-change:transform,opacity,filter;
+    transition:transform .3s cubic-bezier(.2,.7,.2,1),opacity .3s ease,box-shadow .3s ease,background .3s ease,filter .3s ease,border-color .3s ease}
+  .spot-glow{position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s ease;
+    background:radial-gradient(circle at 30% 0%,var(--spot-color,#7c3aed)44 0%,transparent 65%)}
+  .spot-shine{position:absolute;top:-50%;left:-50%;width:200%;height:200%;pointer-events:none;opacity:0;transition:opacity .4s ease;
+    background:conic-gradient(from 0deg at 50% 50%,transparent 0deg,color-mix(in srgb,var(--spot-color,#7c3aed) 22%,transparent) 90deg,transparent 180deg);
+    animation:spot-rotate 8s linear infinite}
+  .spot-grid:hover .spot-card{opacity:.3;filter:saturate(.55) brightness(.85);transform:scale(.97)}
+  .spot-grid .spot-card:hover{opacity:1!important;filter:none!important;transform:translateY(-4px) scale(1.04)!important;
+    background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.02))!important;
+    border-color:rgba(255,255,255,.18)!important;
+    box-shadow:0 12px 40px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.1);z-index:3}
+  .spot-grid .spot-card:hover .spot-glow{opacity:1!important}
+  .spot-grid .spot-card:hover .spot-shine{opacity:.6!important}
+  /* Variante row (linhas em lista): menor lift, sem shine */
+  .spot-list:hover .spot-row{opacity:.35;filter:saturate(.6);transform:scale(.99)}
+  .spot-row{cursor:pointer;will-change:transform,opacity,filter;position:relative;
+    transition:transform .25s cubic-bezier(.2,.7,.2,1),opacity .25s ease,box-shadow .25s ease,background .25s ease,filter .25s ease}
+  .spot-list .spot-row:hover{opacity:1!important;filter:none!important;transform:translateY(-2px) scale(1.01)!important;
+    background:linear-gradient(135deg,rgba(255,255,255,.06),rgba(255,255,255,.02))!important;
+    box-shadow:0 8px 24px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.08);z-index:2}
+  .spot-list .spot-row:hover .spot-glow{opacity:1!important}
 `;

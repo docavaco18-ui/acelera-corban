@@ -64,11 +64,103 @@ function totalPlanned(asns?: Assignment[]) {
   return (asns || []).reduce((s, a) => s + (a.planned_count || 0), 0);
 }
 
+interface Metrics {
+  total_recipients: number;
+  planned_count: number;
+  queued_count: number;
+  sent_count: number;
+  failed_count: number;
+  delivered_count: number;
+  read_count: number;
+  reply_count: number;
+  conversion_count: number;
+  has_per_recipient_data: boolean;
+  has_delivered_data: boolean;
+  has_read_data: boolean;
+  has_reply_data: boolean;
+  has_conversion_data: boolean;
+}
+
+function FunnelBar({ label, value, total, color, hasData }: {
+  label: string; value: number; total: number; color: string; hasData: boolean;
+}) {
+  const pct = total > 0 ? Math.min(100, (value / total) * 100) : 0;
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+      <span style={{ color: hasData ? '#e2e8f0' : '#475569', minWidth: 90, fontWeight: 600 }}>{label}</span>
+      <div style={{ flex: 1, height: 8, background: '#1e1e3a', borderRadius: 4, overflow: 'hidden' }}>
+        <div style={{
+          height: '100%',
+          width: `${pct}%`,
+          background: hasData ? `linear-gradient(90deg, ${color}88, ${color})` : '#33415544',
+          borderRadius: 4,
+          transition: 'width 0.4s ease',
+        }} />
+      </div>
+      <span style={{
+        color: hasData ? color : '#475569',
+        minWidth: 100, textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums', fontWeight: 700,
+      }}>
+        {hasData
+          ? `${value.toLocaleString('pt-BR')} (${pct.toFixed(1)}%)`
+          : 'sem dados ainda'}
+      </span>
+    </div>
+  );
+}
+
+function CampaignFunnel({ metrics }: { metrics: Metrics }) {
+  const base = metrics.total_recipients || metrics.planned_count || 0;
+  const sentReal = metrics.has_per_recipient_data || metrics.sent_count > 0;
+  return (
+    <div style={{
+      background: '#0a0a1a',
+      border: '1px solid #1e1e3a',
+      borderRadius: 8,
+      padding: '14px 16px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8,
+    }}>
+      <div style={{
+        color: '#94a3b8', fontSize: 10, fontWeight: 800,
+        letterSpacing: '.12em', textTransform: 'uppercase',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      }}>
+        <span>Funil de campanha</span>
+        <span style={{ color: '#475569', textTransform: 'none', letterSpacing: 0, fontWeight: 600 }}>
+          base: {base.toLocaleString('pt-BR')} destinatários
+        </span>
+      </div>
+      <FunnelBar label="Enviados"   value={metrics.sent_count}       total={base} color="#06b6d4" hasData={sentReal} />
+      <FunnelBar label="Entregues"  value={metrics.delivered_count}  total={base} color="#10b981" hasData={metrics.has_delivered_data} />
+      <FunnelBar label="Lidos"      value={metrics.read_count}       total={base} color="#7c3aed" hasData={metrics.has_read_data} />
+      <FunnelBar label="Responderam" value={metrics.reply_count}     total={base} color="#f59e0b" hasData={metrics.has_reply_data} />
+      <FunnelBar label="Converteram" value={metrics.conversion_count} total={base} color="#ec4899" hasData={metrics.has_conversion_data} />
+      {metrics.failed_count > 0 && (
+        <FunnelBar label="Falharam" value={metrics.failed_count} total={base} color="#ef4444" hasData />
+      )}
+      {(!metrics.has_delivered_data && !metrics.has_reply_data) && (
+        <div style={{
+          color: '#64748b', fontSize: 11, marginTop: 6, lineHeight: 1.5,
+          background: 'rgba(124,58,237,.04)', border: '1px dashed #1e1e3a',
+          borderRadius: 6, padding: '8px 10px',
+        }}>
+          VendeAI hoje só devolve enviados agregados. Entregues/Lidos/Respostas/Conversões aparecem quando Chatwoot ou webhook estiverem conectados.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CampaignHistoryList({ onRefresh }: Props) {
   const [dispatches, setDispatches] = useState<Dispatch[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const [metricsCache, setMetricsCache] = useState<Record<string, Metrics>>({});
+  const [metricsLoading, setMetricsLoading] = useState<Record<string, boolean>>({});
 
   const load = async () => {
     setLoading(true);
@@ -83,6 +175,15 @@ export function CampaignHistoryList({ onRefresh }: Props) {
   };
 
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!expanded || metricsCache[expanded] || metricsLoading[expanded]) return;
+    setMetricsLoading(prev => ({ ...prev, [expanded]: true }));
+    broadcastApi.getDispatchMetrics(expanded)
+      .then(r => setMetricsCache(prev => ({ ...prev, [expanded]: r.data })))
+      .catch(() => { /* ignore */ })
+      .finally(() => setMetricsLoading(prev => ({ ...prev, [expanded]: false })));
+  }, [expanded]);
 
   const act = async (id: string, action: 'pause' | 'resume' | 'revoke') => {
     setActing(id + action);
@@ -197,9 +298,15 @@ export function CampaignHistoryList({ onRefresh }: Props) {
               <span style={{ color: '#475569', fontSize: 14, flexShrink: 0 }}>{isOpen ? '▲' : '▼'}</span>
             </div>
 
-            {/* Expanded assignments */}
-            {isOpen && asns.length > 0 && (
-              <div style={{ borderTop: '1px solid #1e1e3a', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* Expanded — funil + assignments */}
+            {isOpen && (
+              <div style={{ borderTop: '1px solid #1e1e3a', padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {metricsLoading[d.id] && !metricsCache[d.id] && (
+                  <div style={{ color: '#475569', fontSize: 12 }}>Carregando funil...</div>
+                )}
+                {metricsCache[d.id] && <CampaignFunnel metrics={metricsCache[d.id]} />}
+                {asns.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 {asns.map(a => {
                   const aStatus = STATUS_LABEL[a.status] ?? { label: a.status, color: '#475569' };
                   const aSent = a.sent_count || 0;
@@ -222,6 +329,8 @@ export function CampaignHistoryList({ onRefresh }: Props) {
                     </div>
                   );
                 })}
+              </div>
+            )}
               </div>
             )}
           </div>

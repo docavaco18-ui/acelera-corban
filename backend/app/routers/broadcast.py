@@ -474,7 +474,7 @@ async def confirm_dispatch(
             .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
         quality_at_start = (num_rec.data[0].get("quality_rating") if num_rec.data else None)
 
-        db.table("broadcast_dispatch_assignments").insert({
+        asn_insert = db.table("broadcast_dispatch_assignments").insert({
             "dispatch_id": body.dispatch_id,
             "owner_id": user_id,
             "phone_id": phone_id,
@@ -488,6 +488,46 @@ async def confirm_dispatch(
             "display_phone": asn.get("display_phone", ""),
         }).execute()
         mailing_ids.append(mailing_id)
+
+        # Fatia 1 — persist per-recipient rows for funnel analytics.
+        # Best-effort: failure here must NOT abort dispatch.
+        try:
+            assignment_id = (asn_insert.data[0]["id"] if asn_insert.data else None)
+            import io
+            slice_text = slice_bytes.decode("utf-8", errors="replace")
+            if slice_text.startswith("﻿"):
+                slice_text = slice_text[1:]
+            reader = csv_mod.DictReader(io.StringIO(slice_text))
+            var_cols = set(((variable_mappings or {}).values())) if variable_mappings else set()
+            keep_cols = {body.phone_column, *var_cols}
+            recipients_rows: list[dict] = []
+            for idx, row in enumerate(reader):
+                phone_raw = (row.get(body.phone_column) or "").strip()
+                if not phone_raw:
+                    continue
+                phone_norm = re.sub(r"\D", "", phone_raw)
+                payload = {k: v for k, v in row.items() if k in keep_cols and k != body.phone_column}
+                name = (row.get("nome") or row.get("name") or row.get("Nome") or "").strip() or None
+                recipients_rows.append({
+                    "owner_id": user_id,
+                    "dispatch_id": body.dispatch_id,
+                    "assignment_id": assignment_id,
+                    "phone_id": phone_id,
+                    "display_phone": asn.get("display_phone") or "",
+                    "recipient_phone": phone_norm,
+                    "recipient_name": name,
+                    "csv_row_index": idx,
+                    "csv_payload": payload,
+                    "template_id": template_id,
+                    "provider": "vendeai",
+                    "provider_mailing_id": mailing_id,
+                    "status": "queued",
+                })
+            BATCH = 200
+            for i in range(0, len(recipients_rows), BATCH):
+                db.table("broadcast_recipients").insert(recipients_rows[i:i + BATCH]).execute()
+        except Exception as rec_exc:
+            print(f"[broadcast] recipients insertion failed for {phone_id}: {rec_exc}")
 
     db.table("broadcast_dispatches").update({
         "status": "running",
@@ -569,6 +609,99 @@ async def get_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     if not resp.data:
         raise HTTPException(404, "Dispatch não encontrado")
     return resp.data
+
+
+# ── Fatia 1 — Real per-campaign metrics ───────────────────────────────────────
+
+@router.get("/dispatches/{dispatch_id}/metrics")
+async def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+    """Real campaign funnel.
+
+    Honest about data sources:
+    - sent/failed → from VendeAI aggregate (broadcast_dispatch_assignments)
+    - delivered/read/replied/converted → from broadcast_recipients per-row (only populated
+      once Chatwoot/webhook integrations land — until then these are 0 with
+      has_*_data=False so the UI can show 'sem dados ainda' instead of fake zeros)
+    """
+    db = get_db()
+    head = db.table("broadcast_dispatches") \
+        .select("id, total_leads, status, broadcast_dispatch_assignments(planned_count,sent_count,failed_count,open_count,converted_count)") \
+        .eq("id", dispatch_id) \
+        .eq("owner_id", user_id) \
+        .single() \
+        .execute()
+    if not head.data:
+        raise HTTPException(404, "Dispatch não encontrado")
+
+    asns = head.data.get("broadcast_dispatch_assignments") or []
+    sent_aggregate = sum((a.get("sent_count") or 0) for a in asns)
+    failed_aggregate = sum((a.get("failed_count") or 0) for a in asns)
+    planned_aggregate = sum((a.get("planned_count") or 0) for a in asns)
+
+    # Per-recipient status counts (fatia 1: status="queued" inserted; transitions pending).
+    counts: dict[str, int] = {}
+    rec_rows = db.table("broadcast_recipients") \
+        .select("status") \
+        .eq("owner_id", user_id) \
+        .eq("dispatch_id", dispatch_id) \
+        .limit(50000) \
+        .execute()
+    for r in (rec_rows.data or []):
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+    total_recipients = sum(counts.values())
+
+    delivered = (counts.get("delivered", 0) + counts.get("read", 0)
+                 + counts.get("replied", 0) + counts.get("converted", 0))
+    read = counts.get("read", 0) + counts.get("replied", 0) + counts.get("converted", 0)
+    replied = counts.get("replied", 0) + counts.get("converted", 0)
+    converted = counts.get("converted", 0)
+
+    return {
+        "dispatch_id": dispatch_id,
+        "total_recipients": total_recipients or planned_aggregate,
+        "planned_count": planned_aggregate,
+        "queued_count": counts.get("queued", 0),
+        "sent_count": sent_aggregate,
+        "failed_count": failed_aggregate,
+        "delivered_count": delivered,
+        "read_count": read,
+        "reply_count": replied,
+        "conversion_count": converted,
+        # Honesty flags — UI renders 'sem dados ainda' when False.
+        "has_per_recipient_data": total_recipients > 0,
+        "has_delivered_data": delivered > 0,
+        "has_read_data": read > 0,
+        "has_reply_data": replied > 0,
+        "has_conversion_data": converted > 0,
+    }
+
+
+@router.get("/dispatches/{dispatch_id}/recipients")
+async def list_dispatch_recipients(
+    dispatch_id: str,
+    status: str | None = None,
+    phone_id: str | None = None,
+    q: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    user_id: str = Depends(_get_user_id),
+):
+    db = get_db()
+    head = db.table("broadcast_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).single().execute()
+    if not head.data:
+        raise HTTPException(404, "Dispatch não encontrado")
+    query = db.table("broadcast_recipients") \
+        .select("id,recipient_phone,recipient_name,csv_row_index,status,phone_id,display_phone,template_id,sent_at,delivered_at,read_at,failed_at,first_reply_at,converted_at,conversion_label,failure_reason") \
+        .eq("owner_id", user_id) \
+        .eq("dispatch_id", dispatch_id)
+    if status:
+        query = query.eq("status", status)
+    if phone_id:
+        query = query.eq("phone_id", phone_id)
+    if q:
+        query = query.ilike("recipient_phone", f"%{q}%")
+    resp = query.order("csv_row_index").range(offset, offset + max(1, min(limit, 500)) - 1).execute()
+    return {"recipients": resp.data or [], "limit": limit, "offset": offset}
 
 
 # ── Pause / Resume / Revoke ───────────────────────────────────────────────────

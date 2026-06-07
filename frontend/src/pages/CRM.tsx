@@ -3,30 +3,32 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recha
 import { crmApi, crmSettingsApi, v8ProposalsApi } from "../lib/api";
 import { useSession } from "../hooks/useSession";
 import type { CrmProposta, CrmStats, CrmStatus } from "../lib/types";
+import {
+  C, G, glassCard, sectionTitle, btnStyle, INPUT_STYLE, SHARED_CSS,
+  PulseDot, GradientBar,
+} from "../components/disparo-shared";
 
-const C = {
-  bg: "#080818",
-  bg2: "rgba(255,255,255,.04)",
-  border: "rgba(255,255,255,.07)",
-  green: "#00ff88",
-  purple: "#b44aff",
-  red: "#ff2d78",
-  gold: "#ffd700",
-  blue: "#00bfff",
-  orange: "#ff8c00",
-  text: "#e0e0f0",
-  muted: "#64748b",
-};
+// CRM-specific palette (kanban columns, status colors)
+const CC = {
+  blue:   "#06b6d4",
+  green:  "#10b981",
+  purple: "#7c3aed",
+  red:    "#ef4444",
+  gold:   "#f59e0b",
+  pink:   "#ec4899",
+  orange: "#fb923c",
+  cyan:   "#06b6d4",
+} as const;
 
-const COLUNAS: { key: CrmStatus; label: string; cor: string }[] = [
-  { key: "propostas",  label: "💰 PAGOS",        cor: C.blue   },
-  { key: "karol",      label: "👤 KAROL",        cor: "#ff69b4" },
-  { key: "giovanna",   label: "👤 GIOVANNA",     cor: "#da70d6" },
-  { key: "gabriel",    label: "🤖 GABRIEL/I.A",  cor: C.green  },
-  { key: "importante", label: "⭐ IMPORTANTE",   cor: C.gold   },
-  { key: "pendentes",  label: "⏳ PENDENTES",    cor: C.orange },
-  { key: "leilao",     label: "🔨 LEILÃO",       cor: C.purple },
-  { key: "fgts",       label: "💚 FGTS",         cor: "#00c896" },
+const COLUNAS: { key: CrmStatus; label: string; cor: string; grad: string; icon: string }[] = [
+  { key: "propostas",  label: "PAGOS",       cor: CC.blue,   grad: G.cyan,   icon: "💰" },
+  { key: "karol",      label: "KAROL",       cor: "#ec4899",  grad: G.pink,   icon: "👤" },
+  { key: "giovanna",   label: "GIOVANNA",    cor: "#a855f7",  grad: G.purple, icon: "👤" },
+  { key: "gabriel",    label: "GABRIEL/I.A", cor: CC.green,  grad: G.green,  icon: "🤖" },
+  { key: "importante", label: "IMPORTANTE",  cor: CC.gold,   grad: G.yellow, icon: "⭐" },
+  { key: "pendentes",  label: "PENDENTES",   cor: CC.orange, grad: G.yellow, icon: "⏳" },
+  { key: "leilao",     label: "LEILÃO",      cor: CC.purple, grad: G.purple, icon: "🔨" },
+  { key: "fgts",       label: "FGTS",        cor: "#00c896",  grad: G.green,  icon: "💚" },
 ];
 
 const BANCOS = ["V8", "Zilli", "Novo Saque", "VCTex", "Pan", "Facta", "C6", "Mercantil", "2S", "Soma"];
@@ -92,7 +94,77 @@ function computeStats(proposals: CrmProposta[], pendingCount: number): CrmStats 
   };
 }
 
-// ─── Modal de senha CRM ───────────────────────────────────────────────────────
+// ── BrainBadge ───────────────────────────────────────────────────────────────
+function BrainBadge({ color, loading }: { color: string; loading?: boolean }) {
+  const mult = loading ? 0.4 : 1;
+  return (
+    <div style={{ position: 'relative', width: 92, height: 92, flexShrink: 0 }}>
+      <div style={{
+        position: 'absolute', inset: 0, borderRadius: '50%',
+        border: `2px dashed ${color}55`, animation: `ai-spin ${14 * mult}s linear infinite`,
+      }} />
+      <div style={{
+        position: 'absolute', inset: 12, borderRadius: '50%',
+        border: `1.5px dotted ${color}88`, animation: `ai-spin-rev ${10 * mult}s linear infinite`,
+      }} />
+      <div style={{
+        position: 'absolute', top: '50%', left: '50%',
+        width: 44, height: 44, borderRadius: '50%',
+        background: `radial-gradient(circle at 35% 35%, ${color} 0%, ${color}cc 35%, transparent 100%)`,
+        transform: 'translate(-50%, -50%)',
+        animation: `ai-orb-pulse ${2.4 * mult}s ease-in-out infinite`,
+        filter: 'blur(.4px)',
+      }} />
+      <div style={{
+        position: 'absolute', inset: 0,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 28, animation: `ai-float ${3.6 * mult}s ease-in-out infinite`,
+        filter: `drop-shadow(0 0 8px ${color}aa)`,
+      }}>📊</div>
+    </div>
+  );
+}
+
+// ── KPI card ─────────────────────────────────────────────────────────────────
+function KpiCard({ label, value, color, sub, icon }: {
+  label: string; value: number | string; color: string; sub?: string; icon?: string;
+}) {
+  return (
+    <div className="spot-card" style={{
+      background: 'rgba(255,255,255,.02)',
+      border: '1px solid rgba(255,255,255,.06)',
+      borderRadius: 14,
+      padding: 18,
+      position: 'relative',
+      overflow: 'hidden',
+      '--spot-color': color,
+    } as any}>
+      <div className="spot-glow" />
+      <div className="spot-shine" />
+      <div style={{
+        position: 'absolute', inset: 0, opacity: .08, pointerEvents: 'none',
+        background: `radial-gradient(circle at top right, ${color} 0%, transparent 60%)`,
+      }} />
+      <div style={{
+        position: 'relative',
+        color: C.sec, fontSize: 11, fontWeight: 800, letterSpacing: '.12em',
+        textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+      }}>
+        {icon && <span style={{ fontSize: 14 }}>{icon}</span>}
+        {label}
+      </div>
+      <div style={{
+        color, fontSize: 28, fontWeight: 900, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums',
+        position: 'relative',
+      }}>
+        {value}
+      </div>
+      {sub && <div style={{ color: C.sec, fontSize: 11, marginTop: 8, position: 'relative' }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ─── Modal de senha CRM ──────────────────────────────────────────────────────
 interface CrmPasswordModalProps {
   action: "criar" | "apagar";
   onConfirm: (password: string) => void;
@@ -109,12 +181,17 @@ function CrmPasswordModal({ action, onConfirm, onCancel }: CrmPasswordModalProps
   };
 
   return (
-    <div onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 10000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "#0d0d1f", border: `1px solid ${C.border}`, borderRadius: 16, padding: 28, width: 340 }}>
-        <div style={{ fontSize: "1rem", fontWeight: 800, color: C.text, marginBottom: 6 }}>
-          🔒 Senha CRM
+    <div onClick={onCancel} style={{
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", zIndex: 10000,
+      display: "flex", alignItems: "center", justifyContent: "center",
+      backdropFilter: 'blur(6px)',
+    }}>
+      <div onClick={e => e.stopPropagation()} style={{ ...glassCard(G.yellow, 28), width: 360 }}>
+        <div style={{ ...sectionTitle(G.yellow), marginBottom: 8, fontSize: 13 }}>Senha CRM</div>
+        <div style={{ color: C.text, fontSize: 18, fontWeight: 800, marginBottom: 6 }}>
+          🔒 Confirme a ação
         </div>
-        <p style={{ fontSize: ".82rem", color: C.muted, marginBottom: 18 }}>
+        <p style={{ fontSize: 13, color: C.sec, marginBottom: 18, lineHeight: 1.5 }}>
           Para {action === "criar" ? "adicionar" : "apagar"} esta proposta, insira a senha de segurança configurada pelo admin.
         </p>
         <input
@@ -124,16 +201,20 @@ function CrmPasswordModal({ action, onConfirm, onCancel }: CrmPasswordModalProps
           onChange={e => setPwd(e.target.value)}
           onKeyDown={e => e.key === "Enter" && confirm()}
           placeholder="Senha CRM…"
-          style={{ width: "100%", boxSizing: "border-box", padding: "9px 12px", background: "#0a0a1e", border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: ".9rem", outline: "none" }}
+          className="ds-input"
+          style={INPUT_STYLE}
         />
-        {err && <div style={{ color: C.red, fontSize: ".78rem", marginTop: 6 }}>{err}</div>}
+        {err && <div style={{ color: C.red, fontSize: 12, marginTop: 8 }}>{err}</div>}
         <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
-          <button onClick={confirm}
-            style={{ flex: 1, padding: "9px 0", background: `${C.gold}22`, color: C.gold, border: `1px solid ${C.gold}44`, borderRadius: 10, fontWeight: 700, cursor: "pointer" }}>
+          <button onClick={confirm} className="ds-btn" style={{ ...btnStyle(G.yellow), flex: 1 }}>
             Confirmar
           </button>
-          <button onClick={onCancel}
-            style={{ flex: 1, padding: "9px 0", background: C.bg2, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 10, cursor: "pointer" }}>
+          <button onClick={onCancel} className="ds-btn" style={{
+            flex: 1, padding: '12px 24px', borderRadius: 10,
+            background: 'rgba(255,255,255,.04)', color: C.sec,
+            border: '1px solid rgba(255,255,255,.08)', cursor: 'pointer',
+            fontSize: 15, fontWeight: 600,
+          }}>
             Cancelar
           </button>
         </div>
@@ -142,7 +223,7 @@ function CrmPasswordModal({ action, onConfirm, onCancel }: CrmPasswordModalProps
   );
 }
 
-// ─── Modal de cadastro ────────────────────────────────────────────────────────
+// ─── Modal de cadastro ───────────────────────────────────────────────────────
 interface ModalProps {
   onClose: () => void;
   onSaved: (p: CrmProposta) => void;
@@ -212,25 +293,35 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword, defaultStatu
     }
   };
 
-  const inp: React.CSSProperties = {
-    width: "100%", boxSizing: "border-box", padding: "9px 12px",
-    background: "#0a0a1e", border: `1px solid ${C.border}`, borderRadius: 8,
-    color: C.text, fontSize: ".85rem",
+  const label: React.CSSProperties = {
+    fontSize: 11, color: C.sec, fontWeight: 800, letterSpacing: '.08em',
+    textTransform: 'uppercase', display: "block", marginBottom: 6,
   };
-  const label: React.CSSProperties = { fontSize: ".7rem", color: C.muted, display: "block", marginBottom: 4 };
+  const grad = editing ? G.cyan : G.green;
 
   return (
     <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-        <div onClick={e => e.stopPropagation()} style={{ background: "#0d0d1f", border: `1px solid ${C.border}`, borderRadius: 16, padding: 28, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto" }}>
-          <div style={{ fontSize: "1rem", fontWeight: 800, color: C.text, marginBottom: 20 }}>
+      <div onClick={onClose} style={{
+        position: "fixed", inset: 0, background: "rgba(0,0,0,.75)", zIndex: 9999,
+        display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+        backdropFilter: 'blur(6px)',
+      }}>
+        <div onClick={e => e.stopPropagation()} style={{
+          ...glassCard(grad, 28),
+          width: "100%", maxWidth: 520, maxHeight: "90vh", overflowY: "auto",
+        }}>
+          <div style={{ ...sectionTitle(grad), fontSize: 12, marginBottom: 6 }}>
+            {editing ? "Editar" : "Cadastro"}
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: C.text, marginBottom: 22, letterSpacing: 0 }}>
             {editing ? "✏️ Editar Proposta" : "➕ Nova Proposta"}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
               <label style={label}>Nome do Vendedor *</label>
-              <input style={inp} value={form.nome_vendedor} onChange={e => set("nome_vendedor", e.target.value)} placeholder="Ex: João Silva" />
+              <input className="ds-input" style={INPUT_STYLE} value={form.nome_vendedor}
+                onChange={e => set("nome_vendedor", e.target.value)} placeholder="Ex: João Silva" />
             </div>
 
             <div>
@@ -238,72 +329,106 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword, defaultStatu
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                 {BANCOS.map(b => (
                   <button key={b} onClick={() => { setBancoCustom(false); set("banco", b); }}
-                    style={{ padding: "4px 10px", borderRadius: 10, border: `1px solid ${(!bancoCustom && form.banco === b) ? C.purple : C.border}`, background: (!bancoCustom && form.banco === b) ? `${C.purple}22` : "transparent", color: (!bancoCustom && form.banco === b) ? C.purple : C.muted, fontSize: ".75rem", cursor: "pointer" }}>
+                    style={{
+                      padding: "5px 12px", borderRadius: 12,
+                      border: `1px solid ${(!bancoCustom && form.banco === b) ? CC.purple : 'rgba(255,255,255,.08)'}`,
+                      background: (!bancoCustom && form.banco === b) ? `${CC.purple}22` : "transparent",
+                      color: (!bancoCustom && form.banco === b) ? CC.purple : C.sec,
+                      fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    }}>
                     {b}
                   </button>
                 ))}
                 <button onClick={() => setBancoCustom(true)}
-                  style={{ padding: "4px 10px", borderRadius: 10, border: `1px solid ${bancoCustom ? C.blue : C.border}`, background: bancoCustom ? `${C.blue}22` : "transparent", color: bancoCustom ? C.blue : C.muted, fontSize: ".75rem", cursor: "pointer" }}>
-                  +Personalizado
+                  style={{
+                    padding: "5px 12px", borderRadius: 12,
+                    border: `1px solid ${bancoCustom ? CC.cyan : 'rgba(255,255,255,.08)'}`,
+                    background: bancoCustom ? `${CC.cyan}22` : "transparent",
+                    color: bancoCustom ? CC.cyan : C.sec,
+                    fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  }}>
+                  + Personalizado
                 </button>
               </div>
               {bancoCustom && (
-                <input style={inp} value={form.banco_custom} onChange={e => set("banco_custom", e.target.value)} placeholder="Nome do banco..." />
+                <input className="ds-input" style={INPUT_STYLE} value={form.banco_custom}
+                  onChange={e => set("banco_custom", e.target.value)} placeholder="Nome do banco..." />
               )}
             </div>
 
             <div>
               <label style={label}>Nome do Cliente</label>
-              <input style={inp} value={form.cliente_nome} onChange={e => set("cliente_nome", e.target.value)} placeholder="Ex: Maria Santos" />
+              <input className="ds-input" style={INPUT_STYLE} value={form.cliente_nome}
+                onChange={e => set("cliente_nome", e.target.value)} placeholder="Ex: Maria Santos" />
             </div>
 
             <div>
               <label style={label}>CPF do Cliente *</label>
-              <input style={inp} value={form.cliente_cpf} onChange={e => set("cliente_cpf", e.target.value)} placeholder="000.000.000-00" maxLength={14} />
+              <input className="ds-input" style={INPUT_STYLE} value={form.cliente_cpf}
+                onChange={e => set("cliente_cpf", e.target.value)} placeholder="000.000.000-00" maxLength={14} />
             </div>
 
             <div>
               <label style={label}>Data da Venda *</label>
-              <input type="date" style={inp} value={form.data_venda} onChange={e => set("data_venda", e.target.value)} />
+              <input type="date" className="ds-input" style={INPUT_STYLE} value={form.data_venda}
+                onChange={e => set("data_venda", e.target.value)} />
             </div>
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
               <div>
                 <label style={label}>Valor (R$) *</label>
-                <input style={inp} type="text" inputMode="decimal" value={form.valor} onChange={e => set("valor", e.target.value)} placeholder="4.780,00" />
+                <input className="ds-input" style={INPUT_STYLE} type="text" inputMode="decimal"
+                  value={form.valor} onChange={e => set("valor", e.target.value)} placeholder="4.780,00" />
               </div>
               <div>
-                <label style={label}>Prazo (meses) *</label>
-                <input style={inp} type="number" min="1" value={form.prazo} onChange={e => set("prazo", e.target.value)} placeholder="84" />
+                <label style={label}>Prazo *</label>
+                <input className="ds-input" style={INPUT_STYLE} type="number" min="1"
+                  value={form.prazo} onChange={e => set("prazo", e.target.value)} placeholder="84" />
               </div>
               <div>
                 <label style={label}>Parcela (R$) *</label>
-                <input style={inp} type="text" inputMode="decimal" value={form.parcela} onChange={e => set("parcela", e.target.value)} placeholder="450,00" />
+                <input className="ds-input" style={INPUT_STYLE} type="text" inputMode="decimal"
+                  value={form.parcela} onChange={e => set("parcela", e.target.value)} placeholder="450,00" />
               </div>
             </div>
 
             <div>
               <label style={label}>Código da Proposta</label>
-              <input style={inp} value={form.codigo_proposta} onChange={e => set("codigo_proposta", e.target.value)} placeholder="Opcional" />
+              <input className="ds-input" style={INPUT_STYLE} value={form.codigo_proposta}
+                onChange={e => set("codigo_proposta", e.target.value)} placeholder="Opcional" />
             </div>
 
             <div>
               <label style={label}>Coluna inicial</label>
-              <select style={inp} value={form.status} onChange={e => set("status", e.target.value)}>
-                {COLUNAS.map(c => <option key={c.key} value={c.key}>{c.label}</option>)}
+              <select className="ds-select" value={form.status}
+                onChange={e => set("status", e.target.value)}
+                style={{ ...INPUT_STYLE, cursor: 'pointer' }}>
+                {COLUNAS.map(c => <option key={c.key} value={c.key} style={{ background: '#0d0d1f', color: C.text }}>{c.icon} {c.label}</option>)}
               </select>
             </div>
           </div>
 
-          {err && <div style={{ marginTop: 12, color: C.red, fontSize: ".8rem" }}>{err}</div>}
+          {err && (
+            <div style={{
+              marginTop: 14, color: C.red, fontSize: 13,
+              background: `${C.red}10`, border: `1px solid ${C.red}33`,
+              borderRadius: 8, padding: '8px 12px',
+            }}>
+              {err}
+            </div>
+          )}
 
-          <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-            <button onClick={save} disabled={busy}
-              style={{ flex: 1, padding: "10px 0", background: `${C.green}22`, color: C.green, border: `1px solid ${C.green}44`, borderRadius: 10, fontWeight: 700, cursor: busy ? "not-allowed" : "pointer" }}>
+          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
+            <button onClick={save} disabled={busy} className="ds-btn"
+              style={{ ...btnStyle(grad, busy), flex: 1 }}>
               {busy ? "Salvando…" : "Salvar"}
             </button>
-            <button onClick={onClose}
-              style={{ flex: 1, padding: "10px 0", background: C.bg2, color: C.muted, border: `1px solid ${C.border}`, borderRadius: 10, cursor: "pointer" }}>
+            <button onClick={onClose} className="ds-btn" style={{
+              flex: 1, padding: '12px 24px', borderRadius: 10,
+              background: 'rgba(255,255,255,.04)', color: C.sec,
+              border: '1px solid rgba(255,255,255,.08)', cursor: 'pointer',
+              fontSize: 15, fontWeight: 600,
+            }}>
               Cancelar
             </button>
           </div>
@@ -320,7 +445,7 @@ function PropostaModal({ onClose, onSaved, editing, hasCrmPassword, defaultStatu
   );
 }
 
-// ─── Card de proposta ─────────────────────────────────────────────────────────
+// ─── Card de proposta ────────────────────────────────────────────────────────
 interface CardProps {
   proposta: CrmProposta;
   isAdmin: boolean;
@@ -333,173 +458,250 @@ interface CardProps {
 }
 
 function PropostaCard({ proposta: p, isAdmin, isDragging, onEdit, onDelete, onApprove, onDragStart, onDragEnd }: CardProps) {
-  const cor = COLUNAS.find(c => c.key === p.status)?.cor ?? C.blue;
+  const cor = COLUNAS.find(c => c.key === p.status)?.cor ?? CC.blue;
   const isPending = !p.approved;
   const idade = diasAtras(p.updated_at);
+  const accent = isPending ? CC.gold : cor;
 
   return (
     <div
+      className="spot-card"
       draggable={p.approved}
       onDragStart={e => p.approved && onDragStart(e, p.id)}
       onDragEnd={onDragEnd}
       style={{
-        background: isPending ? "rgba(255,215,0,.04)" : C.bg2,
-        border: `1px solid ${isPending ? "rgba(255,215,0,.25)" : C.border}`,
-        borderLeft: `3px solid ${isPending ? C.gold : cor}`,
+        background: isPending ? "rgba(245,158,11,.05)" : 'rgba(255,255,255,.02)',
+        border: `1px solid ${isPending ? "rgba(245,158,11,.28)" : 'rgba(255,255,255,.07)'}`,
+        borderLeft: `3px solid ${accent}`,
         borderRadius: 10, padding: "12px 14px", marginBottom: 8,
         cursor: p.approved ? "grab" : "default",
-        opacity: isDragging ? 0.35 : (isPending ? 0.85 : 1),
+        opacity: isDragging ? 0.35 : (isPending ? 0.92 : 1),
         transform: isDragging ? "scale(0.97)" : "scale(1)",
-        transition: "opacity .15s, transform .15s, box-shadow .15s",
         boxShadow: isDragging ? "none" : "0 1px 4px rgba(0,0,0,.4)",
         userSelect: "none",
         WebkitUserSelect: "none",
-      }}
+        position: 'relative',
+        '--spot-color': accent,
+      } as any}
     >
-      {isPending && (
-        <div style={{ fontSize: ".65rem", fontWeight: 700, color: C.gold, background: "rgba(255,215,0,.12)", border: "1px solid rgba(255,215,0,.25)", borderRadius: 6, padding: "2px 8px", display: "inline-block", marginBottom: 6 }}>
-          ⏳ Aguardando Aprovação
-        </div>
-      )}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div style={{ fontSize: ".8rem", fontWeight: 700, color: C.text, marginBottom: 4, flex: 1, marginRight: 6 }}>
-          {p.nome_vendedor}
-        </div>
-        <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-          {isAdmin && isPending && onApprove && (
-            <button onClick={() => onApprove(p.id)}
-              title="Aprovar proposta"
-              style={{ background: "rgba(0,255,136,.12)", border: "1px solid rgba(0,255,136,.3)", color: C.green, cursor: "pointer", fontSize: ".72rem", borderRadius: 6, padding: "3px 8px", fontWeight: 700 }}>
-              ✓
+      <div className="spot-glow" />
+      <div style={{ position: 'relative' }}>
+        {isPending && (
+          <div style={{
+            fontSize: 10, fontWeight: 800, color: CC.gold,
+            background: "rgba(245,158,11,.12)", border: "1px solid rgba(245,158,11,.28)",
+            borderRadius: 6, padding: "2px 8px", display: "inline-block", marginBottom: 6,
+            letterSpacing: '.06em', textTransform: 'uppercase',
+          }}>
+            ⏳ Aguardando Aprovação
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 4, flex: 1, marginRight: 6 }}>
+            {p.nome_vendedor}
+          </div>
+          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+            {isAdmin && isPending && onApprove && (
+              <button onClick={() => onApprove(p.id)} title="Aprovar proposta"
+                style={{
+                  background: "rgba(16,185,129,.14)", border: "1px solid rgba(16,185,129,.4)",
+                  color: CC.green, cursor: "pointer", fontSize: 12,
+                  borderRadius: 6, padding: "3px 8px", fontWeight: 700,
+                }}>
+                ✓
+              </button>
+            )}
+            <button onClick={() => onEdit(p)}
+              style={{
+                background: "rgba(255,255,255,.06)", border: '1px solid rgba(255,255,255,.08)',
+                color: C.sec, cursor: "pointer", fontSize: 12,
+                borderRadius: 6, padding: "3px 8px",
+              }}>
+              ✏️
             </button>
-          )}
-          <button onClick={() => onEdit(p)}
-            style={{ background: "rgba(255,255,255,.06)", border: `1px solid ${C.border}`, color: C.muted, cursor: "pointer", fontSize: ".75rem", borderRadius: 6, padding: "3px 8px" }}>
-            ✏️
-          </button>
-          {isAdmin && (
-            <button onClick={() => onDelete(p.id)}
-              style={{ background: "rgba(255,45,120,.08)", border: "1px solid rgba(255,45,120,.2)", color: C.red, cursor: "pointer", fontSize: ".75rem", borderRadius: 6, padding: "3px 7px" }}>
-              🗑
-            </button>
-          )}
+            {isAdmin && (
+              <button onClick={() => onDelete(p.id)}
+                style={{
+                  background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.25)",
+                  color: CC.red, cursor: "pointer", fontSize: 12,
+                  borderRadius: 6, padding: "3px 7px",
+                }}>
+                🗑
+              </button>
+            )}
+          </div>
         </div>
-      </div>
-      <div style={{ fontSize: ".72rem", color: isPending ? C.gold : cor, fontWeight: 700, marginBottom: 3 }}>{p.banco}</div>
-      {p.cliente_nome && (
-        <div style={{ fontSize: ".78rem", color: C.text, fontWeight: 600, marginBottom: 2 }}>{p.cliente_nome}</div>
-      )}
-      <div style={{ fontSize: ".7rem", color: C.muted }}>{fmtCpf(p.cliente_cpf)}</div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
-        <span style={{ fontSize: ".82rem", color: C.green, fontWeight: 800 }}>{fmtMoeda(p.valor)}</span>
-        <span style={{ fontSize: ".7rem", color: C.muted }}>{p.prazo}x {fmtMoeda(p.parcela)}</span>
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
-        {p.codigo_proposta ? (
-          <span style={{ fontSize: ".66rem", color: C.muted }}>#{p.codigo_proposta}</span>
-        ) : <span />}
-        <div style={{ display: "flex", gap: 8 }}>
-          <span style={{ fontSize: ".66rem", color: C.muted }}>{fmtData(p.data_venda)}</span>
-          {idade && (
-            <span style={{ fontSize: ".64rem", color: C.muted, background: "rgba(255,255,255,.06)", borderRadius: 4, padding: "1px 5px" }}>
-              {idade}
-            </span>
-          )}
+        <div style={{ fontSize: 11, color: accent, fontWeight: 800, marginBottom: 3, letterSpacing: '.04em' }}>
+          {p.banco}
+        </div>
+        {p.cliente_nome && (
+          <div style={{ fontSize: 12, color: C.text, fontWeight: 600, marginBottom: 2 }}>{p.cliente_nome}</div>
+        )}
+        <div style={{ fontSize: 11, color: C.sec }}>{fmtCpf(p.cliente_cpf)}</div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8 }}>
+          <span style={{ fontSize: 13, color: CC.green, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>
+            {fmtMoeda(p.valor)}
+          </span>
+          <span style={{ fontSize: 11, color: C.sec }}>{p.prazo}x {fmtMoeda(p.parcela)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
+          {p.codigo_proposta ? (
+            <span style={{ fontSize: 10, color: C.muted }}>#{p.codigo_proposta}</span>
+          ) : <span />}
+          <div style={{ display: "flex", gap: 8 }}>
+            <span style={{ fontSize: 10, color: C.muted }}>{fmtData(p.data_venda)}</span>
+            {idade && (
+              <span style={{
+                fontSize: 10, color: C.sec,
+                background: "rgba(255,255,255,.06)", borderRadius: 4, padding: "1px 5px",
+              }}>
+                {idade}
+              </span>
+            )}
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-// ─── Sidebar de stats ─────────────────────────────────────────────────────────
+// ─── Card glass shell (sidebar/stats) ────────────────────────────────────────
+function CardShell({ title, gradient, icon, children, action }: {
+  title: string; gradient: string; icon: string; children: React.ReactNode; action?: React.ReactNode;
+}) {
+  return (
+    <div style={glassCard(gradient, 18)}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 14 }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 9, background: gradient,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: 16, flexShrink: 0, boxShadow: '0 4px 12px rgba(0,0,0,.3)',
+        }}>{icon}</div>
+        <h2 style={{ ...sectionTitle(gradient), marginBottom: 0, fontSize: 12, flex: 1, minWidth: 0 }}>
+          {title}
+        </h2>
+        {action}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// ─── Sidebar de stats ────────────────────────────────────────────────────────
 function StatsSidebar({ stats, isAdmin }: { stats: CrmStats | null; isAdmin: boolean }) {
   if (!stats) return null;
   const barData = stats.ranking.map(r => ({ name: r.nome.split(" ")[0], valor: r.total }));
 
   return (
-    <div style={{ width: 260, flexShrink: 0, display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: ".65rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 10 }}>Resumo</div>
-        <div style={{ fontSize: "1.4rem", fontWeight: 800, color: C.green }}>{fmtMoeda(stats.total_valor)}</div>
-        <div style={{ fontSize: ".75rem", color: C.muted, marginTop: 2 }}>{stats.total} propostas · ticket médio {fmtMoeda(stats.ticket_medio)}</div>
+    <div style={{ width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 14 }}>
+      <CardShell title="Resumo" gradient={G.green} icon="💰">
+        <div style={{ fontSize: 26, fontWeight: 900, color: CC.green, lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
+          {fmtMoeda(stats.total_valor)}
+        </div>
+        <div style={{ fontSize: 12, color: C.sec, marginTop: 4 }}>
+          {stats.total} propostas · ticket médio {fmtMoeda(stats.ticket_medio)}
+        </div>
         {isAdmin && (stats.pending_count ?? 0) > 0 && (
-          <div style={{ marginTop: 10, padding: "6px 10px", background: "rgba(255,215,0,.1)", border: "1px solid rgba(255,215,0,.25)", borderRadius: 8, fontSize: ".75rem", color: C.gold, fontWeight: 700 }}>
-            ⏳ {stats.pending_count} aguardando aprovação
+          <div style={{
+            marginTop: 12, padding: "8px 12px",
+            background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.3)",
+            borderRadius: 8, fontSize: 12, color: CC.gold, fontWeight: 700,
+            display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <PulseDot color={CC.gold} />
+            {stats.pending_count} aguardando aprovação
           </div>
         )}
-        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 5 }}>
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
           {COLUNAS.map(c => (
-            <div key={c.key} style={{ display: "flex", justifyContent: "space-between", fontSize: ".75rem" }}>
-              <span style={{ color: c.cor }}>{c.label.split(" ").slice(1).join(" ")}</span>
-              <span style={{ color: C.text, fontWeight: 700 }}>{stats.by_status[c.key] ?? 0}</span>
+            <div key={c.key} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+              <span style={{ color: c.cor, fontWeight: 600 }}>{c.icon} {c.label}</span>
+              <span style={{ color: C.text, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{stats.by_status[c.key] ?? 0}</span>
             </div>
           ))}
         </div>
-      </div>
+      </CardShell>
 
-      <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: ".65rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 12 }}>🏆 Ranking Vendedores</div>
+      <CardShell title="Ranking Vendedores" gradient={G.yellow} icon="🏆">
         {stats.ranking.slice(0, 5).map((r, i) => (
           <div key={r.nome} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: ".75rem", color: [C.gold, "#c0c0c0", "#cd7f32"][i] ?? C.muted, fontWeight: 700, width: 16, textAlign: "center" }}>
+            <span style={{
+              fontSize: 13, color: [CC.gold, "#c0c0c0", "#cd7f32"][i] ?? C.muted,
+              fontWeight: 800, width: 22, textAlign: "center",
+            }}>
               {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}.`}
             </span>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: ".75rem", color: C.text }}>{r.nome}</div>
-              <div style={{ fontSize: ".68rem", color: C.green }}>{fmtMoeda(r.total)}</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, color: C.text, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.nome}</div>
+              <div style={{ fontSize: 11, color: CC.green, fontVariantNumeric: 'tabular-nums' }}>{fmtMoeda(r.total)}</div>
             </div>
           </div>
         ))}
-      </div>
+        {stats.ranking.length === 0 && (
+          <div style={{ color: C.muted, fontSize: 12, padding: 6 }}>Sem dados ainda.</div>
+        )}
+      </CardShell>
 
       {barData.length > 0 && (
-        <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px" }}>
-          <div style={{ fontSize: ".65rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 10 }}>Contratos por Vendedor</div>
+        <CardShell title="Contratos por Vendedor" gradient={G.purple} icon="📈">
           <ResponsiveContainer width="100%" height={140}>
             <BarChart data={barData} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-              <XAxis dataKey="name" tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: C.muted, fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+              <XAxis dataKey="name" tick={{ fill: C.sec, fontSize: 10 }} axisLine={false} tickLine={false} />
+              <YAxis tick={{ fill: C.sec, fontSize: 10 }} axisLine={false} tickLine={false} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
               <Tooltip
-                contentStyle={{ background: "#0d0d1f", border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, fontSize: ".75rem" }}
+                contentStyle={{ background: "#0d0d1f", border: '1px solid rgba(255,255,255,.08)', borderRadius: 8, color: C.text, fontSize: 12 }}
                 formatter={(v: number) => fmtMoeda(v)}
               />
-              <Bar dataKey="valor" fill={C.purple} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="valor" fill={CC.purple} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </div>
+        </CardShell>
       )}
 
-      <div style={{ background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px" }}>
-        <div style={{ fontSize: ".65rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700, marginBottom: 10 }}>Por Banco</div>
-        {Object.entries(stats.by_banco).sort((a, b) => b[1] - a[1]).map(([banco, n]) => (
-          <div key={banco} style={{ display: "flex", justifyContent: "space-between", fontSize: ".75rem", marginBottom: 5 }}>
-            <span style={{ color: C.muted }}>{banco}</span>
-            <span style={{ color: C.text, fontWeight: 700 }}>{n}</span>
-          </div>
-        ))}
-      </div>
+      <CardShell title="Por Banco" gradient={G.cyan} icon="🏦">
+        {Object.entries(stats.by_banco).sort((a, b) => b[1] - a[1]).map(([banco, n]) => {
+          const total = Object.values(stats.by_banco).reduce((s, v) => s + v, 0);
+          const pct = total > 0 ? (n / total) * 100 : 0;
+          return (
+            <div key={banco} style={{ marginBottom: 8 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 3 }}>
+                <span style={{ color: C.sec, fontWeight: 600 }}>{banco}</span>
+                <span style={{ color: C.text, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{n}</span>
+              </div>
+              <GradientBar pct={pct} gradient={G.cyan} height={3} />
+            </div>
+          );
+        })}
+        {Object.keys(stats.by_banco).length === 0 && (
+          <div style={{ color: C.muted, fontSize: 12, padding: 6 }}>Sem dados ainda.</div>
+        )}
+      </CardShell>
     </div>
   );
 }
 
-// ─── Toast ────────────────────────────────────────────────────────────────────
+// ─── Toast ───────────────────────────────────────────────────────────────────
 function MoveToast({ msg }: { msg: string | null }) {
   if (!msg) return null;
   return (
     <div style={{
       position: "fixed", bottom: 28, left: "50%", transform: "translateX(-50%)",
-      background: "#1a2940", border: `1px solid ${C.blue}55`, borderRadius: 20,
-      padding: "10px 22px", color: C.text, fontSize: ".85rem", fontWeight: 600,
+      background: `linear-gradient(rgba(15,15,35,.95), rgba(15,15,35,.95)) padding-box, ${G.primary} border-box`,
+      border: '1.5px solid transparent',
+      borderRadius: 999,
+      padding: "10px 22px", color: C.text, fontSize: 14, fontWeight: 700,
       zIndex: 20000, pointerEvents: "none",
-      boxShadow: "0 4px 24px rgba(0,0,0,.5)",
-      animation: "fadeInUp .2s ease",
+      boxShadow: "0 8px 32px rgba(0,0,0,.6)",
+      animation: "fade-up .25s ease",
+      display: 'inline-flex', alignItems: 'center', gap: 8,
     }}>
+      <PulseDot color="#06b6d4" />
       {msg}
     </div>
   );
 }
 
-// ─── Página principal ─────────────────────────────────────────────────────────
+// ─── Página principal ────────────────────────────────────────────────────────
 export default function CRM() {
   const { isAdmin } = useSession();
   const [propostas, setPropostas] = useState<CrmProposta[]>([]);
@@ -552,7 +754,6 @@ export default function CRM() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
-  // Search filtro local — dim não-matches em vez de esconder
   const filteredPropostas = useMemo(() => {
     if (!search.trim()) return propostas;
     const q = search.toLowerCase();
@@ -565,7 +766,6 @@ export default function CRM() {
     );
   }, [propostas, search]);
 
-  // Stats computadas a partir da view atual (inclui filtros)
   const displayStats = useMemo(
     () => computeStats(filteredPropostas, pendingCount),
     [filteredPropostas, pendingCount]
@@ -611,7 +811,6 @@ export default function CRM() {
     const updates: Record<string, string> = { status: targetStatus };
     if (VENDOR_NAMES[targetStatus]) updates.nome_vendedor = VENDOR_NAMES[targetStatus]!;
 
-    // Optimistic update
     setPropostas(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
 
     const colLabel = COLUNAS.find(c => c.key === targetStatus)?.label ?? targetStatus;
@@ -718,60 +917,138 @@ export default function CRM() {
     return sum > 0 ? fmtMoedaCompacto(sum) : null;
   };
 
-  const card: React.CSSProperties = {
-    background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 12,
-  };
-
   const pendentesCount = pendentes.length;
 
   return (
-    <div style={{ padding: 20, color: C.text, fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", minHeight: "100vh", background: C.bg }}>
-      <style>{`@keyframes fadeInUp { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }`}</style>
+    <div style={{
+      padding: "22px 24px 56px",
+      color: C.text,
+      fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif",
+      minHeight: "100vh", background: C.bg,
+    }}>
+      <style>{SHARED_CSS}{CRM_CSS}</style>
 
-      {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-        <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: 0 }}>📊 Acompanhamento de Propostas</h1>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {isAdmin && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-              <button
-                onClick={handleSyncV8}
-                disabled={syncStatus === "running"}
-                style={{ padding: "8px 16px", borderRadius: 20, background: syncStatus === "running" ? "rgba(180,74,255,.08)" : `${C.purple}22`, color: syncStatus === "running" ? C.muted : C.purple, border: `1px solid ${syncStatus === "running" ? C.border : C.purple + "44"}`, fontWeight: 700, fontSize: ".82rem", cursor: syncStatus === "running" ? "not-allowed" : "pointer" }}>
-                {syncStatus === "running" ? "⏳ Sincronizando…" : "🔄 Sincronizar V8"}
-              </button>
-              {syncStatus === "done" && syncResult && (
-                <span style={{ fontSize: ".7rem", color: C.green }}>
-                  ✓ {syncResult.added} novas · {syncResult.skipped} já existiam · {syncResult.errors} erros
+      {/* ── Hero header ── */}
+      <div style={{ ...glassCard(G.primary, 26), marginBottom: 18 }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 22, alignItems: 'center',
+        }} className="crm-hero">
+          <BrainBadge color={CC.purple} loading={loading} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ ...sectionTitle(G.primary), marginBottom: 6 }}>CRM</div>
+            <h1 style={{
+              margin: 0, color: C.text, fontSize: 32, lineHeight: 1.05,
+              letterSpacing: 0, fontWeight: 800,
+            }}>
+              Acompanhamento de Propostas
+            </h1>
+            <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 8, flexWrap: 'wrap' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                <PulseDot color={CC.green} />
+                <span style={{ color: C.text, fontSize: 13, fontWeight: 700 }}>
+                  {displayStats.total} propostas · {fmtMoeda(displayStats.total_valor)}
+                </span>
+              </span>
+              {isAdmin && pendingCount > 0 && (
+                <span style={{ color: CC.gold, fontSize: 12, fontWeight: 700 }}>
+                  ⏳ {pendingCount} aguardando aprovação
                 </span>
               )}
-              {syncStatus === "error" && (
-                <span style={{ fontSize: ".7rem", color: C.red }}>Erro ao sincronizar — verifique credenciais V8</span>
-              )}
             </div>
-          )}
-          <button
-            onClick={() => { setEditing(null); setAddingToCol(null); setShowModal(true); }}
-            style={{ padding: "8px 18px", borderRadius: 20, background: `${C.green}22`, color: C.green, border: `1px solid ${C.green}44`, fontWeight: 700, fontSize: ".85rem", cursor: "pointer" }}>
-            ➕ Nova Proposta
-          </button>
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {isAdmin && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                <button
+                  onClick={handleSyncV8}
+                  disabled={syncStatus === "running"}
+                  className="ds-btn"
+                  style={btnStyle(G.purple, syncStatus === "running")}
+                >
+                  {syncStatus === "running" ? "⏳ Sincronizando…" : "🔄 Sincronizar V8"}
+                </button>
+                {syncStatus === "done" && syncResult && (
+                  <span style={{ fontSize: 11, color: CC.green }}>
+                    ✓ {syncResult.added} novas · {syncResult.skipped} já existiam · {syncResult.errors} erros
+                  </span>
+                )}
+                {syncStatus === "error" && (
+                  <span style={{ fontSize: 11, color: CC.red }}>Erro ao sincronizar — verifique credenciais V8</span>
+                )}
+              </div>
+            )}
+            <button
+              onClick={() => { setEditing(null); setAddingToCol(null); setShowModal(true); }}
+              className="ds-btn"
+              style={btnStyle(G.green)}>
+              ➕ Nova Proposta
+            </button>
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+      {/* ── KPI strip ── */}
+      <section className="crm-grid crm-kpis spot-grid" style={{
+        display: 'grid', gridTemplateColumns: `repeat(${isAdmin ? 4 : 3}, minmax(0,1fr))`,
+        gap: 14, marginBottom: 18,
+      }}>
+        <KpiCard label="Total Vendido" icon="💰" value={fmtMoeda(displayStats.total_valor)} color={CC.green}
+          sub={`${displayStats.total} propostas no período`} />
+        <KpiCard label="Ticket Médio" icon="📊" value={fmtMoeda(displayStats.ticket_medio)} color={CC.cyan}
+          sub="Por proposta paga" />
+        <KpiCard label="Top Vendedor" icon="🏆"
+          value={displayStats.ranking[0]?.nome.split(" ")[0] ?? "—"}
+          color={CC.gold}
+          sub={displayStats.ranking[0] ? fmtMoeda(displayStats.ranking[0].total) : "Sem dados ainda"} />
+        {isAdmin && (
+          <KpiCard label="Aguardando" icon="⏳" value={pendingCount} color={CC.red}
+            sub="Pendentes de aprovação" />
+        )}
+      </section>
+
+      {/* ── Tabs ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         <button
           onClick={() => setShowTab("kanban")}
-          style={{ padding: "6px 18px", borderRadius: 12, border: `1px solid ${showTab === "kanban" ? C.blue : C.border}`, background: showTab === "kanban" ? `${C.blue}22` : "transparent", color: showTab === "kanban" ? C.blue : C.muted, fontWeight: 700, fontSize: ".8rem", cursor: "pointer" }}>
+          className="ds-btn"
+          style={{
+            padding: "8px 18px", borderRadius: 12,
+            border: `1.5px solid transparent`,
+            backgroundImage: showTab === "kanban"
+              ? `linear-gradient(rgba(15,15,35,.92), rgba(15,15,35,.92)) padding-box, ${G.cyan} border-box`
+              : 'none',
+            background: showTab === "kanban" ? undefined : 'rgba(255,255,255,.03)',
+            color: showTab === "kanban" ? C.text : C.sec,
+            fontWeight: 700, fontSize: 13, cursor: "pointer",
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+          }}>
+          {showTab === "kanban" && <PulseDot color={CC.cyan} />}
           📋 Kanban
         </button>
         {isAdmin && (
           <button
             onClick={() => setShowTab("pendentes")}
-            style={{ padding: "6px 18px", borderRadius: 12, border: `1px solid ${showTab === "pendentes" ? C.gold : C.border}`, background: showTab === "pendentes" ? `${C.gold}22` : "transparent", color: showTab === "pendentes" ? C.gold : C.muted, fontWeight: 700, fontSize: ".8rem", cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+            className="ds-btn"
+            style={{
+              padding: "8px 18px", borderRadius: 12,
+              border: `1.5px solid transparent`,
+              backgroundImage: showTab === "pendentes"
+                ? `linear-gradient(rgba(15,15,35,.92), rgba(15,15,35,.92)) padding-box, ${G.yellow} border-box`
+                : 'none',
+              background: showTab === "pendentes" ? undefined : 'rgba(255,255,255,.03)',
+              color: showTab === "pendentes" ? C.text : C.sec,
+              fontWeight: 700, fontSize: 13, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 8,
+            }}>
+            {showTab === "pendentes" && <PulseDot color={CC.gold} />}
             ⏳ Aguardando Aprovação
             {pendentesCount > 0 && (
-              <span style={{ background: C.gold, color: "#000", borderRadius: "50%", width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", fontSize: ".65rem", fontWeight: 800 }}>
+              <span style={{
+                background: CC.gold, color: "#000", borderRadius: "50%",
+                width: 18, height: 18,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 900,
+              }}>
                 {pendentesCount}
               </span>
             )}
@@ -779,45 +1056,61 @@ export default function CRM() {
         )}
       </div>
 
-      {/* Filtros + busca */}
-      <div style={{ ...card, padding: "12px 16px", marginBottom: 16 }}>
+      {/* ── Filtros + busca ── */}
+      <div style={{ ...glassCard(G.cyan, 16), marginBottom: 18 }}>
+        <div style={{ ...sectionTitle(G.cyan), fontSize: 11, marginBottom: 12 }}>Filtros</div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-          {/* Busca */}
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="🔍 Buscar por nome, CPF, banco, código…"
-            style={{
-              padding: "6px 12px", background: "#0a0a1e", border: `1px solid ${search ? C.blue + "88" : C.border}`,
-              borderRadius: 10, color: C.text, fontSize: ".82rem", outline: "none",
-              width: 280, transition: "border .15s",
-            }}
+            className="ds-input"
+            style={{ ...INPUT_STYLE, width: 320, padding: '10px 14px', fontSize: 13 }}
           />
           {search && (
             <button onClick={() => setSearch("")}
-              style={{ padding: "4px 10px", borderRadius: 10, background: `${C.red}22`, color: C.red, border: `1px solid ${C.red}44`, fontSize: ".75rem", cursor: "pointer" }}>
+              style={{
+                padding: "6px 12px", borderRadius: 10,
+                background: `${CC.red}15`, color: CC.red,
+                border: `1px solid ${CC.red}40`, fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}>
               ✕ Limpar busca
             </button>
           )}
         </div>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: ".7rem", color: C.muted, textTransform: "uppercase", letterSpacing: ".8px", fontWeight: 700 }}>Banco:</span>
+          <span style={{
+            fontSize: 10, color: C.sec, textTransform: "uppercase",
+            letterSpacing: ".1em", fontWeight: 800,
+          }}>Banco:</span>
           {["todos", ...BANCOS].map(b => (
             <button key={b} onClick={() => setBancFiltro(b)}
-              style={{ padding: "4px 12px", borderRadius: 12, border: `1px solid ${bancFiltro === b ? C.purple : C.border}`, background: bancFiltro === b ? `${C.purple}22` : "transparent", color: bancFiltro === b ? C.purple : C.muted, fontSize: ".75rem", cursor: "pointer" }}>
+              style={{
+                padding: "5px 12px", borderRadius: 12,
+                border: `1px solid ${bancFiltro === b ? CC.purple : 'rgba(255,255,255,.08)'}`,
+                background: bancFiltro === b ? `${CC.purple}22` : "transparent",
+                color: bancFiltro === b ? CC.purple : C.sec,
+                fontSize: 12, fontWeight: 700, cursor: "pointer",
+              }}>
               {b === "todos" ? "Todos" : b}
             </button>
           ))}
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center" }}>
-            <span style={{ fontSize: ".7rem", color: C.muted }}>De:</span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 10, alignItems: "center", flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: C.sec }}>De:</span>
             <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)}
-              style={{ padding: "5px 8px", background: "#0a0a1e", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: ".8rem" }} />
-            <span style={{ fontSize: ".7rem", color: C.muted }}>Até:</span>
+              className="ds-input"
+              style={{ ...INPUT_STYLE, padding: '6px 10px', fontSize: 12, width: 'auto' }} />
+            <span style={{ fontSize: 11, color: C.sec }}>Até:</span>
             <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)}
-              style={{ padding: "5px 8px", background: "#0a0a1e", border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, fontSize: ".8rem" }} />
+              className="ds-input"
+              style={{ ...INPUT_STYLE, padding: '6px 10px', fontSize: 12, width: 'auto' }} />
             {(dataInicio || dataFim || bancFiltro !== "todos") && (
               <button onClick={() => { setBancFiltro("todos"); setDataInicio(""); setDataFim(""); }}
-                style={{ padding: "4px 10px", borderRadius: 10, background: `${C.red}22`, color: C.red, border: `1px solid ${C.red}44`, fontSize: ".75rem", cursor: "pointer" }}>
+                style={{
+                  padding: "5px 12px", borderRadius: 10,
+                  background: `${CC.red}15`, color: CC.red,
+                  border: `1px solid ${CC.red}40`, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                }}>
                 ✕ Limpar
               </button>
             )}
@@ -825,13 +1118,21 @@ export default function CRM() {
         </div>
       </div>
 
-      {err && <div style={{ color: C.red, marginBottom: 14, fontSize: ".85rem" }}>{err}</div>}
+      {err && (
+        <div style={{
+          color: CC.red, marginBottom: 14, fontSize: 13,
+          background: `${CC.red}10`, border: `1px solid ${CC.red}33`,
+          borderRadius: 8, padding: '10px 14px',
+        }}>
+          {err}
+        </div>
+      )}
 
-      {/* Layout: conteúdo + Sidebar */}
-      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+      {/* ── Layout: kanban + sidebar ── */}
+      <div className="crm-layout" style={{ display: "flex", gap: 18, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           {showTab === "kanban" && (
-            <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 8 }}>
+            <div style={{ display: "flex", gap: 12, overflowX: "auto", paddingBottom: 8 }} className="crm-kanban">
               {COLUNAS.map(col => {
                 const cards = colunasPropostas(col.key);
                 const total = colTotal(col.key);
@@ -844,40 +1145,67 @@ export default function CRM() {
                     onDragOver={handleDragOver}
                     onDrop={e => handleDrop(e, col.key)}
                     style={{
-                      minWidth: 210, flex: "0 0 210px",
-                      background: isOver ? `${col.cor}0d` : "rgba(255,255,255,.015)",
-                      border: `1px solid ${isOver ? col.cor + "99" : C.border}`,
-                      borderRadius: 12, padding: "10px 10px 4px",
-                      transition: "border .12s, background .12s",
+                      ...glassCard(col.grad, 14),
+                      minWidth: 230, flex: "0 0 230px",
+                      transform: isOver ? 'scale(1.01)' : 'scale(1)',
+                      boxShadow: isOver
+                        ? `0 12px 40px rgba(0,0,0,.55), 0 0 0 2px ${col.cor}66`
+                        : '0 8px 40px rgba(0,0,0,.55)',
+                      transition: 'transform .15s, box-shadow .15s',
                     }}
                   >
                     {/* Column header */}
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, paddingBottom: 8, borderBottom: `1px solid ${C.border}` }}>
+                    <div style={{
+                      display: "flex", justifyContent: "space-between", alignItems: "center",
+                      marginBottom: 10, paddingBottom: 10,
+                      borderBottom: `1px solid rgba(255,255,255,.06)`,
+                    }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: ".75rem", fontWeight: 800, color: col.cor, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{col.label}</div>
+                        <div style={{
+                          fontSize: 12, fontWeight: 800, color: col.cor,
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                          letterSpacing: '.04em',
+                        }}>
+                          {col.icon} {col.label}
+                        </div>
                         {total && (
-                          <div style={{ fontSize: ".65rem", color: C.muted, marginTop: 1 }}>{total}</div>
+                          <div style={{ fontSize: 10, color: C.sec, marginTop: 2, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{total}</div>
                         )}
                       </div>
                       <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
-                        <span style={{ fontSize: ".68rem", background: `${col.cor}22`, color: col.cor, padding: "2px 7px", borderRadius: 10, fontWeight: 700 }}>
+                        <span style={{
+                          fontSize: 11, background: `${col.cor}22`, color: col.cor,
+                          padding: "2px 8px", borderRadius: 10, fontWeight: 800,
+                          fontVariantNumeric: 'tabular-nums',
+                        }}>
                           {cards.length}
                         </span>
                         <button
                           onClick={() => openAddInCol(col.key)}
                           title={`Adicionar em ${col.label}`}
-                          style={{ background: `${col.cor}18`, border: `1px solid ${col.cor}44`, color: col.cor, borderRadius: 6, width: 22, height: 22, cursor: "pointer", fontSize: ".9rem", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, lineHeight: 1 }}>
+                          style={{
+                            background: `${col.cor}18`, border: `1px solid ${col.cor}44`,
+                            color: col.cor, borderRadius: 6,
+                            width: 22, height: 22, cursor: "pointer",
+                            fontSize: 14,
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            fontWeight: 800, lineHeight: 1,
+                          }}>
                           +
                         </button>
                       </div>
                     </div>
 
-                    {/* Cards area — scroll independente */}
-                    <div style={{ maxHeight: 520, overflowY: "auto", overflowX: "hidden", paddingRight: 2 }}>
+                    {/* Cards area */}
+                    <div className="cc-scroll spot-list" style={{ maxHeight: 540, overflowY: "auto", overflowX: "hidden", paddingRight: 2 }}>
                       {loading ? (
-                        <div style={{ color: C.muted, fontSize: ".8rem", textAlign: "center", padding: 20 }}>Carregando…</div>
+                        <div style={{ color: C.sec, fontSize: 12, textAlign: "center", padding: 20 }}>Carregando…</div>
                       ) : cards.length === 0 ? (
-                        <div style={{ color: C.muted, fontSize: ".72rem", textAlign: "center", padding: "20px 0", borderRadius: 8, border: `2px dashed ${isOver ? col.cor + "55" : C.border}` }}>
+                        <div style={{
+                          color: C.muted, fontSize: 11, textAlign: "center",
+                          padding: "20px 0", borderRadius: 8,
+                          border: `2px dashed ${isOver ? col.cor + "66" : 'rgba(255,255,255,.08)'}`,
+                        }}>
                           {isOver ? "Soltar aqui" : "Arraste aqui"}
                         </div>
                       ) : (
@@ -903,13 +1231,23 @@ export default function CRM() {
           )}
 
           {showTab === "pendentes" && isAdmin && (
-            <div>
+            <div style={glassCard(G.yellow, 18)}>
+              <div style={{ ...sectionTitle(G.yellow), fontSize: 12, marginBottom: 14 }}>
+                Aguardando Aprovação
+              </div>
               {pendentes.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "40px 0", color: C.muted, fontSize: ".9rem" }}>
+                <div style={{
+                  textAlign: "center", padding: "40px 0",
+                  color: C.sec, fontSize: 14,
+                }}>
                   Nenhuma proposta aguardando aprovação.
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+                <div className="spot-grid" style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+                  gap: 12,
+                }}>
                   {pendentes.map(p => (
                     <PropostaCard
                       key={p.id} proposta={p} isAdmin={isAdmin}
@@ -940,7 +1278,7 @@ export default function CRM() {
         />
       )}
 
-      {/* Modal senha para apagar */}
+      {/* Modal senha apagar */}
       {deleteTarget && (
         <CrmPasswordModal
           action="apagar"
@@ -953,3 +1291,25 @@ export default function CRM() {
     </div>
   );
 }
+
+const CRM_CSS = `
+  .cc-scroll::-webkit-scrollbar { width: 6px; }
+  .cc-scroll::-webkit-scrollbar-track { background: rgba(255,255,255,.02); border-radius: 3px; }
+  .cc-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
+  .cc-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,.22); }
+
+  .crm-kanban::-webkit-scrollbar { height: 8px; }
+  .crm-kanban::-webkit-scrollbar-track { background: rgba(255,255,255,.02); border-radius: 4px; }
+  .crm-kanban::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+
+  @media (max-width: 1280px) {
+    .crm-kpis { grid-template-columns: repeat(2, 1fr) !important; }
+    .crm-layout { flex-direction: column !important; }
+    .crm-layout > :last-child { width: 100% !important; }
+  }
+  @media (max-width: 760px) {
+    .crm-kpis { grid-template-columns: 1fr !important; }
+    .crm-hero { grid-template-columns: 1fr !important; }
+    .crm-hero > :last-child { justify-content: flex-start !important; }
+  }
+`;

@@ -300,3 +300,29 @@ class MetaClient:
             body = next((c.get("text", "") for c in components if c.get("type") == "BODY"), "")
             results.append({**t, "variables": variables, "body": body})
         return results
+
+    async def get_templates_all(self, waba_id: str) -> list[dict]:
+        """Returns message templates for a WABA across statuses/categories for diagnostics."""
+        templates: list[dict] = []
+        url: str | None = f"{META_BASE}/{waba_id}/message_templates"
+        params: dict = {
+            "fields": "id,name,status,language,category,components,rejected_reason",
+            "limit": 200,
+            "access_token": self.access_token,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            while url:
+                r = await client.get(url, params=params)
+                r.raise_for_status()
+                data = r.json()
+                templates.extend(data.get("data", []))
+                url = (data.get("paging") or {}).get("next")
+                params = {}
+
+        results = []
+        for t in templates:
+            components = t.get("components", [])
+            variables = _extract_template_variables(components)
+            body = next((c.get("text", "") for c in components if c.get("type") == "BODY"), "")
+            results.append({**t, "variables": variables, "body": body})
+        return results
