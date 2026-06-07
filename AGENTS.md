@@ -1050,3 +1050,24 @@ Aplicar `.spot-*` em TODOS os cards/listas do CODEX. Lista completa em `~/.claud
 - Não commitar até pedido explícito do usuário
 - Original em `/Users/macbookdegabriel/projetos/ACELERA CORBAN` permanece intocado
 - Decisão de merge CODEX → original ainda pendente
+
+---
+
+## Ultra Review — Sessão 07/06/2026 (commit 5b9c2d5)
+
+### Bugs corrigidos
+
+| Arquivo | Linha | Severidade | Problema | Fix |
+|---------|-------|-----------|----------|-----|
+| `DashboardAgregado.tsx` | 276 | 🔴 | Barra de progresso por plataforma usava `src.total * 1000` como denominador (campaigns count, não sends) → barra sempre 0% | Substituído por `dispatchStats.totalSent` |
+| `Configuracoes.tsx` | 260 | 🟡 | Texto instrui "Deixe vazio para remover a proteção" mas validação (linha 290) rejeita campo vazio | Texto corrigido: "Use o botão Remover Senha abaixo" |
+| `DisparoAesir.tsx` | 237-342 | 🟡 | ~106 linhas de código duplicado (effectiveQuality, statusCards, extraWarnings, topLevel, AlertLevel, ALERT_COLOR) — já exportadas em disparo-shared/quality.ts | Removido código local, adicionado import |
+
+### TypeScript pós-fix
+```
+npx tsc --noEmit → 0 errors
+```
+
+### Pendências pós-review
+- ⏳ Deploy VPS: `git pull && docker compose -f docker-compose.prod.yml build --no-cache backend frontend && up -d`
+- ⏳ Aplicar `migrations/034_broadcast_recipients.sql` no Supabase `gfyharrnkcncpngbvhpj`
