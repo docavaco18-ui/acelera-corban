@@ -13,6 +13,7 @@ import DisparoChipcare from "./pages/DisparoChipcare";
 import Mercantil from "./pages/Mercantil";
 import Presenca from "./pages/Presenca";
 import PowerHub from "./pages/PowerHub";
+import ModoDeUso from "./pages/ModoDeUso";
 import { useSession } from "./hooks/useSession";
 import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
@@ -85,6 +86,7 @@ function TopBar() {
         ["/registros", "Registros"],
         ["/configuracoes", "Configurações"],
         ...(isAdmin ? [["/admin", "Admin"] as const] : []),
+        ["/modo-de-uso", "Modo de Uso"],
       ].map(([to, label]) => (
         <NavLink key={to} to={to} end
           style={({ isActive }) => ({
@@ -144,6 +146,7 @@ export default function App() {
                 <Route path="/disparo" element={<Disparo />} />
                 <Route path="/disparo-aesir" element={<DisparoAesir />} />
                 <Route path="/disparo-chipcare" element={<DisparoChipcare />} />
+                <Route path="/modo-de-uso" element={<ModoDeUso />} />
                 <Route path="/mercantil" element={<Mercantil />} />
                 <Route path="/presenca" element={<Presenca />} />
                 <Route path="/powerhub" element={<PowerHub />} />
