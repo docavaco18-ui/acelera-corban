@@ -257,7 +257,7 @@ export default function Configuracoes() {
 
           <p style={{ fontSize: 13, color: C.sec, marginBottom: 20 }}>
             Quando ativa, a senha CRM é exigida de qualquer usuário para <b style={{ color: C.text }}>adicionar</b> ou <b style={{ color: C.text }}>apagar</b> propostas.
-            Deixe vazio para remover a proteção.
+            Para remover a proteção, use o botão <b style={{ color: C.text }}>Remover Senha</b> abaixo.
           </p>
 
           <Field label="Nova Senha CRM (mín. 4 caracteres)">

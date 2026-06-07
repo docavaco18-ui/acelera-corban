@@ -273,7 +273,7 @@ export default function DashboardAgregado() {
               <div style={{ fontSize: 11, color: C.sec, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 12 }}>Por plataforma</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }} className="spot-list">
                 {dispatchStats.sources.map(src => {
-                  const pct = src.total > 0 ? Math.min(100, Math.round(src.sent / (src.total * 1000) * 100)) : 0;
+                  const pct = dispatchStats.totalSent > 0 ? Math.round(src.sent / dispatchStats.totalSent * 100) : 0;
                   return (
                     <div key={src.name} className="spot-row" style={{ display: "flex", alignItems: "center", gap: 12, padding: "6px 8px", borderRadius: 8 }}>
                       <div style={{ width: 8, height: 8, borderRadius: "50%", background: src.color, flexShrink: 0 }} />
