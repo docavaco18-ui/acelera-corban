@@ -1,22 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { aesirApi } from '../lib/api';
+import {
+  C, G, glassCard, sectionTitle, INPUT_STYLE, btnStyle, SHARED_CSS,
+  QUALITY_GRAD, QUALITY_COLOR, PulseDot, GradientBar,
+} from '../components/disparo-shared';
 import { CollapsedChip as SharedChip } from '../components/disparo-shared/CollapsedChip';
 import { BMSummary } from '../components/disparo-shared/BMSummary';
 import { AIMonitorPanel as SharedAIMonitor } from '../components/disparo-shared/AICore';
 import { CampaignHistoryList } from '../components/disparo/CampaignHistoryList';
 
-// ── Global CSS (animations + focus rings) ─────────────────────────────────────
-const CSS = `
-  @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}
-  @keyframes fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
-  @keyframes progress-fill{from{width:0}to{width:var(--pct)}}
-  @keyframes ai-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-  @keyframes ai-spin-rev{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}
-  @keyframes ai-orb-pulse{0%,100%{transform:translate(-50%,-50%) scale(1);box-shadow:0 0 60px rgba(124,58,237,.6),inset 0 0 30px rgba(6,182,212,.4)}50%{transform:translate(-50%,-50%) scale(1.08);box-shadow:0 0 90px rgba(6,182,212,.8),inset 0 0 40px rgba(124,58,237,.5)}}
-  @keyframes ai-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
-  @keyframes ai-twinkle{0%,100%{opacity:1}50%{opacity:.35}}
-  @keyframes ai-synapse{0%,100%{stroke-dashoffset:0;opacity:.6}50%{stroke-dashoffset:-20;opacity:1}}
-  @keyframes ai-text-pulse{0%,100%{opacity:.7}50%{opacity:1}}
+// ── Aesir-specific CSS (focus/hover classes + scan animation) ────────────────
+const CSS = SHARED_CSS + `
   @keyframes ai-scan{0%{transform:translateY(-100%);opacity:0}50%{opacity:1}100%{transform:translateY(100%);opacity:0}}
   .aesir-input:focus{border-color:rgba(124,58,237,.65)!important;box-shadow:0 0 0 3px rgba(124,58,237,.12)!important;outline:none!important}
   .aesir-btn:hover:not(:disabled){opacity:.88;transform:translateY(-1px);transition:all .15s}
@@ -24,102 +18,9 @@ const CSS = `
   .aesir-row:hover{background:rgba(255,255,255,.04)!important;transition:background .15s}
   .aesir-chip:hover{opacity:.75;cursor:pointer}
   .aesir-select:focus{border-color:rgba(124,58,237,.65)!important;box-shadow:0 0 0 3px rgba(124,58,237,.12)!important;outline:none!important}
-  .ai-core{cursor:pointer;transition:transform .3s}
-  .ai-core:hover{transform:scale(1.04)}
-  .ai-core:active{transform:scale(.97)}
 `;
 
-// ── Design tokens ─────────────────────────────────────────────────────────────
-const C = {
-  bg: '#060612',
-  surface: 'rgba(15,15,35,.9)',
-  surfaceDeep: 'rgba(8,8,20,.95)',
-  border: 'rgba(255,255,255,.07)',
-  text: '#f1f5f9',
-  sec: '#94a3b8',
-  muted: '#475569',
-  green: '#10b981',
-  yellow: '#f59e0b',
-  red: '#ef4444',
-} as const;
-
-const G = {
-  primary: 'linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%)',
-  green: 'linear-gradient(135deg,#10b981 0%,#06b6d4 100%)',
-  purple: 'linear-gradient(135deg,#6d28d9 0%,#7c3aed 100%)',
-  pink: 'linear-gradient(135deg,#ec4899 0%,#7c3aed 100%)',
-  red: 'linear-gradient(135deg,#ef4444 0%,#ec4899 100%)',
-  yellow: 'linear-gradient(135deg,#f59e0b 0%,#ef8c3b 100%)',
-  cyan: 'linear-gradient(135deg,#06b6d4 0%,#0891b2 100%)',
-  neon: 'linear-gradient(135deg,#00ff88 0%,#06b6d4 100%)',
-} as const;
-
-// Glassmorphism card with gradient border
-const glassCard = (grad: string = G.primary, pad = 24) => ({
-  background: `linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, ${grad} border-box`,
-  border: '1px solid transparent',
-  borderRadius: 16,
-  padding: pad,
-  boxShadow: '0 8px 40px rgba(0,0,0,.55)',
-  backdropFilter: 'blur(12px)',
-  position: 'relative' as const,
-  overflow: 'hidden' as const,
-  animation: 'fade-up .35s ease-out',
-});
-
-// Section title with gradient text
-const sectionTitle = (grad: string = G.primary) => ({
-  fontSize: 16,
-  fontWeight: 800,
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.12em',
-  background: grad,
-  WebkitBackgroundClip: 'text',
-  WebkitTextFillColor: 'transparent',
-  backgroundClip: 'text',
-  margin: 0,
-  marginBottom: 20,
-});
-
-const INPUT_STYLE = {
-  width: '100%',
-  background: 'rgba(255,255,255,.04)',
-  border: '1px solid rgba(255,255,255,.1)',
-  color: C.text,
-  borderRadius: 10,
-  padding: '12px 16px',
-  fontSize: 15,
-  boxSizing: 'border-box' as const,
-};
-
-const btnStyle = (grad: string, disabled = false) => ({
-  background: disabled ? 'rgba(255,255,255,.04)' : grad,
-  color: disabled ? C.muted : '#fff',
-  border: disabled ? '1px solid rgba(255,255,255,.06)' : 'none',
-  borderRadius: 10,
-  padding: '12px 24px',
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  fontSize: 15,
-  fontWeight: 600,
-  boxShadow: disabled ? 'none' : '0 4px 14px rgba(0,0,0,.35)',
-});
-
-const QUALITY_GRAD: Record<string, string> = {
-  GREEN: G.green as string, YELLOW: G.yellow as string, RED: G.red as string, UNKNOWN: 'linear-gradient(90deg,#334155,#475569)',
-};
-const QUALITY_COLOR: Record<string, string> = { GREEN: '#10b981', YELLOW: '#f59e0b', RED: '#ef4444', UNKNOWN: '#475569' };
-
 // ── Sub-components ────────────────────────────────────────────────────────────
-
-function PulseDot({ color = '#10b981' }: { color?: string }) {
-  return (
-    <span style={{
-      width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block',
-      animation: 'pulse-dot 2s ease-in-out infinite',
-      boxShadow: `0 0 6px ${color}99`,
-    }} />
-  );
-}
 
 function QualityBadge({ rating }: { rating?: string }) {
   const r = rating || 'UNKNOWN';
@@ -129,17 +30,6 @@ function QualityBadge({ rating }: { rating?: string }) {
       border: `1px solid ${QUALITY_COLOR[r]}44`, borderRadius: 6,
       padding: '2px 8px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
     }}>{r}</span>
-  );
-}
-
-function GradientBar({ pct, gradient = G.primary as string, height = 6 }: { pct: number; gradient?: string; height?: number }) {
-  return (
-    <div style={{ background: 'rgba(255,255,255,.06)', borderRadius: height, height, overflow: 'hidden' }}>
-      <div style={{
-        background: gradient, height, borderRadius: height,
-        width: `${Math.min(100, Math.max(0, pct))}%`, transition: 'width .6s ease-out',
-      }} />
-    </div>
   );
 }
 
