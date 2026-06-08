@@ -1,25 +1,26 @@
 import { BrowserRouter, Routes, Route, NavLink, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { useState } from "react";
-import Higienizacao from "./pages/Higienizacao";
-import DashboardAgregado from "./pages/DashboardAgregado";
-import Configuracoes from "./pages/Configuracoes";
-import Records from "./pages/Records";
+import { useState, lazy, Suspense } from "react";
 import Login from "./pages/Login";
-import Admin from "./pages/Admin";
-import CRM from "./pages/CRM";
-import Chatwoot from "./pages/Chatwoot";
-import Disparo from "./pages/Disparo";
-import DisparoAesir from "./pages/DisparoAesir";
-import DisparoChipcare from "./pages/DisparoChipcare";
-import Mercantil from "./pages/Mercantil";
-import Presenca from "./pages/Presenca";
-import PowerHub from "./pages/PowerHub";
-import ModoDeUso from "./pages/ModoDeUso";
-import CentralControle from "./pages/CentralControle";
 import { useSession } from "./hooks/useSession";
 import { useBank } from "./hooks/useBank";
 import { supabase } from "./lib/supabase";
 import MercantilSmsModal from "./components/MercantilSmsModal";
+
+const Higienizacao = lazy(() => import("./pages/Higienizacao"));
+const DashboardAgregado = lazy(() => import("./pages/DashboardAgregado"));
+const Configuracoes = lazy(() => import("./pages/Configuracoes"));
+const Records = lazy(() => import("./pages/Records"));
+const Admin = lazy(() => import("./pages/Admin"));
+const CRM = lazy(() => import("./pages/CRM"));
+const Chatwoot = lazy(() => import("./pages/Chatwoot"));
+const Disparo = lazy(() => import("./pages/Disparo"));
+const DisparoAesir = lazy(() => import("./pages/DisparoAesir"));
+const DisparoChipcare = lazy(() => import("./pages/DisparoChipcare"));
+const Mercantil = lazy(() => import("./pages/Mercantil"));
+const Presenca = lazy(() => import("./pages/Presenca"));
+const PowerHub = lazy(() => import("./pages/PowerHub"));
+const ModoDeUso = lazy(() => import("./pages/ModoDeUso"));
+const CentralControle = lazy(() => import("./pages/CentralControle"));
 
 function NavDropdown({ label, items, activePaths }: {
   label: string;
@@ -207,36 +208,38 @@ function Protected({ children, adminOnly = false }: { children: React.ReactNode;
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="*"
-          element={
-            <Protected>
-              <TopBar />
-              <MercantilSmsModal />
-              <Routes>
-                <Route path="/" element={<Higienizacao />} />
-                <Route path="/higienizacao" element={<Higienizacao />} />
-                <Route path="/dashboard" element={<DashboardAgregado />} />
-                <Route path="/configuracoes" element={<Configuracoes />} />
-                <Route path="/crm" element={<CRM />} />
-                <Route path="/chatwoot" element={<Chatwoot />} />
-                <Route path="/disparo" element={<Disparo />} />
-                <Route path="/disparo-aesir" element={<DisparoAesir />} />
-                <Route path="/disparo-chipcare" element={<DisparoChipcare />} />
-                <Route path="/modo-de-uso" element={<ModoDeUso />} />
-                <Route path="/mercantil" element={<Mercantil />} />
-                <Route path="/presenca" element={<Presenca />} />
-                <Route path="/powerhub" element={<PowerHub />} />
-                <Route path="/registros" element={<Records />} />
-                <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
-                <Route path="/central-controle" element={<CentralControle />} />
-              </Routes>
-            </Protected>
-          }
-        />
-      </Routes>
+      <Suspense fallback={<div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh", color: "#a78bfa" }}>Carregando...</div>}>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route
+            path="*"
+            element={
+              <Protected>
+                <TopBar />
+                <MercantilSmsModal />
+                <Routes>
+                  <Route path="/" element={<Higienizacao />} />
+                  <Route path="/higienizacao" element={<Higienizacao />} />
+                  <Route path="/dashboard" element={<DashboardAgregado />} />
+                  <Route path="/configuracoes" element={<Configuracoes />} />
+                  <Route path="/crm" element={<CRM />} />
+                  <Route path="/chatwoot" element={<Chatwoot />} />
+                  <Route path="/disparo" element={<Disparo />} />
+                  <Route path="/disparo-aesir" element={<DisparoAesir />} />
+                  <Route path="/disparo-chipcare" element={<DisparoChipcare />} />
+                  <Route path="/modo-de-uso" element={<ModoDeUso />} />
+                  <Route path="/mercantil" element={<Mercantil />} />
+                  <Route path="/presenca" element={<Presenca />} />
+                  <Route path="/powerhub" element={<PowerHub />} />
+                  <Route path="/registros" element={<Records />} />
+                  <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
+                  <Route path="/central-controle" element={<CentralControle />} />
+                </Routes>
+              </Protected>
+            }
+          />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }

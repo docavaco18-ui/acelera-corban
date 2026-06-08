@@ -279,9 +279,9 @@ cd ~/projetos/ACELERA\ CORBAN
 docker compose up -d
 
 # 3. Cadastrar credenciais (browser)
-# http://localhost:3002 → toggle Mercantil → Configurações
-# Login: 35275CF.GABRIEL
-# Senha: zZB|;v8eoe5~J1$[_4/_%
+# http://localhost:3004 → toggle Mercantil → Configurações
+# Login: configurar MERCANTIL_LOGIN no ambiente local (ver PROGRESS.md)
+# Senha: configurar MERCANTIL_PASS no ambiente local (ver PROGRESS.md)
 
 # 4. Testar
 # Higienização → upload CSV pequeno (3 CPFs)

@@ -157,7 +157,7 @@ Plurio (`autorizacoesdigitais.*`) exige geolocation. Engine concede São Paulo (
 1. Aplicar `migrations/020_mercantil.sql` no Supabase `gfyharrnkcncpngbvhpj`
 2. Cadastrar credenciais em Configurações (toggle pra Mercantil)
 3. `docker compose up -d`
-4. localhost:3002 → Mercantil → Upload CSV → Iniciar Bot
+4. localhost:3004 → Mercantil → Upload CSV → Iniciar Bot
 5. Modal SMS → digita código → aguarda logs: `bff_bridge IniciarOperacao OK CPF=...`
 
 ### Obsidian
@@ -929,7 +929,7 @@ docker compose -f docker-compose.prod.yml up -d backend frontend
 ### Runtime local da cópia CODEX
 
 - Frontend: `http://localhost:3004`
-- Backend: `http://localhost:8001`
+- Backend: `http://localhost:8003`
 - Redis: `redis://localhost:6381`
 - A tela aprovada pelo usuário foi `http://localhost:3004/central-controle`
 - Manter **Modo de Uso** como último item da navegação. **Central de Controle** fica antes dele.
@@ -996,7 +996,7 @@ Escopo da tela:
 
 - Frontend CODEX agora em `http://localhost:3004` (vite dev, não nginx) — `npm run dev -- --port 3004 --strictPort`
 - Backend CODEX agora em `http://localhost:8003` (uvicorn local) — não 8001 como na nota anterior. CORS_ORIGINS deve incluir `http://localhost:3004` no `.env` ou via env override.
-- `frontend/.env.local` precisa `VITE_API_URL=http://localhost:8003` e `VITE_WS_URL=ws://localhost:8003/ws`.
+- `frontend/.env.local` precisa apenas `VITE_API_URL=http://localhost:8003`. `VITE_WS_URL` foi removido — o hook `useBroadcastWebSocket` constrói a URL internamente a partir de `VITE_API_URL`.
 - Redis 6381 compartilhado com o stack do original (sem conflito).
 
 ### Audit do código do Codex — 3 bugs críticos corrigidos

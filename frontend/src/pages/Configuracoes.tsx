@@ -163,7 +163,7 @@ export default function Configuracoes() {
             onChange={e => setLogin(e.target.value)}
             placeholder={
               bank === "vctex" ? "usuário do portal"
-              : bank === "mercantil" ? "ex: 35275CF.GABRIEL"
+              : bank === "mercantil" ? "ex: USUARIO.PORTAL"
               : bank === "presenca" ? "usuário do portal Presença"
               : bank === "powerhub" ? "ex: 1243"
               : "seu@email.com"

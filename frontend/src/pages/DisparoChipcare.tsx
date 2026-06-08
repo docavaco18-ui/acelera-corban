@@ -384,9 +384,9 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         dispatch_id: dispatchId,
         assignments: validAsns.map(a => ({ channel_id: a.channel_id, planned_count: a.planned_count })),
         template: {
-          templateName: selectedTemplate.name || selectedTemplate.templateName,
-          templateId: String(selectedTemplate.id || selectedTemplate.templateId || ''),
-          languageCode: selectedTemplate.language || selectedTemplate.languageCode || 'pt_BR',
+          template_name: selectedTemplate.name || selectedTemplate.templateName,
+          template_id: String(selectedTemplate.id || selectedTemplate.templateId || ''),
+          language_code: selectedTemplate.language || selectedTemplate.languageCode || 'pt_BR',
           components: selectedTemplate.components || [],
         },
         campaign_name: campaignName || file?.name?.replace('.csv', '') || '',
@@ -410,15 +410,16 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         dispatch_id: dispatchId,
         assignments: validAsns.map(a => ({ channel_id: a.channel_id, planned_count: a.planned_count })),
         template: {
-          templateName: selectedTemplate.name || selectedTemplate.templateName,
-          templateId: String(selectedTemplate.id || selectedTemplate.templateId || ''),
-          languageCode: selectedTemplate.language || selectedTemplate.languageCode || 'pt_BR',
+          template_name: selectedTemplate.name || selectedTemplate.templateName,
+          template_id: String(selectedTemplate.id || selectedTemplate.templateId || ''),
+          language_code: selectedTemplate.language || selectedTemplate.languageCode || 'pt_BR',
           components: selectedTemplate.components || [],
         },
         campaign_name: campaignName || file?.name?.replace('.csv', '') || '',
         aggression_level: aggression,
         activate_immediately: activateNow,
         dry_run: false,
+        confirm_real_dispatch: true,
       });
       onDispatched();
       setStep('upload'); setFile(null); setDispatchId(''); setTotalLeads(0);

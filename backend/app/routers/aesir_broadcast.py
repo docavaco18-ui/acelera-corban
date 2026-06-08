@@ -554,6 +554,9 @@ async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id))
     if ev:
         ev.set()
     db = get_db()
+    existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    if not existing.data:
+        raise HTTPException(404, "Dispatch não encontrado")
     db.table("aesir_dispatches").update({
         "status": "paused",
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -567,6 +570,9 @@ async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
     if ev:
         ev.set()
     db = get_db()
+    existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    if not existing.data:
+        raise HTTPException(404, "Dispatch não encontrado")
     db.table("aesir_dispatches").update({
         "status": "cancelled",
         "updated_at": datetime.now(timezone.utc).isoformat(),

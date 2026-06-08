@@ -14,7 +14,7 @@ Em tudo que é local/reversível: tomar decisão e executar.
 ## Contexto rápido
 
 - Stack: FastAPI (Python 3.12) + React/Vite + Supabase + Redis
-- Local dev: ports 3002 (front), 8002 (back), 6381 (redis)
+- Local dev: ports 3004 (front), 8003 (back), 6381 (redis)
 - Produção: VPS Hostinger 177.7.58.154, domínio `aceleracorban.com.br` (Caddy + Cloudflare)
 - Detalhes completos: `PROGRESS.md` (gitignored, tem credenciais)
 - Spec do refactor multi-banco em curso: `docs/superpowers/specs/2026-05-02-multibank-refactor-design.md`
@@ -113,7 +113,7 @@ Plurio (`autorizacoesdigitais.*`) exige geolocation. Engine concede São Paulo (
 1. Aplicar `migrations/020_mercantil.sql` no Supabase `gfyharrnkcncpngbvhpj`
 2. Cadastrar credenciais em Configurações (toggle pra Mercantil)
 3. `docker compose up -d`
-4. localhost:3002 → Mercantil → Upload CSV → Iniciar Bot
+4. localhost:3004 → Mercantil → Upload CSV → Iniciar Bot
 5. Modal SMS → digita código → aguarda logs: `bff_bridge IniciarOperacao OK CPF=...`
 
 ### Obsidian

@@ -564,6 +564,7 @@ class ChipcareDispatchIn(BaseModel):
     source_type: str = "XLSX_FILE"
     activate_immediately: bool = False
     dry_run: bool = True  # default true — exige dry_run=false explícito para disparo real
+    confirm_real_dispatch: bool = False  # segunda confirmação obrigatória quando dry_run=false
 
 
 @router.post("/dispatch")
@@ -603,6 +604,9 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
             "template": body.template.template_name,
             "aggression_level": body.aggression_level,
         }
+
+    if not body.confirm_real_dispatch:
+        raise HTTPException(400, "confirm_real_dispatch=true obrigatório para disparo real (dry_run=false)")
 
     client, row = _get_client_and_settings(user_id)
     try:
@@ -705,6 +709,9 @@ async def activate_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_i
 @router.post("/dispatches/{dispatch_id}/cancel")
 async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
+    existing = db.table("chipcare_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    if not existing.data:
+        raise HTTPException(404, "Dispatch não encontrado")
     db.table("chipcare_dispatches").update({
         "status": "cancelled",
         "updated_at": datetime.now(timezone.utc).isoformat(),

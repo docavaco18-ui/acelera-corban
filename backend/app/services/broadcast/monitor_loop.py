@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 
@@ -82,8 +83,9 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     except Exception:
         crm_token = None
 
-    # Reuse client — cache key includes account_id to avoid cross-tenant reuse
-    cache_key = f"{owner_id}:{email}:{account_id}"
+    # Reuse client — cache key includes token fingerprint so cache invalidates on token rotation
+    _tok_fp = hashlib.md5((crm_token or "").encode()).hexdigest()[:8]
+    cache_key = f"{owner_id}:{email}:{account_id}:{_tok_fp}"
     if cache_key not in _vendeai_cache:
         _vendeai_cache[cache_key] = VendeAIClient(email, password, account_id=account_id, crm_token=crm_token)
     vendeai = _vendeai_cache[cache_key]

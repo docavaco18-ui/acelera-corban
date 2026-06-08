@@ -605,11 +605,12 @@ export const chipcareApi = {
   dispatch: (body: {
     dispatch_id: string;
     assignments: { channel_id: number; planned_count: number }[];
-    template: { templateName: string; templateId: string; languageCode?: string; components?: any[] };
+    template: { template_name: string; template_id: string; language_code?: string; components?: any[] };
     campaign_name: string;
     aggression_level?: string;
     activate_immediately?: boolean;
     dry_run?: boolean;
+    confirm_real_dispatch?: boolean;
   }) => chipcareAxios.post<{ dispatch_id: string; campaign_id?: number; status: string; dry_run_result?: any }>("/api/chipcare-broadcast/dispatch", body).then((r) => r.data),
 
   // dispatch control
