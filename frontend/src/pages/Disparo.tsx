@@ -8,8 +8,6 @@ import {
   Section, PulseDot, NumberQualityGrid, AIMonitorPanel, CollapsedChip,
 } from '../components/disparo-shared';
 
-const WS_URL = (import.meta.env.VITE_WS_URL as string) ?? 'ws://localhost:8002/ws';
-
 // ── Credenciais VendeAI ─────────────────────────────────────────────────────
 
 function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
@@ -329,7 +327,7 @@ function AnalyticsStrip({ data }: { data: any[] }) {
 // ── Main page ─────────────────────────────────────────────────────────────
 
 export default function Disparo() {
-  const { snapshot } = useBroadcastWebSocket(WS_URL);
+  const { snapshot } = useBroadcastWebSocket();
   const [numbers, setNumbers] = useState<any[]>([]);
   const [analytics, setAnalytics] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);

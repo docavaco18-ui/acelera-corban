@@ -14,7 +14,7 @@ Em tudo que é local/reversível: tomar decisão e executar.
 ## Contexto rápido
 
 - Stack: FastAPI (Python 3.12) + React/Vite + Supabase + Redis
-- Local dev: ports 3002 (front), 8002 (back), 6381 (redis)
+- Local dev: ports 3004 (front), 8003 (back), 6381 (redis) — CODEX fork; original usa 3002/8002
 - Produção: VPS Hostinger 177.7.58.154, domínio `aceleracorban.com.br` (Caddy + Cloudflare)
 - Detalhes completos: `PROGRESS.md` (gitignored, tem credenciais)
 - Spec do refactor multi-banco em curso: `docs/superpowers/specs/2026-05-02-multibank-refactor-design.md`
@@ -90,9 +90,9 @@ const handleResumeNumber = async (phoneId: string) => {
 
 ### Credenciais portal
 - **URL:** `https://meu.bancomercantil.com.br/login`
-- **Login:** `35275CF.GABRIEL`
-- **Senha:** `zZB|;v8eoe5~J1$[_4/_%`
-- **SMS 2FA:** código 6 dígitos pro celular final **-5744** (pode levar até 5 min)
+- **Login:** ver `PROGRESS.md` (gitignored)
+- **Senha:** ver `PROGRESS.md` (gitignored)
+- **SMS 2FA:** código 6 dígitos pro celular final (ver PROGRESS.md)
 
 ### Arquitetura — BFF Bridge via page.evaluate (decisão 2026-05-13)
 

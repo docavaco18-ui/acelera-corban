@@ -47,7 +47,7 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     # Load credentials
     try:
         creds_resp = db.table("vendeai_settings") \
-            .select("email_enc, password_enc, meta_token_enc") \
+            .select("email_enc, password_enc, meta_token_enc, account_id, crm_token_enc") \
             .eq("owner_id", owner_id) \
             .single() \
             .execute()
@@ -76,10 +76,16 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     if not email or not password:
         return
 
-    # Reuse client so the token is not refreshed every tick
-    cache_key = f"{owner_id}:{email}"
+    account_id = creds.get("account_id")
+    try:
+        crm_token = decrypt(creds.get("crm_token_enc")) if creds.get("crm_token_enc") else None
+    except Exception:
+        crm_token = None
+
+    # Reuse client — cache key includes account_id to avoid cross-tenant reuse
+    cache_key = f"{owner_id}:{email}:{account_id}"
     if cache_key not in _vendeai_cache:
-        _vendeai_cache[cache_key] = VendeAIClient(email, password)
+        _vendeai_cache[cache_key] = VendeAIClient(email, password, account_id=account_id, crm_token=crm_token)
     vendeai = _vendeai_cache[cache_key]
 
     # 1. Poll VendeAI mailings → update sent/failed counts

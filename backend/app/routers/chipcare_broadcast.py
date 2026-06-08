@@ -563,7 +563,7 @@ class ChipcareDispatchIn(BaseModel):
     channel_mode: str = "ANY_CHANNEL"
     source_type: str = "XLSX_FILE"
     activate_immediately: bool = False
-    dry_run: bool = False  # OBRIGATÓRIO false para disparo real
+    dry_run: bool = True  # default true — exige dry_run=false explícito para disparo real
 
 
 @router.post("/dispatch")

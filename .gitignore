@@ -10,6 +10,9 @@ frontend/dist/
 .gstack/
 PROGRESS.md
 .DS_Store
+**/.DS_Store
+# Scripts temporários de debug (nunca versionar — podem ter credenciais)
+tmp_*.py
 # Playwright session state (Mercantil cookies persistidas por user)
 .bot_state/
 backend/.bot_state/

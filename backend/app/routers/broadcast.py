@@ -281,7 +281,9 @@ async def analyze_csv(
     # Strip UTF-8 BOM if present (Excel/Windows add it)
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
         csv_bytes = csv_bytes[3:]
-    total_leads = max(0, csv_bytes.count(b"\n") - 1)  # rough count minus header
+    # Count data lines: splitlines handles no-trailing-newline; skip header + blanks
+    _all_lines = [l for l in csv_bytes.decode("utf-8", errors="replace").splitlines() if l.strip()]
+    total_leads = max(0, len(_all_lines) - 1)
 
     # Extract CSV column headers
     import csv, io

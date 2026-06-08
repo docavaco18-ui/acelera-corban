@@ -7,8 +7,20 @@ import ast
 import pathlib
 
 TENANT_TABLES = {
+    # Higienização
     "v8_leads", "v8_bot_runs", "v8_batches",
     "vctex_leads", "vctex_bot_runs", "vctex_batches",
+    "mercantil_leads", "mercantil_bot_runs", "mercantil_batches",
+    "presenca_leads", "presenca_bot_runs", "presenca_batches",
+    "powerhub_leads", "powerhub_bot_runs", "powerhub_batches",
+    # CRM
+    "crm_propostas", "crm_settings",
+    # Disparo WhatsApp (VendeAI / Aesir / Chipcare)
+    "vendeai_settings",
+    "broadcast_numbers", "broadcast_dispatches", "broadcast_dispatch_assignments",
+    "broadcast_alerts", "broadcast_recipients",
+    "aesir_instances", "aesir_dispatches",
+    "chipcare_channels", "chipcare_dispatches", "chipcare_settings",
 }
 
 ALLOWLIST = {
@@ -17,6 +29,16 @@ ALLOWLIST = {
     "app/routers/admin.py",             # cross-tenant intencional — protegido por require_admin
     "app/routers/chatwoot.py",          # filtra .eq("owner_id") manualmente antes de range/in_
     "app/services/chatwoot_service.py", # filtra .eq("owner_id") manualmente no loop de paginação
+    # Módulos de disparo: todos filtram .eq("owner_id", user_id) manualmente
+    "app/routers/broadcast.py",
+    "app/routers/aesir_broadcast.py",
+    "app/routers/chipcare_broadcast.py",
+    "app/services/broadcast/monitor_loop.py",
+    "app/services/broadcast/intervention.py",
+    "app/routers/command_center.py",
+    # Serviços de banco: filtram owner_id corretamente mas não via scoped()
+    "app/services/mercantil_bot_service.py",
+    "app/services/presenca_scheduler_loop.py",  # cross-tenant intencional — scheduler
 }
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"

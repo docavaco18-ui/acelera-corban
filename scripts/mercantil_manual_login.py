@@ -37,8 +37,8 @@ LOGIN_URL = "https://meu.bancomercantil.com.br/login"
 DASHBOARD_URL = "https://meu.bancomercantil.com.br/dashboard"
 
 USER_ID = os.getenv("MERCANTIL_USER_ID", "bc72f4c3-472d-4f1a-831f-5cda1c539b92")
-PORTAL_LOGIN = os.getenv("MERCANTIL_LOGIN", "35275CF.GABRIEL")
-PORTAL_PASS = os.getenv("MERCANTIL_PASS", "zZB|;v8eoe5~J1$[_4/_%")
+PORTAL_LOGIN = os.environ["MERCANTIL_LOGIN"]
+PORTAL_PASS = os.environ["MERCANTIL_PASS"]
 
 STATE_FILE = STATE_DIR / f"{USER_ID}.json"
 MAX_WAIT_SECONDS = 15 * 60  # 15 min
