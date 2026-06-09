@@ -350,7 +350,7 @@ async def analyze_csv(
         async with aioredis.from_url(settings.redis_url, socket_connect_timeout=5) as r:
             await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
     except Exception as redis_err:
-        db.table("broadcast_dispatches").delete().eq("id", dispatch_id).execute()
+        db.table("broadcast_dispatches").delete().eq("id", dispatch_id).eq("owner_id", user_id).execute()
         raise HTTPException(503, f"Serviço de cache indisponível. Tente novamente em instantes. ({type(redis_err).__name__})")
 
     return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split, "csv_columns": csv_columns}
@@ -421,19 +421,25 @@ async def confirm_dispatch(
         chunk = [header] + rows[start: start + count]
         return "\n".join(chunk).encode("utf-8")
 
+    # ── Pre-validate all assignments before touching dispatch status ───────────
+    # planned<=0 check FIRST: an empty assignment with no inbox/template should be skipped, not rejected
+    for _v in body.assignments:
+        _p = int(_v.get("planned_count") or 0)
+        if _p <= 0:
+            continue
+        if not _v.get("inbox_id") or not _v.get("template_id"):
+            raise HTTPException(400, f"inbox_id e template_id obrigatórios para {_v.get('phone_id', '')}")
+
     dispatch_errors: list[str] = []
     mailing_ids = []
     row_offset = 0
-    # Prevent double-submit: mark dispatching immediately so any retry is blocked
-    db.table("broadcast_dispatches").update({"status": "dispatching"}).eq("id", body.dispatch_id).execute()
+    # Prevent double-submit: mark dispatching only after pre-validation passes
+    db.table("broadcast_dispatches").update({"status": "dispatching"}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
     for asn in body.assignments:
         phone_id = asn["phone_id"]
-        planned = asn.get("planned_count", 0)
+        planned = int(asn.get("planned_count") or 0)
         inbox_id = asn.get("inbox_id", "")
         template_id = asn.get("template_id", "")
-
-        if not inbox_id or not template_id:
-            raise HTTPException(400, f"inbox_id e template_id obrigatórios para {phone_id}")
 
         # Each number only receives its own slice of the CSV
         if planned <= 0:
@@ -458,6 +464,20 @@ async def confirm_dispatch(
             )
         except Exception as exc:
             dispatch_errors.append(f"{phone_id}: {exc}")
+            # Persist error assignment so monitor shows the affected leads
+            try:
+                db.table("broadcast_dispatch_assignments").insert({
+                    "dispatch_id": body.dispatch_id,
+                    "owner_id": user_id,
+                    "phone_id": phone_id,
+                    "planned_count": planned,
+                    "status": "error",
+                    "template_id": asn.get("template_id", ""),
+                    "inbox_id": asn.get("inbox_id", ""),
+                    "display_phone": asn.get("display_phone", ""),
+                }).execute()
+            except Exception:
+                pass
             continue
 
         mailing_id = (
@@ -659,15 +679,17 @@ async def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_use
 
     # Per-recipient status counts (fatia 1: status="queued" inserted; transitions pending).
     counts: dict[str, int] = {}
+    _RECIPIENTS_LIMIT = 50000
     rec_rows = db.table("broadcast_recipients") \
         .select("status") \
         .eq("owner_id", user_id) \
         .eq("dispatch_id", dispatch_id) \
-        .limit(50000) \
+        .limit(_RECIPIENTS_LIMIT) \
         .execute()
     for r in (rec_rows.data or []):
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     total_recipients = sum(counts.values())
+    recipients_truncated = len(rec_rows.data or []) >= _RECIPIENTS_LIMIT
 
     delivered = (counts.get("delivered", 0) + counts.get("read", 0)
                  + counts.get("replied", 0) + counts.get("converted", 0))
@@ -692,6 +714,7 @@ async def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_use
         "has_read_data": read > 0,
         "has_reply_data": replied > 0,
         "has_conversion_data": converted > 0,
+        "recipients_truncated": recipients_truncated,
     }
 
 
@@ -751,17 +774,23 @@ async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id))
         .eq("owner_id", user_id) \
         .eq("status", "running") \
         .execute()
-    for asn in (asns.data or []):
-        if asn.get("vendeai_mailing_id"):
-            try:
-                await vendeai.pause(asn["vendeai_mailing_id"])
-            except Exception:
-                pass
+    provider_errors: list[str] = []
+    mailings_with_id = [a for a in (asns.data or []) if a.get("vendeai_mailing_id")]
+    for asn in mailings_with_id:
+        try:
+            await vendeai.pause(asn["vendeai_mailing_id"])
+        except Exception as e:
+            provider_errors.append(f"mailing {asn['vendeai_mailing_id']}: {e}")
+    if provider_errors and len(provider_errors) == len(mailings_with_id):
+        raise HTTPException(502, f"Pause falhou em todos os mailings: {'; '.join(provider_errors[:3])}")
     db.table("broadcast_dispatch_assignments").update({"status": "paused"}) \
         .eq("dispatch_id", dispatch_id).eq("owner_id", user_id).execute()
     db.table("broadcast_dispatches").update({"status": "paused"}) \
         .eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    result: dict = {"ok": True}
+    if provider_errors:
+        result["provider_warnings"] = provider_errors
+    return result
 
 
 @router.post("/dispatches/{dispatch_id}/resume")
@@ -774,17 +803,23 @@ async def resume_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
         .eq("owner_id", user_id) \
         .eq("status", "paused") \
         .execute()
-    for asn in (asns.data or []):
-        if asn.get("vendeai_mailing_id"):
-            try:
-                await vendeai.resume(asn["vendeai_mailing_id"])
-            except Exception:
-                pass
+    provider_errors: list[str] = []
+    mailings_with_id = [a for a in (asns.data or []) if a.get("vendeai_mailing_id")]
+    for asn in mailings_with_id:
+        try:
+            await vendeai.resume(asn["vendeai_mailing_id"])
+        except Exception as e:
+            provider_errors.append(f"mailing {asn['vendeai_mailing_id']}: {e}")
+    if provider_errors and len(provider_errors) == len(mailings_with_id):
+        raise HTTPException(502, f"Resume falhou em todos os mailings: {'; '.join(provider_errors[:3])}")
     db.table("broadcast_dispatch_assignments").update({"status": "running"}) \
         .eq("dispatch_id", dispatch_id).eq("owner_id", user_id).execute()
     db.table("broadcast_dispatches").update({"status": "running"}) \
         .eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    result: dict = {"ok": True}
+    if provider_errors:
+        result["provider_warnings"] = provider_errors
+    return result
 
 
 @router.post("/dispatches/{dispatch_id}/revoke")
@@ -796,19 +831,25 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
         .eq("dispatch_id", dispatch_id) \
         .eq("owner_id", user_id) \
         .execute()
-    for asn in (asns.data or []):
-        if asn.get("vendeai_mailing_id"):
-            try:
-                await vendeai.cancel(asn["vendeai_mailing_id"])
-            except Exception:
-                pass
+    provider_errors: list[str] = []
+    mailings_with_id = [a for a in (asns.data or []) if a.get("vendeai_mailing_id")]
+    for asn in mailings_with_id:
+        try:
+            await vendeai.cancel(asn["vendeai_mailing_id"])
+        except Exception as e:
+            provider_errors.append(f"mailing {asn['vendeai_mailing_id']}: {e}")
+    if provider_errors and len(provider_errors) == len(mailings_with_id):
+        raise HTTPException(502, f"Revoke falhou em todos os mailings: {'; '.join(provider_errors[:3])}")
     db.table("broadcast_dispatch_assignments").update({"status": "failed"}) \
         .eq("dispatch_id", dispatch_id).eq("owner_id", user_id).execute()
     db.table("broadcast_dispatches").update({
         "status": "revoked",
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    result: dict = {"ok": True}
+    if provider_errors:
+        result["provider_warnings"] = provider_errors
+    return result
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────

@@ -401,7 +401,7 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
         async with aioredis.from_url(settings.redis_url, socket_connect_timeout=5) as r:
             await r.setex(f"aesir:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
     except Exception as redis_err:
-        db.table("aesir_dispatches").delete().eq("id", dispatch_id).execute()
+        db.table("aesir_dispatches").delete().eq("id", dispatch_id).eq("owner_id", user_id).execute()
         raise HTTPException(503, f"Serviço de cache indisponível. Tente novamente em instantes. ({type(redis_err).__name__})")
 
     return {
@@ -481,6 +481,8 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
     async def _run():
         row_offset = 0
+        _success_count = 0
+        _error_count = 0
         try:
             for asn_model in body.assignments:
                 if stop_event.is_set():
@@ -506,14 +508,23 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                         "errors": result["errors"],
                         "status": "done" if not stop_event.is_set() else "paused",
                     }, db)
+                    _success_count += 1
                 except asyncio.CancelledError:
                     _update_assignment(body.dispatch_id, iid, {"status": "paused"}, db)
                     raise
                 except Exception as exc:
                     log.exception("aesir dispatch error instance=%s dispatch=%s", iid, body.dispatch_id)
                     _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
+                    _error_count += 1
 
-            final = "done" if not stop_event.is_set() else "paused"
+            if stop_event.is_set():
+                final = "paused"
+            elif _error_count == 0:
+                final = "done"
+            elif _success_count == 0:
+                final = "error"
+            else:
+                final = "partial_error"
         except asyncio.CancelledError:
             final = "paused"
         except Exception:

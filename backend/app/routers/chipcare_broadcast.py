@@ -530,7 +530,7 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
         async with aioredis.from_url(settings.redis_url, socket_connect_timeout=5) as r:
             await r.setex(f"chipcare:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
     except Exception as redis_err:
-        db.table("chipcare_dispatches").delete().eq("id", dispatch_id).execute()
+        db.table("chipcare_dispatches").delete().eq("id", dispatch_id).eq("owner_id", user_id).execute()
         raise HTTPException(503, f"Serviço de cache indisponível. Tente novamente em instantes. ({type(redis_err).__name__})")
 
     return {
@@ -679,11 +679,18 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
         "updated_at": now,
     }).eq("id", body.dispatch_id).execute()
 
+    assigned_count = sum(a.planned_count for a in body.assignments if a.planned_count > 0)
+    unassigned_count = max(0, (dispatch.data[0].get("total_leads") or 0) - assigned_count)
     return {
         "dispatch_id": body.dispatch_id,
         "chipcare_campaign_id": chipcare_campaign_id,
         "status": "running" if activated else "paused",
         "activated": activated,
+        "assigned_count": assigned_count,
+        "unassigned_count": unassigned_count,
+        # Chipcare controls internal routing of the XLSX across channel_ids.
+        # planned_count per assignment is advisory only — Chipcare decides actual distribution.
+        "note": "planned_count is advisory; Chipcare distributes XLSX internally across channels" if body.source_type == "XLSX_FILE" else None,
     }
 
 

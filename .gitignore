@@ -19,3 +19,8 @@ backend/.bot_state/
 # Bases de dados com PII — nunca versionar
 *.csv
 *.xlsx
+*.rdb
+dump.rdb
+storage_state*.json
+*.sqlite
+*.db

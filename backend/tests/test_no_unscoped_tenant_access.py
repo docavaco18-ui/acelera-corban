@@ -39,6 +39,7 @@ ALLOWLIST = {
     # Serviços de banco: filtram owner_id corretamente mas não via scoped()
     "app/services/mercantil_bot_service.py",
     "app/services/presenca_scheduler_loop.py",  # cross-tenant intencional — scheduler
+    "app/main.py",  # startup sweep: cross-tenant intencional — recupera dispatches órfãos após restart
 }
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"

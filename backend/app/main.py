@@ -43,10 +43,16 @@ async def _sweep_stale_chatwoot_runs():
     try:
         from .database import db as get_db
         from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
         get_db().table("chatwoot_sync_runs").update({
             "status": "failed",
-            "finished_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": now_iso,
             "error": "interrupted by restart",
+        }).eq("status", "running").execute()
+        # Aesir: in-memory tasks vanish on restart — mark orphaned running dispatches
+        get_db().table("aesir_dispatches").update({
+            "status": "error",
+            "updated_at": now_iso,
         }).eq("status", "running").execute()
     except Exception:
         pass
@@ -61,7 +67,7 @@ async def _sweep_stale_chatwoot_runs():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins.split(","),
+    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -92,7 +98,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     import logging
     logging.getLogger("acelera").error("Unhandled exception: %s", traceback.format_exc())
     origin = request.headers.get("origin", "")
-    allowed = settings.cors_origins.split(",")
+    allowed = [o.strip() for o in settings.cors_origins.split(",")]
     headers = {"Access-Control-Allow-Credentials": "true"}
     if origin in allowed:
         headers["Access-Control-Allow-Origin"] = origin
