@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+import traceback
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from .config import settings
 from .logging_config import setup_logging
 from .routers import leads, bot, stats, webhook, ws, admin, batches, crm, chatwoot, command_center
@@ -84,6 +86,22 @@ app.include_router(powerhub_router.router)
 app.include_router(aesir_broadcast_router.router)
 app.include_router(chipcare_broadcast_router.router)
 app.include_router(command_center.router)
+
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    import logging
+    logging.getLogger("acelera").error("Unhandled exception: %s", traceback.format_exc())
+    origin = request.headers.get("origin", "")
+    allowed = settings.cors_origins.split(",")
+    headers = {"Access-Control-Allow-Credentials": "true"}
+    if origin in allowed:
+        headers["Access-Control-Allow-Origin"] = origin
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Erro interno do servidor. Tente novamente."},
+        headers=headers,
+    )
+
 
 @app.get("/health")
 @app.get("/api/health")
