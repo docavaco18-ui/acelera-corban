@@ -526,8 +526,12 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).execute()
 
-    async with aioredis.from_url(settings.redis_url) as r:
-        await r.setex(f"chipcare:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
+    try:
+        async with aioredis.from_url(settings.redis_url, socket_connect_timeout=5) as r:
+            await r.setex(f"chipcare:csv:{user_id}:{dispatch_id}", 3600, csv_bytes)
+    except Exception as redis_err:
+        db.table("chipcare_dispatches").delete().eq("id", dispatch_id).execute()
+        raise HTTPException(503, f"Serviço de cache indisponível. Tente novamente em instantes. ({type(redis_err).__name__})")
 
     return {
         "dispatch_id": dispatch_id,

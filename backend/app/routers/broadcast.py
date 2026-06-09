@@ -342,9 +342,13 @@ async def analyze_csv(
         "status": "pending_confirm",
     }).execute()
 
-    # Store csv bytes temporarily in Redis
-    async with aioredis.from_url(settings.redis_url) as r:
-        await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
+    # Store csv bytes temporarily in Redis — rollback DB record if Redis is unavailable
+    try:
+        async with aioredis.from_url(settings.redis_url, socket_connect_timeout=5) as r:
+            await r.setex(f"broadcast:csv:{dispatch_id}", 3600, csv_bytes)
+    except Exception as redis_err:
+        db.table("broadcast_dispatches").delete().eq("id", dispatch_id).execute()
+        raise HTTPException(503, f"Serviço de cache indisponível. Tente novamente em instantes. ({type(redis_err).__name__})")
 
     return {"dispatch_id": dispatch_id, "total_leads": total_leads, "split": split, "csv_columns": csv_columns}
 
@@ -812,13 +816,11 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
         raise HTTPException(400, "Nenhum WABA ID configurado")
 
     meta = MetaClient(meta_token)
-    # Return map: waba_id → list of templates (for per-number filtering in frontend)
-    result: dict[str, list] = {}
 
-    for wid in waba_ids:
+    async def _fetch_waba(wid: str) -> tuple[str, list]:
         try:
             tpls = await meta.get_templates(wid)
-            result[wid] = sorted([
+            return wid, sorted([
                 {
                     "id": t.get("id", ""),
                     "name": t.get("name", ""),
@@ -830,9 +832,10 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
                 for t in tpls
             ], key=lambda t: t["name"])
         except Exception:
-            result[wid] = []
+            return wid, []
 
-    return result
+    pairs = await asyncio.gather(*[_fetch_waba(wid) for wid in waba_ids])
+    return dict(pairs)
 
 
 # ── Analytics + Alerts ────────────────────────────────────────────────────────
