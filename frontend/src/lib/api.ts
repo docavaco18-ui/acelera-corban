@@ -537,7 +537,8 @@ export const aesirApi = {
     phone_column: string;
     campaign_name: string;
     cooldown_seconds: number;
-  }) => aesirAxios.post<{ dispatch_id: string; status: string }>("/api/aesir-broadcast/dispatch", body).then((r) => r.data),
+    allow_partial?: boolean;
+  }) => aesirAxios.post<{ dispatch_id: string; status: string; assigned_count?: number; unassigned_count?: number }>("/api/aesir-broadcast/dispatch", body).then((r) => r.data),
 
   // dispatch control
   pauseDispatch: (id: string) =>
@@ -607,7 +608,17 @@ export const chipcareApi = {
     activate_immediately?: boolean;
     dry_run?: boolean;
     confirm_real_dispatch?: boolean;
-  }) => chipcareAxios.post<{ dispatch_id: string; campaign_id?: number; status: string; dry_run_result?: any }>("/api/chipcare-broadcast/dispatch", body).then((r) => r.data),
+    allow_partial?: boolean;
+  }) => chipcareAxios.post<{
+    dispatch_id: string;
+    chipcare_campaign_id?: number;
+    chipcare_campaign_ids?: number[];
+    status: string;
+    assigned_count?: number;
+    unassigned_count?: number;
+    campaigns?: any[];
+    activated_count?: number;
+  }>("/api/chipcare-broadcast/dispatch", body).then((r) => r.data),
 
   // dispatch control
   activateDispatch: (id: string) =>
@@ -645,7 +656,17 @@ export const broadcastApi = {
     form.append("file", file);
     return broadcastAxios.post("/api/broadcast/analyze", form);
   },
-  confirmDispatch: (data: { dispatch_id: string; assignments: any[] }) =>
+  confirmDispatch: (data: {
+    dispatch_id: string;
+    assignments: any[];
+    allow_partial?: boolean;
+    phone_column?: string;
+    campaign_name?: string;
+    cooldown_seconds?: number;
+    skip_weekends?: boolean;
+    skip_night?: boolean;
+    dedup_window_hours?: number;
+  }) =>
     broadcastAxios.post("/api/broadcast/dispatch", data),
   listDispatches: () => broadcastAxios.get("/api/broadcast/dispatches"),
   getDispatch: (id: string) => broadcastAxios.get(`/api/broadcast/dispatches/${id}`),

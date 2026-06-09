@@ -345,6 +345,7 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
 
   const [dryRunResult, setDryRunResult] = useState<any | null>(null);
   const [sending, setSending] = useState(false);
+  const [allowPartial, setAllowPartial] = useState(false);
   const [err, setErr] = useState('');
 
   const analyze = async () => {
@@ -393,6 +394,7 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         aggression_level: aggression,
         activate_immediately: false,
         dry_run: true,
+        allow_partial: allowPartial,
       });
       if (!res) { setErr('Dry-run retornou resposta vazia'); return; }
       setDryRunResult(res);
@@ -420,6 +422,7 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         activate_immediately: activateNow,
         dry_run: false,
         confirm_real_dispatch: true,
+        allow_partial: allowPartial,
       });
       onDispatched();
       setStep('upload'); setFile(null); setDispatchId(''); setTotalLeads(0);
@@ -556,12 +559,42 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
               </p>
             </div>
           )}
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button style={BTN('#334155')} onClick={() => setStep('assign')}>← Voltar</button>
-            <button style={BTN('#00ccff', !selectedTemplate || sending)} onClick={dryRun} disabled={!selectedTemplate || sending}>
-              {sending ? 'Validando...' : 'Validar e Confirmar →'}
-            </button>
-          </div>
+          {(() => {
+            const assignedSum = assignments.reduce((s, a) => s + (Number(a.planned_count) || 0), 0);
+            const diff = totalLeads - assignedSum;
+            const isExact = diff === 0;
+            const overflow = diff < 0;
+            const canConfirm = !!selectedTemplate && !sending && (isExact || (diff > 0 && allowPartial));
+            return (
+              <>
+                {!isExact && (
+                  <div style={{
+                    background: overflow ? 'rgba(239,68,68,.08)' : 'rgba(234,179,8,.08)',
+                    border: `1px solid ${overflow ? 'rgba(239,68,68,.3)' : 'rgba(234,179,8,.3)'}`,
+                    borderRadius: 10, padding: 12,
+                  }}>
+                    <div style={{ color: overflow ? '#ef4444' : '#eab308', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                      {overflow
+                        ? `❌ EXCESSO — soma ${assignedSum.toLocaleString('pt-BR')} > total ${totalLeads.toLocaleString('pt-BR')}.`
+                        : `⚠ PARCIAL — ${assignedSum.toLocaleString('pt-BR')} de ${totalLeads.toLocaleString('pt-BR')} atribuídos (${diff.toLocaleString('pt-BR')} sobrando)`}
+                    </div>
+                    {diff > 0 && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#e2e8f0', fontSize: 11 }}>
+                        <input type="checkbox" checked={allowPartial} onChange={e => setAllowPartial(e.target.checked)} style={{ accentColor: '#eab308' }} />
+                        Eu entendo: disparar {assignedSum.toLocaleString('pt-BR')} leads, descartar {diff.toLocaleString('pt-BR')}.
+                      </label>
+                    )}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button style={BTN('#334155')} onClick={() => setStep('assign')}>← Voltar</button>
+                  <button style={BTN('#00ccff', !canConfirm)} onClick={dryRun} disabled={!canConfirm}>
+                    {sending ? 'Validando...' : 'Validar e Confirmar →'}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 

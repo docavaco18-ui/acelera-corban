@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
+from app.services.broadcast.assignment_validator import validate_chipcare_assignments
 from app.services.broadcast.chipcare_client import (
     ChipcareClient,
     ChipcareHashes,
@@ -569,6 +570,8 @@ class ChipcareDispatchIn(BaseModel):
     activate_immediately: bool = False
     dry_run: bool = True  # default true — exige dry_run=false explícito para disparo real
     confirm_real_dispatch: bool = False  # segunda confirmação obrigatória quando dry_run=false
+    # Bloqueia disparo se sum(planned_count) != total_leads (default false)
+    allow_partial: bool = False
 
 
 @router.post("/dispatch")
@@ -582,6 +585,12 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
 
+    # ── Server-side validation (no tampering, no partial by default) ───────────
+    total_leads_for_dispatch = int(dispatch.data[0].get("total_leads") or 0)
+    assigned_count, unassigned_count = validate_chipcare_assignments(
+        db, user_id, body.assignments, total_leads_for_dispatch, allow_partial=body.allow_partial
+    )
+
     async with aioredis.from_url(settings.redis_url) as r:
         csv_bytes = await r.get(f"chipcare:csv:{user_id}:{body.dispatch_id}")
     if not csv_bytes:
@@ -589,7 +598,7 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     if csv_bytes.startswith(b"\xef\xbb\xbf"):
         csv_bytes = csv_bytes[3:]
 
-    channel_ids = [a.channel_id for a in body.assignments]
+    channel_ids_all = [a.channel_id for a in body.assignments if a.planned_count > 0]
     template_payload = build_template_payload(
         template_name=body.template.template_name,
         template_id=body.template.template_id,
@@ -603,10 +612,13 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
         return {
             "dry_run": True,
             "campaign_name": campaign_name,
-            "channel_ids": channel_ids,
+            "channel_ids": channel_ids_all,
             "total_leads": dispatch.data[0]["total_leads"],
             "template": body.template.template_name,
             "aggression_level": body.aggression_level,
+            "assigned_count": assigned_count,
+            "unassigned_count": unassigned_count,
+            "campaigns_to_create": len(channel_ids_all),
         }
 
     if not body.confirm_real_dispatch:
@@ -620,77 +632,122 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
         _invalidate_jwt(user_id)
         raise HTTPException(502, f"Login Chipcare falhou: {e}")
 
-    # Convert CSV to XLSX for upload
-    xlsx_bytes = None
     if body.source_type == "XLSX_FILE":
         try:
             import openpyxl  # noqa
         except ImportError:
             raise HTTPException(500, "openpyxl não instalado no servidor — instale: pip install openpyxl")
-        xlsx_bytes = csv_to_xlsx_bytes(csv_bytes)
 
-    try:
-        result = await client.create_campaign(
-            jwt=jwt,
-            name=campaign_name,
-            channel_ids=channel_ids,
-            template=template_payload,
-            source_type=body.source_type,
-            chat_status=body.chat_status,
-            channel_mode=body.channel_mode,
-            min_interval_ms=body.min_interval_ms,
-            max_interval_ms=body.max_interval_ms,
-            aggression_level=body.aggression_level,
-            xlsx_bytes=xlsx_bytes,
-            dry_run=False,
-        )
-    except Exception as e:
-        log.exception("chipcare create_campaign error: %s", e)
-        raise HTTPException(502, f"Chipcare create_campaign falhou: {e}")
+    # Slice CSV per assignment — each channel gets its own XLSX with only its slice
+    csv_text = csv_bytes.decode("utf-8", errors="replace")
+    csv_lines = csv_text.splitlines()
+    header = csv_lines[0] if csv_lines else ""
+    data_rows = csv_lines[1:] if len(csv_lines) > 1 else []
 
-    chipcare_campaign_id = result.get("campaign_id")
-    if not chipcare_campaign_id:
+    per_assignment: list[dict] = []
+    row_offset = 0
+    for asn in body.assignments:
+        planned = asn.planned_count
+        entry: dict = {
+            "channel_id": asn.channel_id,
+            "planned_count": planned,
+            "chipcare_campaign_id": None,
+            "status": "skipped" if planned <= 0 else "pending",
+        }
+        if planned <= 0:
+            per_assignment.append(entry)
+            continue
+
+        slice_rows = data_rows[row_offset: row_offset + planned]
+        row_offset += planned
+
+        slice_xlsx = None
+        if body.source_type == "XLSX_FILE":
+            slice_csv = ("\n".join([header] + slice_rows)).encode("utf-8")
+            slice_xlsx = csv_to_xlsx_bytes(slice_csv)
+
+        per_channel_name = f"{campaign_name}_ch{asn.channel_id}" if len(channel_ids_all) > 1 else campaign_name
+        try:
+            result = await client.create_campaign(
+                jwt=jwt,
+                name=per_channel_name,
+                channel_ids=[asn.channel_id],
+                template=template_payload,
+                source_type=body.source_type,
+                chat_status=body.chat_status,
+                channel_mode=body.channel_mode,
+                min_interval_ms=body.min_interval_ms,
+                max_interval_ms=body.max_interval_ms,
+                aggression_level=body.aggression_level,
+                xlsx_bytes=slice_xlsx,
+                dry_run=False,
+            )
+            entry["chipcare_campaign_id"] = result.get("campaign_id")
+            entry["status"] = "created" if result.get("campaign_id") else "error"
+            if not result.get("campaign_id"):
+                entry["error"] = "Chipcare não retornou campaign_id"
+        except Exception as e:
+            log.exception("chipcare create_campaign per-channel error channel=%s: %s", asn.channel_id, e)
+            entry["status"] = "error"
+            entry["error"] = str(e)[:200]
+        per_assignment.append(entry)
+
+    created_ids = [e["chipcare_campaign_id"] for e in per_assignment if e.get("chipcare_campaign_id")]
+    if not created_ids:
         db.table("chipcare_dispatches").update({
             "status": "error",
+            "assignments_json": per_assignment,
             "updated_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", body.dispatch_id).execute()
-        raise HTTPException(502, "Chipcare não retornou campaign_id. Verifique os logs do servidor.")
+        }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+        raise HTTPException(502, f"Nenhuma campanha Chipcare criada. Detalhes em assignments_json.")
 
-    # Activate immediately if requested
-    activated = False
-    if body.activate_immediately and chipcare_campaign_id:
-        try:
-            await client.activate_campaign(jwt, chipcare_campaign_id)
-            activated = True
-        except Exception as e:
-            log.warning("chipcare activate_campaign error (campaign created but not activated): %s", e)
+    # Activate created campaigns if requested
+    activated_count = 0
+    if body.activate_immediately:
+        for entry in per_assignment:
+            cid = entry.get("chipcare_campaign_id")
+            if not cid:
+                continue
+            try:
+                await client.activate_campaign(jwt, cid)
+                entry["status"] = "activated"
+                activated_count += 1
+            except Exception as e:
+                log.warning("chipcare activate per-channel error campaign=%s: %s", cid, e)
+                entry["activation_error"] = str(e)[:200]
+
+    # Determine final status
+    target_attempts = len([a for a in body.assignments if a.planned_count > 0])
+    if len(created_ids) < target_attempts:
+        final_status = "partial_error"
+    elif activated_count > 0:
+        final_status = "running"
+    else:
+        final_status = "paused"
 
     now = datetime.now(timezone.utc).isoformat()
     db.table("chipcare_dispatches").update({
-        "status": "running" if activated else "paused",
-        "chipcare_campaign_id": chipcare_campaign_id,
+        "status": final_status,
+        "chipcare_campaign_id": created_ids[0] if created_ids else None,  # back-compat: first campaign
         "campaign_name": campaign_name,
-        "channel_ids": channel_ids,
+        "channel_ids": channel_ids_all,
         "template_name": body.template.template_name,
         "template_id": body.template.template_id,
         "aggression_level": body.aggression_level,
         "source_type": body.source_type,
-        "assignments_json": [a.dict() for a in body.assignments],
+        "assignments_json": per_assignment,
         "updated_at": now,
-    }).eq("id", body.dispatch_id).execute()
+    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
 
-    assigned_count = sum(a.planned_count for a in body.assignments if a.planned_count > 0)
-    unassigned_count = max(0, (dispatch.data[0].get("total_leads") or 0) - assigned_count)
     return {
         "dispatch_id": body.dispatch_id,
-        "chipcare_campaign_id": chipcare_campaign_id,
-        "status": "running" if activated else "paused",
-        "activated": activated,
+        "chipcare_campaign_id": created_ids[0] if created_ids else None,
+        "chipcare_campaign_ids": created_ids,
+        "status": final_status,
+        "activated_count": activated_count,
         "assigned_count": assigned_count,
         "unassigned_count": unassigned_count,
-        # Chipcare controls internal routing of the XLSX across channel_ids.
-        # planned_count per assignment is advisory only — Chipcare decides actual distribution.
-        "note": "planned_count is advisory; Chipcare distributes XLSX internally across channels" if body.source_type == "XLSX_FILE" else None,
+        "campaigns": per_assignment,
     }
 
 
@@ -719,7 +776,7 @@ async def activate_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_i
     db.table("chipcare_dispatches").update({
         "status": "running",
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", dispatch_id).execute()
+    }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
     return {"ok": True, "chipcare_campaign_id": chipcare_id}
 
 

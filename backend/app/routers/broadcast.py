@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.credentials.crypto import decrypt, encrypt, safe_decrypt
 from app.database import get_db
+from app.services.broadcast.assignment_validator import validate_vendeai_assignments
 from app.services.broadcast.claude_advisor import advise_split
 from app.services.broadcast.meta_client import MetaClient
 from app.services.broadcast.vendeai_client import VendeAIClient
@@ -367,6 +368,9 @@ class DispatchIn(BaseModel):
     skip_weekends: bool = True
     skip_night: bool = True
     dedup_window_hours: int = 24
+    # Bloqueia disparo se sum(planned_count) != total_leads. Default false (seguro).
+    # UI pode mandar true se operador conscientemente aceita disparo parcial.
+    allow_partial: bool = False
 
 
 @router.post("/dispatch")
@@ -421,14 +425,11 @@ async def confirm_dispatch(
         chunk = [header] + rows[start: start + count]
         return "\n".join(chunk).encode("utf-8")
 
-    # ── Pre-validate all assignments before touching dispatch status ───────────
-    # planned<=0 check FIRST: an empty assignment with no inbox/template should be skipped, not rejected
-    for _v in body.assignments:
-        _p = int(_v.get("planned_count") or 0)
-        if _p <= 0:
-            continue
-        if not _v.get("inbox_id") or not _v.get("template_id"):
-            raise HTTPException(400, f"inbox_id e template_id obrigatórios para {_v.get('phone_id', '')}")
+    # ── Server-side validation against DB (no tenant tampering, no partial by default) ──
+    total_leads_for_dispatch = int(dispatch.data.get("total_leads") or 0)
+    assigned_count, unassigned_count = validate_vendeai_assignments(
+        db, user_id, body.assignments, total_leads_for_dispatch, allow_partial=body.allow_partial
+    )
 
     dispatch_errors: list[str] = []
     mailing_ids = []
@@ -564,7 +565,12 @@ async def confirm_dispatch(
         except Exception as rec_exc:
             log.warning("[broadcast] recipients insertion failed phone_id=%s: %s", phone_id, rec_exc)
 
-    final_status = "running" if mailing_ids else "error"
+    if mailing_ids and dispatch_errors:
+        final_status = "partial_error"
+    elif mailing_ids:
+        final_status = "running"
+    else:
+        final_status = "error"
     db.table("broadcast_dispatches").update({
         "status": final_status,
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -574,12 +580,19 @@ async def confirm_dispatch(
         "skip_weekends": body.skip_weekends,
         "skip_night": body.skip_night,
         "dedup_window_hours": body.dedup_window_hours,
-    }).eq("id", body.dispatch_id).execute()
+    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
 
     if dispatch_errors and not mailing_ids:
         raise HTTPException(502, f"Nenhum disparo iniciado. Erros: {'; '.join(dispatch_errors)}")
 
-    return {"ok": True, "mailing_ids": mailing_ids, "errors": dispatch_errors}
+    return {
+        "ok": True,
+        "mailing_ids": mailing_ids,
+        "errors": dispatch_errors,
+        "assigned_count": assigned_count,
+        "unassigned_count": unassigned_count,
+        "partial": bool(dispatch_errors and mailing_ids),
+    }
 
 
 # ── Snapshot (bootstrap for monitoring panel) ─────────────────────────────────

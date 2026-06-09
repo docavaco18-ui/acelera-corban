@@ -17,6 +17,7 @@ from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.aesir_client import AesirClient
+from app.services.broadcast.assignment_validator import validate_aesir_assignments
 from app.services.broadcast.meta_client import MetaClient
 
 router = APIRouter(prefix="/api/aesir-broadcast", tags=["aesir-broadcast"])
@@ -426,6 +427,8 @@ class DispatchIn(BaseModel):
     phone_column: str = "telefone"
     campaign_name: str = ""
     cooldown_seconds: int = 5
+    # Bloqueia disparo se sum(planned_count) != total_leads (default false)
+    allow_partial: bool = False
 
 
 @router.post("/dispatch")
@@ -437,6 +440,12 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
         raise HTTPException(404, "Dispatch não encontrado")
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
+
+    # ── Server-side validation (no tampering, no partial by default) ───────────
+    total_leads_for_dispatch = int(dispatch.data[0].get("total_leads") or 0)
+    assigned_count, unassigned_count = validate_aesir_assignments(
+        db, user_id, body.assignments, total_leads_for_dispatch, allow_partial=body.allow_partial
+    )
 
     async with aioredis.from_url(settings.redis_url) as r:
         csv_bytes = await r.get(f"aesir:csv:{user_id}:{body.dispatch_id}")
@@ -472,7 +481,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
         "cooldown_seconds": body.cooldown_seconds,
         "assignments_json": assignments_json,
         "updated_at": now,
-    }).eq("id", body.dispatch_id).execute()
+    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
 
     stop_event = asyncio.Event()
     _stop_events[body.dispatch_id] = stop_event
@@ -492,7 +501,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                 slice_bytes = _slice_csv(data_rows, row_offset, planned)
                 row_offset += planned
 
-                _update_assignment(body.dispatch_id, iid, {"status": "running"}, db)
+                _update_assignment(body.dispatch_id, iid, {"status": "running"}, db, user_id)
 
                 try:
                     result = await client.dispatch_csv(
@@ -507,14 +516,14 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                         "sent": result["sent"],
                         "errors": result["errors"],
                         "status": "done" if not stop_event.is_set() else "paused",
-                    }, db)
+                    }, db, user_id)
                     _success_count += 1
                 except asyncio.CancelledError:
-                    _update_assignment(body.dispatch_id, iid, {"status": "paused"}, db)
+                    _update_assignment(body.dispatch_id, iid, {"status": "paused"}, db, user_id)
                     raise
                 except Exception as exc:
                     log.exception("aesir dispatch error instance=%s dispatch=%s", iid, body.dispatch_id)
-                    _update_assignment(body.dispatch_id, iid, {"status": "error"}, db)
+                    _update_assignment(body.dispatch_id, iid, {"status": "error"}, db, user_id)
                     _error_count += 1
 
             if stop_event.is_set():
@@ -532,26 +541,37 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
             final = "error"
         finally:
             # Don't overwrite terminal state set by cancel endpoint
-            current = db.table("aesir_dispatches").select("status").eq("id", body.dispatch_id).execute()
+            current = db.table("aesir_dispatches").select("status").eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
             current_status = (current.data[0].get("status") if current.data else None)
             if current_status not in ("cancelled",):
                 db.table("aesir_dispatches").update({
                     "status": final,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", body.dispatch_id).execute()
+                }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
             _stop_events.pop(body.dispatch_id, None)
             _bg_tasks.discard(task)
 
     task = asyncio.create_task(_run())
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
-    return {"dispatch_id": body.dispatch_id, "status": "running"}
+    return {
+        "dispatch_id": body.dispatch_id,
+        "status": "running",
+        "assigned_count": assigned_count,
+        "unassigned_count": unassigned_count,
+    }
 
 
-def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db) -> None:
-    """Update a single assignment's fields inside assignments_json."""
-    resp = db.table("aesir_dispatches").select("assignments_json").eq("id", dispatch_id).execute()
+def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db, owner_id: str | None = None) -> None:
+    """Update a single assignment's fields inside assignments_json.
+
+    `owner_id` é opcional pra back-compat mas DEVE ser passado pra defesa multi-tenant.
+    """
+    sel = db.table("aesir_dispatches").select("assignments_json").eq("id", dispatch_id)
+    if owner_id:
+        sel = sel.eq("owner_id", owner_id)
+    resp = sel.execute()
     if not resp.data:
         return
     assignments = resp.data[0].get("assignments_json") or []
@@ -559,10 +579,13 @@ def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db) -> N
         {**asn, **patch} if asn.get("instance_id") == instance_id else asn
         for asn in assignments
     ]
-    db.table("aesir_dispatches").update({
+    upd = db.table("aesir_dispatches").update({
         "assignments_json": merged,
         "updated_at": datetime.now(timezone.utc).isoformat(),
-    }).eq("id", dispatch_id).execute()
+    }).eq("id", dispatch_id)
+    if owner_id:
+        upd = upd.eq("owner_id", owner_id)
+    upd.execute()
 
 
 # ── Dispatch control ──────────────────────────────────────────────────────────

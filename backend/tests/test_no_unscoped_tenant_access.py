@@ -40,6 +40,7 @@ ALLOWLIST = {
     "app/services/mercantil_bot_service.py",
     "app/services/presenca_scheduler_loop.py",  # cross-tenant intencional — scheduler
     "app/main.py",  # startup sweep: cross-tenant intencional — recupera dispatches órfãos após restart
+    "app/services/broadcast/assignment_validator.py",  # filtra .eq("owner_id", user_id) em toda query — validador server-side
 }
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "app"

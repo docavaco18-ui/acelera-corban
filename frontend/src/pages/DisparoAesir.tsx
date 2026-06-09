@@ -474,6 +474,7 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
   const [previewRow, setPreviewRow] = useState<Record<string, string>>({});
 
   const [sending, setSending] = useState(false);
+  const [allowPartial, setAllowPartial] = useState(false);
   const [err, setErr] = useState('');
 
   const analyze = async () => {
@@ -532,6 +533,7 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
         phone_column: phoneCol,
         campaign_name: campaignName || file?.name?.replace('.csv', '') || '',
         cooldown_seconds: cooldown,
+        allow_partial: allowPartial,
       });
       onDispatched();
       setStep('upload'); setFile(null); setDispatchId(''); setTotalLeads(0);
@@ -744,12 +746,42 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="aesir-btn" style={btnStyle('rgba(255,255,255,.06)')} onClick={() => setStep('template')}>← Voltar</button>
-            <button className="aesir-btn" style={btnStyle(G.green, sending)} disabled={sending} onClick={confirm}>
-              {sending ? '⟳ Iniciando...' : '🚀 Confirmar e Disparar'}
-            </button>
-          </div>
+          {(() => {
+            const assignedSum = assignments.reduce((s, a) => s + (Number(a.planned_count) || 0), 0);
+            const diff = totalLeads - assignedSum;
+            const isExact = diff === 0;
+            const overflow = diff < 0;
+            const canConfirm = !sending && (isExact || (diff > 0 && allowPartial));
+            return (
+              <>
+                {!isExact && (
+                  <div style={{
+                    background: overflow ? 'rgba(239,68,68,.08)' : 'rgba(234,179,8,.08)',
+                    border: `1px solid ${overflow ? 'rgba(239,68,68,.3)' : 'rgba(234,179,8,.3)'}`,
+                    borderRadius: 10, padding: 12, marginTop: 6,
+                  }}>
+                    <div style={{ color: overflow ? C.red : '#eab308', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+                      {overflow
+                        ? `❌ EXCESSO — soma ${assignedSum.toLocaleString('pt-BR')} > total ${totalLeads.toLocaleString('pt-BR')}. Reduza distribuição.`
+                        : `⚠ PARCIAL — ${assignedSum.toLocaleString('pt-BR')} de ${totalLeads.toLocaleString('pt-BR')} atribuídos (${diff.toLocaleString('pt-BR')} sobrando)`}
+                    </div>
+                    {diff > 0 && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: C.text, fontSize: 11 }}>
+                        <input type="checkbox" checked={allowPartial} onChange={e => setAllowPartial(e.target.checked)} style={{ accentColor: '#eab308' }} />
+                        Eu entendo: disparar {assignedSum.toLocaleString('pt-BR')} leads, descartar {diff.toLocaleString('pt-BR')}.
+                      </label>
+                    )}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="aesir-btn" style={btnStyle('rgba(255,255,255,.06)')} onClick={() => setStep('template')}>← Voltar</button>
+                  <button className="aesir-btn" style={btnStyle(G.green, !canConfirm)} disabled={!canConfirm} onClick={confirm}>
+                    {sending ? '⟳ Iniciando...' : '🚀 Confirmar e Disparar'}
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

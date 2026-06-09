@@ -55,6 +55,7 @@ export function CsvUploadWizard({ onDispatched }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [analyzeResult, setAnalyzeResult] = useState<AnalyzeResult | null>(null);
   const [editableAssignments, setEditableAssignments] = useState<SplitAssignment[]>([]);
+  const [allowPartial, setAllowPartial] = useState(false);
   const [templatesMap, setTemplatesMap] = useState<TemplatesMap>({});
   const [config, setConfig] = useState<DispatchConfig>({
     phone_column: 'telefone',
@@ -137,7 +138,7 @@ export function CsvUploadWizard({ onDispatched }: Props) {
     setState('dispatching');
     setError(null);
     try {
-      await broadcastApi.confirmDispatch({ dispatch_id: analyzeResult.dispatch_id, assignments: editableAssignments, ...config });
+      await broadcastApi.confirmDispatch({ dispatch_id: analyzeResult.dispatch_id, assignments: editableAssignments, allow_partial: allowPartial, ...config });
       onDispatched?.();
       setState('idle');
       setAnalyzeResult(null);
@@ -457,20 +458,66 @@ export function CsvUploadWizard({ onDispatched }: Props) {
             );
           })}
 
-          <div style={{ display: 'flex', gap: 10 }}>
-            <button
-              onClick={handleDispatch}
-              style={{ background: '#00ff88', color: '#080818', border: 'none', borderRadius: 8, padding: '10px 24px', cursor: 'pointer', fontWeight: 700, fontSize: 14 }}
-            >
-              Confirmar e Disparar
-            </button>
-            <button
-              onClick={() => { setState('idle'); setAnalyzeResult(null); setError(null); }}
-              style={{ background: 'transparent', color: '#475569', border: '1px solid #1e1e3a', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontSize: 14 }}
-            >
-              Cancelar
-            </button>
-          </div>
+          {/* ── Assignment count vs total — blocks confirm if partial without explicit OK ── */}
+          {(() => {
+            const totalLeads = analyzeResult.total_leads;
+            const assignedSum = editableAssignments.reduce((s, a) => s + (Number(a.planned_count) || 0), 0);
+            const diff = totalLeads - assignedSum;
+            const isExact = diff === 0;
+            const canConfirm = isExact || (diff > 0 && allowPartial);
+            return (
+              <>
+                {!isExact && (
+                  <div style={{
+                    background: diff > 0 ? '#ffd70015' : '#ff2d7815',
+                    border: `1px solid ${diff > 0 ? '#ffd70055' : '#ff2d7855'}`,
+                    borderRadius: 10, padding: 14,
+                  }}>
+                    <div style={{ color: diff > 0 ? '#ffd700' : '#ff2d78', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>
+                      {diff > 0
+                        ? `⚠ DISTRIBUIÇÃO PARCIAL — ${assignedSum.toLocaleString('pt-BR')} de ${totalLeads.toLocaleString('pt-BR')} leads atribuídos (${diff.toLocaleString('pt-BR')} sobrando)`
+                        : `❌ EXCESSO DE LEADS — soma ${assignedSum.toLocaleString('pt-BR')} maior que total ${totalLeads.toLocaleString('pt-BR')}. Reduza distribuição.`}
+                    </div>
+                    {diff > 0 && (
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginTop: 4 }}>
+                        <input
+                          type="checkbox"
+                          checked={allowPartial}
+                          onChange={e => setAllowPartial(e.target.checked)}
+                          style={{ accentColor: '#ffd700', width: 15, height: 15 }}
+                        />
+                        <span style={{ color: '#e2e8f0', fontSize: 12 }}>
+                          Eu entendo: disparar apenas {assignedSum.toLocaleString('pt-BR')} leads, descartar {diff.toLocaleString('pt-BR')} restantes.
+                        </span>
+                      </label>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    onClick={handleDispatch}
+                    disabled={!canConfirm}
+                    style={{
+                      background: canConfirm ? '#00ff88' : '#1e1e3a',
+                      color: canConfirm ? '#080818' : '#475569',
+                      border: 'none', borderRadius: 8, padding: '10px 24px',
+                      cursor: canConfirm ? 'pointer' : 'not-allowed',
+                      fontWeight: 700, fontSize: 14,
+                    }}
+                  >
+                    Confirmar e Disparar
+                  </button>
+                  <button
+                    onClick={() => { setState('idle'); setAnalyzeResult(null); setError(null); setAllowPartial(false); }}
+                    style={{ background: 'transparent', color: '#475569', border: '1px solid #1e1e3a', borderRadius: 8, padding: '10px 20px', cursor: 'pointer', fontSize: 14 }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 
