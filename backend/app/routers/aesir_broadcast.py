@@ -87,7 +87,7 @@ def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
     for idx, inst in enumerate(active):
         limit = inst.get("daily_limit") or 500
         if idx == len(active) - 1:
-            planned = remaining
+            planned = min(remaining, limit)
         else:
             planned = min(round(total_leads * limit / total_capacity), remaining, limit)
         remaining -= planned
@@ -520,11 +520,15 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
             log.exception("aesir _run unhandled error dispatch=%s", body.dispatch_id)
             final = "error"
         finally:
-            db.table("aesir_dispatches").update({
-                "status": final,
-                "finished_at": datetime.now(timezone.utc).isoformat(),
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", body.dispatch_id).execute()
+            # Don't overwrite terminal state set by cancel endpoint
+            current = db.table("aesir_dispatches").select("status").eq("id", body.dispatch_id).execute()
+            current_status = (current.data[0].get("status") if current.data else None)
+            if current_status not in ("cancelled",):
+                db.table("aesir_dispatches").update({
+                    "status": final,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", body.dispatch_id).execute()
             _stop_events.pop(body.dispatch_id, None)
             _bg_tasks.discard(task)
 

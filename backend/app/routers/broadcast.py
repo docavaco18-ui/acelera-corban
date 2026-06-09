@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import io
+import logging
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+log = logging.getLogger("acelera.broadcast")
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -418,8 +421,11 @@ async def confirm_dispatch(
         chunk = [header] + rows[start: start + count]
         return "\n".join(chunk).encode("utf-8")
 
+    dispatch_errors: list[str] = []
     mailing_ids = []
     row_offset = 0
+    # Prevent double-submit: mark dispatching immediately so any retry is blocked
+    db.table("broadcast_dispatches").update({"status": "dispatching"}).eq("id", body.dispatch_id).execute()
     for asn in body.assignments:
         phone_id = asn["phone_id"]
         planned = asn.get("planned_count", 0)
@@ -430,7 +436,9 @@ async def confirm_dispatch(
             raise HTTPException(400, f"inbox_id e template_id obrigatórios para {phone_id}")
 
         # Each number only receives its own slice of the CSV
-        slice_bytes = _slice_csv(data_rows, row_offset, planned) if planned > 0 else csv_bytes
+        if planned <= 0:
+            continue
+        slice_bytes = _slice_csv(data_rows, row_offset, planned)
         row_offset += planned
 
         variable_mappings: dict = asn.get("variable_mappings") or {}
@@ -449,7 +457,8 @@ async def confirm_dispatch(
                 variable_mappings=variable_mappings or None,
             )
         except Exception as exc:
-            raise HTTPException(502, f"Erro VendeAI para {phone_id}: {exc}")
+            dispatch_errors.append(f"{phone_id}: {exc}")
+            continue
 
         mailing_id = (
             resp.get("id")
@@ -533,10 +542,11 @@ async def confirm_dispatch(
             for i in range(0, len(recipients_rows), BATCH):
                 db.table("broadcast_recipients").insert(recipients_rows[i:i + BATCH]).execute()
         except Exception as rec_exc:
-            print(f"[broadcast] recipients insertion failed for {phone_id}: {rec_exc}")
+            log.warning("[broadcast] recipients insertion failed phone_id=%s: %s", phone_id, rec_exc)
 
+    final_status = "running" if mailing_ids else "error"
     db.table("broadcast_dispatches").update({
-        "status": "running",
+        "status": final_status,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "campaign_name": body.campaign_name,
         "phone_column": body.phone_column,
@@ -546,7 +556,10 @@ async def confirm_dispatch(
         "dedup_window_hours": body.dedup_window_hours,
     }).eq("id", body.dispatch_id).execute()
 
-    return {"ok": True, "mailing_ids": mailing_ids}
+    if dispatch_errors and not mailing_ids:
+        raise HTTPException(502, f"Nenhum disparo iniciado. Erros: {'; '.join(dispatch_errors)}")
+
+    return {"ok": True, "mailing_ids": mailing_ids, "errors": dispatch_errors}
 
 
 # ── Snapshot (bootstrap for monitoring panel) ─────────────────────────────────

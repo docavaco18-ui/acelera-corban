@@ -592,10 +592,6 @@ export const chipcareApi = {
   listTemplates: () =>
     chipcareAxios.get<any[]>("/api/chipcare-broadcast/templates").then((r) => r.data),
 
-  // lead preview
-  leadPreview: (params: { source_type?: string; kanban_column_ids?: number[]; tag_ids?: number[]; chat_status?: string; channel_ids?: number[] }) =>
-    chipcareAxios.post<{ count: number }>("/api/chipcare-broadcast/lead-preview", params).then((r) => r.data),
-
   // wizard
   analyzeCSV: (file: File) => {
     const form = new FormData();

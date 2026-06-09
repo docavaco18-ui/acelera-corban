@@ -133,7 +133,7 @@ def _advise_split(channels: list[dict], total_leads: int) -> dict:
     for idx, ch in enumerate(active):
         limit = ch.get("daily_limit") or 500
         if idx == len(active) - 1:
-            planned = remaining
+            planned = min(remaining, limit)
         else:
             planned = min(round(total_leads * limit / total_capacity), remaining, limit)
         remaining -= planned
@@ -649,6 +649,12 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
         raise HTTPException(502, f"Chipcare create_campaign falhou: {e}")
 
     chipcare_campaign_id = result.get("campaign_id")
+    if not chipcare_campaign_id:
+        db.table("chipcare_dispatches").update({
+            "status": "error",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", body.dispatch_id).execute()
+        raise HTTPException(502, "Chipcare não retornou campaign_id. Verifique os logs do servidor.")
 
     # Activate immediately if requested
     activated = False

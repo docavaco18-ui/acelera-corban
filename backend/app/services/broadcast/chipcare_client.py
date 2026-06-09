@@ -259,7 +259,7 @@ class ChipcareClient:
         async with httpx.AsyncClient() as client:
             r = await client.post(
                 f"{BASE_URL}/admin/campanhas",
-                headers=self._headers_sa(jwt, self.hashes.sa_create),
+                headers={**self._headers_sa(jwt, self.hashes.sa_create), "content-type": form["content_type"]},
                 content=form["body"],
                 timeout=30,
             )
