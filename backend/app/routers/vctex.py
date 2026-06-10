@@ -12,6 +12,7 @@ from ..banks.vctex.credentials_helper import get_vctex_runtime_creds
 from ..services import vctex_upload_jobs, vctex_bot_service
 
 router = APIRouter(prefix="/api/vctex", tags=["vctex"])
+MAX_ROWS = 200_000  # hard cap p/ evitar OOM/timeout em scans degenerados
 _events: list[dict] = []
 
 

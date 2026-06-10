@@ -49,6 +49,7 @@ def _user_id_from_extension_token(token: str) -> str | None:
     return None
 
 router = APIRouter(prefix="/api/mercantil", tags=["mercantil"])
+MAX_ROWS = 200_000  # hard cap p/ evitar OOM/timeout em scans degenerados
 _events: list[dict] = []
 
 
