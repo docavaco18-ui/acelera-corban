@@ -114,6 +114,9 @@ def _extract_template_variables(components: list) -> list[str]:
 class MetaClient:
     def __init__(self, access_token: str):
         self.access_token = access_token
+        # Token via header Bearer, NUNCA via query param: param vaza o token em
+        # URLs de log (httpx inclui a URL completa em erros) e no paging.next
+        self._auth = {"Authorization": f"Bearer {access_token}"}
 
     async def discover_wabas(self) -> list[str]:
         """Auto-discover WABA IDs accessible by this token.
@@ -135,7 +138,8 @@ class MetaClient:
             try:
                 r = await client.get(
                     f"{META_BASE}/debug_token",
-                    params={"input_token": self.access_token, "access_token": self.access_token},
+                    params={"input_token": self.access_token},
+                    headers=self._auth,
                 )
                 if r.status_code == 200:
                     debug = r.json().get("data", {})
@@ -149,7 +153,8 @@ class MetaClient:
                         try:
                             r2 = await client.get(
                                 f"{META_BASE}/{biz_id}/owned_whatsapp_business_accounts",
-                                params={"fields": "id,name", "access_token": self.access_token, "limit": 100},
+                                params={"fields": "id,name", "limit": 100},
+                                headers=self._auth,
                             )
                             if r2.status_code == 200:
                                 for waba in r2.json().get("data", []):
@@ -165,7 +170,8 @@ class MetaClient:
             try:
                 rb = await client.get(
                     f"{META_BASE}/me/businesses",
-                    params={"access_token": self.access_token, "limit": 100},
+                    params={"limit": 100},
+                    headers=self._auth,
                 )
                 if rb.status_code == 200:
                     for biz in rb.json().get("data", []):
@@ -175,7 +181,8 @@ class MetaClient:
                         try:
                             r2 = await client.get(
                                 f"{META_BASE}/{biz_id}/owned_whatsapp_business_accounts",
-                                params={"fields": "id,name", "access_token": self.access_token, "limit": 100},
+                                params={"fields": "id,name", "limit": 100},
+                                headers=self._auth,
                             )
                             if r2.status_code == 200:
                                 for waba in r2.json().get("data", []):
@@ -191,7 +198,8 @@ class MetaClient:
             try:
                 ra = await client.get(
                     f"{META_BASE}/me/assigned_whatsapp_business_accounts",
-                    params={"access_token": self.access_token, "limit": 100},
+                    params={"limit": 100},
+                    headers=self._auth,
                 )
                 if ra.status_code == 200:
                     for waba in ra.json().get("data", []):
@@ -207,7 +215,8 @@ class MetaClient:
                     try:
                         rv = await client.get(
                             f"{META_BASE}/{wid}",
-                            params={"fields": "id,name", "access_token": self.access_token},
+                            params={"fields": "id,name"},
+                            headers=self._auth,
                             timeout=8,
                         )
                         if rv.status_code == 200 and rv.json().get("id"):
@@ -224,8 +233,8 @@ class MetaClient:
                 f"{META_BASE}/{waba_id}",
                 params={
                     "fields": "id,name,account_review_status,business_verification_status,currency,country,timezone_id,is_enabled_for_insights",
-                    "access_token": self.access_token,
                 },
+                headers=self._auth,
             )
             if r.status_code != 200:
                 return {}
@@ -255,7 +264,8 @@ class MetaClient:
         async with httpx.AsyncClient() as client:
             r = await client.get(
                 f"{META_BASE}/{phone_id}",
-                params={"fields": PHONE_FIELDS, "access_token": self.access_token},
+                params={"fields": PHONE_FIELDS},
+                headers=self._auth,
                 timeout=15,
             )
             r.raise_for_status()
@@ -264,11 +274,11 @@ class MetaClient:
     async def get_all_phones(self, waba_id: str) -> list[dict]:
         all_phones: list[dict] = []
         url: str | None = f"{META_BASE}/{waba_id}/phone_numbers"
-        params: dict = {"fields": PHONE_FIELDS, "access_token": self.access_token, "limit": 100}
+        params: dict = {"fields": PHONE_FIELDS, "limit": 100}
 
         async with httpx.AsyncClient() as client:
             while url:
-                r = await client.get(url, params=params, timeout=15)
+                r = await client.get(url, params=params, headers=self._auth, timeout=15)
                 r.raise_for_status()
                 data = r.json()
                 all_phones.extend(_parse_phone(p, waba_id) for p in data.get("data", []))
@@ -286,8 +296,8 @@ class MetaClient:
                     "fields": "id,name,status,language,category,components",
                     "status": "APPROVED",
                     "limit": 200,
-                    "access_token": self.access_token,
                 },
+                headers=self._auth,
                 timeout=15,
             )
             r.raise_for_status()
@@ -308,11 +318,10 @@ class MetaClient:
         params: dict = {
             "fields": "id,name,status,language,category,components,rejected_reason",
             "limit": 200,
-            "access_token": self.access_token,
         }
         async with httpx.AsyncClient(timeout=15) as client:
             while url:
-                r = await client.get(url, params=params)
+                r = await client.get(url, params=params, headers=self._auth)
                 r.raise_for_status()
                 data = r.json()
                 templates.extend(data.get("data", []))
