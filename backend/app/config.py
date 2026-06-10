@@ -1,12 +1,14 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
-    v8_username: str
-    v8_password: str
-    v8_audience: str
-    v8_client_id: str
+    # v8_username/v8_password: LEGADO — login real vem das credenciais por user
+    # (user_bank_credentials). Opcionais pra instalação nova não exigir dummy.
+    v8_username: str = ""
+    v8_password: str = ""
+    v8_audience: str = ""
+    v8_client_id: str = ""
     v8_provider: str = "QI"
-    webhook_url: str
+    webhook_url: str = ""
 
     supabase_url: str
     supabase_anon_key: str

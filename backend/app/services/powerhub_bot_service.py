@@ -6,6 +6,10 @@ from typing import Any, Callable
 from ..banks.powerhub.api_worker import PowerHubApiWorker
 from ..credentials.service import BankCredentials
 
+# Referências fortes pra tasks de finalização — sem isso o GC pode coletar a task
+# antes dela rodar e pool.stop() nunca executa (worker órfão no pool)
+_finalize_tasks: set[asyncio.Task] = set()
+
 
 async def start_bot(
     pool,
@@ -38,5 +42,7 @@ async def start_bot(
         await asyncio.gather(*tasks, return_exceptions=True)
         await pool.stop(user_id)
 
-    asyncio.create_task(_finalize())
+    t = asyncio.create_task(_finalize())
+    _finalize_tasks.add(t)
+    t.add_done_callback(_finalize_tasks.discard)
     return {"run_id": handle.run_id, "num_workers": handle.num_workers}

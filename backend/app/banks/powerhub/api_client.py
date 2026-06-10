@@ -1,5 +1,6 @@
 """PowerHub REST API client — enriquecimento de telefone via CPF."""
 import logging
+import random
 import re
 import time
 from typing import Optional
@@ -12,6 +13,14 @@ BASE_URL = "https://novapowerhub.com.br"
 HIGIENIZACAO_URL = "https://higienizacao.novapowerhub.com.br"
 DEFAULT_TIMEOUT = 20.0
 TOKEN_TTL = 270  # access_token tem ~300s — renova com 30s de folga
+MAX_RETRIES = 3
+BACKOFF_CAP = 30.0  # teto do backoff exponencial em segundos
+
+
+def _backoff_sleep(attempt: int) -> None:
+    """Backoff exponencial com jitter: 2^attempt + uniform(0,1), cap 30s."""
+    wait = min(2.0 ** attempt, BACKOFF_CAP) + random.uniform(0, 1)
+    time.sleep(wait)
 
 _NO_KEEPALIVE = {"Connection": "close"}
 
@@ -93,17 +102,29 @@ class PowerHubApiClient:
                 headers={**self._headers(), **_NO_KEEPALIVE},
             )
 
-        for attempt in range(3):
+        resp: httpx.Response | None = None
+        for attempt in range(MAX_RETRIES):
             try:
                 resp = _get()
-                break
-            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError) as exc:
-                log.warning(f"PowerHub conexão caiu (tentativa {attempt+1}/3): {exc}")
+            except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout) as exc:
+                log.warning(f"PowerHub conexão caiu (tentativa {attempt+1}/{MAX_RETRIES}): {exc}")
                 self._reset_client()
                 self._ensure_token()
-                if attempt == 2:
+                if attempt == MAX_RETRIES - 1:
                     raise
-        else:
+                _backoff_sleep(attempt)
+                continue
+            # 429 / 5xx: retry com backoff exponencial + jitter (evita ban e thundering herd)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                log.warning(
+                    f"PowerHub HTTP {resp.status_code} (tentativa {attempt+1}/{MAX_RETRIES}) cpf={cpf_digits}"
+                )
+                if attempt == MAX_RETRIES - 1:
+                    break  # cai no raise_for_status abaixo
+                _backoff_sleep(attempt)
+                continue
+            break
+        if resp is None:
             raise RuntimeError("PowerHub: todas as tentativas falharam")
 
         if resp.status_code == 401:

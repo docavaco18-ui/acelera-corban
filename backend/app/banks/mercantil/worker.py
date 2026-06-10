@@ -18,13 +18,11 @@ from .config import MercantilConfig
 from . import bff_bridge
 from .phases import (
     fase1_consultar_cpf,
-    fase1_consultar_cpf_api,
     fase2_aguardar_produtos,
     fase3_autorizar_dataprev,
     fase4_simular,
     voltar_para_dashboard,
 )
-from .humanize import human_delay_between_actions
 from ...db_scoped import scoped
 from ...credentials.service import BankCredentials
 

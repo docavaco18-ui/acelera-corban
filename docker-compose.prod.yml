@@ -7,14 +7,20 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+      start_period: 20s
+    # ATENÇÃO: --workers 1 é obrigatório. Bot pools, _runtimes e WS listeners são
+    # in-memory por processo — com 2+ workers o guard de run duplicado quebra
+    # (cada processo tem seu próprio dict) e a capacidade global dobra silenciosamente.
+    # App é asyncio: 1 worker atende o HTTP com folga. Escalar = mover estado pro Redis antes.
+    command: sh -c "python -m app.startup_check && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1"
 
   frontend:
     build:
@@ -26,7 +32,7 @@ services:
       - backend
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -49,6 +55,11 @@ services:
     restart: unless-stopped
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
 
 volumes:
   redis_data:

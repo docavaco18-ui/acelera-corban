@@ -16,6 +16,7 @@ IDLE_INTERVAL = 30
 CEREBRO_INTERVAL = 3
 PENDING_BATCH = 200
 RETRY_BATCH = 200
+MAX_QUEUE_SIZE = 600  # backpressure: cerebro pausa refill se filas em memória passarem disso
 
 
 @dataclass
@@ -188,6 +189,11 @@ async def start_bot(
         idle_ticks = 0
         while rt.running:
             try:
+                if rt.pending_queue.qsize() + rt.retry_queue.qsize() >= MAX_QUEUE_SIZE:
+                    logger.info("v8 cerebro[%s] backpressure: filas=%d >= %d, aguardando",
+                                user_id, rt.pending_queue.qsize() + rt.retry_queue.qsize(), MAX_QUEUE_SIZE)
+                    await asyncio.sleep(REFILL_INTERVAL)
+                    continue
                 retries = await _fetch_retries(db, user_id, RETRY_BATCH, batch_id=batch_id)
                 pendentes = await _fetch_pending(db, user_id, PENDING_BATCH, batch_id=batch_id)
 

@@ -11,6 +11,7 @@ Nota: simulação (POST /v5/operacoes/simulacao/disponiveis) bloqueada por confi
 do banco ("Prazo não permitido para o originador"). Higienização usa apenas os 4 passos acima.
 """
 import logging
+import random
 import re
 import time
 from dataclasses import dataclass, field
@@ -138,8 +139,9 @@ class PresencaApiClient:
                     "produtoId": 28,
                 })
                 if r.status_code == 429:
-                    wait = 30 + rate_attempt * 15
-                    log.warning("presenca gerar_termo 429 cpf=%s — aguardando %ds", cpf, wait)
+                    # backoff linear + jitter — workers concorrentes não retriam em sincronia
+                    wait = 30 + rate_attempt * 15 + random.uniform(0, 10)
+                    log.warning("presenca gerar_termo 429 cpf=%s — aguardando %.0fs", cpf, wait)
                     time.sleep(wait)
                     continue
                 break
@@ -185,8 +187,9 @@ class PresencaApiClient:
                 timeout=VINCULOS_TIMEOUT,
             )
             if r.status_code == 429:
-                wait = 30 + attempt * 15
-                log.warning("presenca vinculos 429 rate limit cpf=%s — aguardando %ds", cpf, wait)
+                # backoff linear + jitter — workers concorrentes não retriam em sincronia
+                wait = 30 + attempt * 15 + random.uniform(0, 10)
+                log.warning("presenca vinculos 429 rate limit cpf=%s — aguardando %.0fs", cpf, wait)
                 time.sleep(wait)
                 continue
             break

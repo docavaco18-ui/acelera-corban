@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from app.config import settings
-from app.credentials.crypto import decrypt, encrypt, safe_decrypt
+from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.assignment_validator import validate_vendeai_assignments
 from app.services.broadcast.claude_advisor import advise_split
@@ -290,7 +290,6 @@ async def analyze_csv(
     total_leads = max(0, len(_all_lines) - 1)
 
     # Extract CSV column headers
-    import csv, io
     csv_columns: list[str] = []
     try:
         first_line = csv_bytes.decode("utf-8", errors="replace").splitlines()[0].lstrip("﻿")

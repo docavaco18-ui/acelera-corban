@@ -32,6 +32,7 @@ _STATE_DIR_PATH = _Path(_os.getenv("MERCANTIL_STATE_DIR", ".bot_state/mercantil"
 
 REFILL_INTERVAL = 5
 PENDING_BATCH = 50
+MAX_QUEUE_SIZE = 200  # backpressure: refill pausa se fila em memória passar disso
 EVENT_CHANNEL = "bot:events"  # frontend WS escuta esse channel
 WORKER_STAGGER_SECONDS = 2.0
 
@@ -282,6 +283,13 @@ async def start_bot(
     if user_id in _runtimes:
         return {"status": "already_running"}
 
+    from ..redis_client import assert_redis_responsive
+    try:
+        await assert_redis_responsive()
+    except RuntimeError as e:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail=str(e))
+
     handle = await pool.start(user_id=user_id, num_workers=num_workers, creds=creds, db=db)
     rt = _Runtime()
     _runtimes[user_id] = rt
@@ -335,6 +343,11 @@ async def start_bot(
         idle_ticks = 0
         while rt.running:
             try:
+                if rt.queue.qsize() >= MAX_QUEUE_SIZE:
+                    logger.info("mercantil refill[%s] backpressure: fila=%d >= %d, aguardando",
+                                user_id, rt.queue.qsize(), MAX_QUEUE_SIZE)
+                    await asyncio.sleep(REFILL_INTERVAL)
+                    continue
                 pendentes = await _fetch_pending(db, user_id, PENDING_BATCH, batch_id=batch_id)
                 added = 0
                 for lead in pendentes:
