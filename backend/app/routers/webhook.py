@@ -31,7 +31,10 @@ async def receive_webhook(
 ):
     raw = await request.body()
     _verify_v8_signature(raw, x_v8_signature)
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Body não é JSON válido")
     if payload.get("type") == "private.consignment.consult.updated":
         consult_id = payload.get("consultId")
         if consult_id:
@@ -60,7 +63,10 @@ async def v8_webhook(
 ):
     raw = await request.body()
     _verify_v8_signature(raw, x_v8_signature)
-    payload = json.loads(raw)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        raise HTTPException(400, "Body não é JSON válido")
     consult_id = payload.get("consult_id") or payload.get("consultId")
     if not consult_id:
         raise HTTPException(400, "consult_id ausente")

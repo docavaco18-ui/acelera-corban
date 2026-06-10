@@ -2,6 +2,15 @@ import { useState, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 
+function friendlyAuthError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("invalid login credentials")) return "Email ou senha incorretos.";
+  if (m.includes("email not confirmed")) return "Email ainda não confirmado. Verifique sua caixa de entrada.";
+  if (m.includes("rate limit") || m.includes("too many")) return "Muitas tentativas. Aguarde um momento e tente novamente.";
+  if (m.includes("network") || m.includes("fetch")) return "Falha de conexão. Verifique sua internet e tente novamente.";
+  return "Não foi possível entrar. Tente novamente.";
+}
+
 export function Login() {
   const nav = useNavigate();
   const [email, setEmail] = useState("");
@@ -16,7 +25,8 @@ export function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
     setLoading(false);
     if (error) {
-      setErr(error.message);
+      console.error("login:", error.message);
+      setErr(friendlyAuthError(error.message));
       return;
     }
     nav("/", { replace: true });
@@ -37,10 +47,11 @@ export function Login() {
           Acesso restrito. Faça login para continuar.
         </p>
 
-        <label style={{ display: "block", fontSize: ".75rem", color: "#888", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".5px" }}>
+        <label htmlFor="login-email" style={{ display: "block", fontSize: ".75rem", color: "#888", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".5px" }}>
           Email
         </label>
         <input
+          id="login-email" name="email" autoComplete="email"
           type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus
           style={{
             width: "100%", padding: "10px 12px", background: "#0d0d1f",
@@ -49,10 +60,11 @@ export function Login() {
           }}
         />
 
-        <label style={{ display: "block", fontSize: ".75rem", color: "#888", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".5px" }}>
+        <label htmlFor="login-password" style={{ display: "block", fontSize: ".75rem", color: "#888", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".5px" }}>
           Senha
         </label>
         <input
+          id="login-password" name="password" autoComplete="current-password"
           type="password" value={password} onChange={(e) => setPassword(e.target.value)} required
           style={{
             width: "100%", padding: "10px 12px", background: "#0d0d1f",
@@ -62,7 +74,7 @@ export function Login() {
         />
 
         {err && (
-          <div style={{
+          <div role="alert" style={{
             background: "rgba(255,45,120,.1)", border: "1px solid rgba(255,45,120,.3)",
             color: "#ff2d78", padding: "8px 12px", borderRadius: 8, marginBottom: 14,
             fontSize: ".82rem",
