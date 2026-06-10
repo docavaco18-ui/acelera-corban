@@ -22,6 +22,23 @@ from .banks.powerhub.bot_pool import PowerHubBotPool
 
 setup_logging(json_logs=True)
 
+
+def _allowed_origins() -> list[str]:
+    """Expande CORS_ORIGINS espelhando localhost <-> 127.0.0.1 — Vite imprime
+    127.0.0.1 quando sobe com --host, e a origem divergente gerava Network Error."""
+    origins: list[str] = []
+    for o in settings.cors_origins.split(","):
+        o = o.strip()
+        if not o:
+            continue
+        origins.append(o)
+        if "//localhost" in o:
+            origins.append(o.replace("//localhost", "//127.0.0.1"))
+        elif "//127.0.0.1" in o:
+            origins.append(o.replace("//127.0.0.1", "//localhost"))
+    return list(dict.fromkeys(origins))
+
+
 app = FastAPI(title="Acelera Corban", version="1.0.0")
 app.state.v8_pool = V8BotPool()
 app.state.vctex_pool = VCTexBotPool()
@@ -55,7 +72,10 @@ async def _sweep_stale_chatwoot_runs():
             "updated_at": now_iso,
         }).eq("status", "running").execute()
     except Exception:
-        pass
+        import logging
+        logging.getLogger("acelera").exception(
+            "startup sweep falhou (chatwoot_sync_runs/aesir_dispatches órfãos não marcados)"
+        )
 
     import asyncio
     from .redis_client import get_redis
@@ -67,7 +87,7 @@ async def _sweep_stale_chatwoot_runs():
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[o.strip() for o in settings.cors_origins.split(",")],
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,7 +118,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     import logging
     logging.getLogger("acelera").error("Unhandled exception: %s", traceback.format_exc())
     origin = request.headers.get("origin", "")
-    allowed = [o.strip() for o in settings.cors_origins.split(",")]
+    allowed = _allowed_origins()
     headers = {"Access-Control-Allow-Credentials": "true"}
     if origin in allowed:
         headers["Access-Control-Allow-Origin"] = origin

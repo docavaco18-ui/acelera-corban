@@ -1,0 +1,14 @@
+.env
+.env.*
+.bot_state
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+*.csv
+*.rdb
+*.sqlite
+*.db
+storage_state*.json
+.DS_Store
+tests
