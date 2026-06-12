@@ -30,19 +30,13 @@ _bg_tasks: set[asyncio.Task] = set()
 
 # ── Auth helpers ───────────────────────────────────────────────────────────────
 
+from app.auth_deps import verify_token
+
+
 def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    db = get_db()
-    try:
-        resp = db.auth.get_user(credentials.credentials)
-        return resp.user.id
-    except HTTPException:
-        raise
-    except Exception as exc:
-        msg = str(exc).lower()
-        if any(k in msg for k in ("invalid", "expired", "unauthorized", "jwt", "token")):
-            raise HTTPException(status_code=401, detail="Invalid token")
-        log.exception("_get_user_id unexpected error")
-        raise HTTPException(status_code=503, detail="Auth service unavailable")
+    # Validação LOCAL do JWT (JWKS/HS256, chaves cacheadas) — sem round-trip de
+    # rede ao Supabase Auth por request. Mesmo caminho dos routers de banco.
+    return verify_token(credentials.credentials).user_id
 
 
 def _get_client(user_id: str) -> AesirClient:

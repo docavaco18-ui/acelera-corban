@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
+from app.auth_deps import verify_token
 from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
@@ -28,22 +29,12 @@ security = HTTPBearer()
 
 
 def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
-    db = get_db()
-    try:
-        resp = db.auth.get_user(credentials.credentials)
-        return resp.user.id
-    except Exception as e:
-        # Viés seguro: token inválido → 401 (re-login resolve). 503 SÓ quando o
-        # erro é claramente de transporte / Auth fora do ar — senão um usuário
-        # com sessão morta cujo erro não bate a heurística ficaria preso em 503.
-        text = f"{type(e).__name__} {e}".lower()
-        transient = any(k in text for k in (
-            "connect", "timeout", "timed out", "temporar", "unavailable",
-            "getaddrinfo", "disconnect", "502", "503", "504",
-        ))
-        if transient:
-            raise HTTPException(status_code=503, detail="Auth service unavailable")
-        raise HTTPException(status_code=401, detail="Invalid token")
+    # Validação LOCAL do JWT (JWKS/HS256, chaves cacheadas 1h) — sem round-trip
+    # de rede ao Supabase Auth por request. Antes: db.auth.get_user() fazia um
+    # hop de rede em TODO endpoint de disparo (com workers=1 isso bloqueava o
+    # event-loop pra todos os tenants). verify_token já lança 401 em token
+    # inválido/ausente — mesmo caminho usado pelos routers de banco (require_user).
+    return verify_token(credentials.credentials).user_id
 
 
 MAX_META_TOKENS = 10
