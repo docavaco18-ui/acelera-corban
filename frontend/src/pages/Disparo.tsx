@@ -200,8 +200,9 @@ function StatusBadge({ status, detail }: { status?: string; detail?: string | nu
   if (status === 'erro') {
     return (
       <span title={detail || ''} style={{
+        display: 'inline-block', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         color: '#ef4444', background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.35)',
-        borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 800, letterSpacing: '0.06em',
+        borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 800, letterSpacing: '0.06em', verticalAlign: 'middle',
       }}>
         ⚠ ERRO{detail ? ` · ${detail}` : ''}
       </span>
@@ -262,19 +263,21 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
   };
 
   const testPort = async (id: string) => {
-    setBusyId(id);
+    setBusyId(id); setMsg('');
     try {
       const r: any = await broadcastApi.testMetaToken(id);
       const d = r.data ?? r;
       setTokens(ts => ts.map(t => (t.id === id ? { ...t, ...d } : t)));
-    } catch { /* mantém estado */ }
-    finally { setBusyId(null); }
+    } catch (e: any) {
+      setMsg('Erro ao testar: ' + (e?.response?.data?.detail || e?.message));
+    } finally { setBusyId(null); }
   };
 
   const removePort = async (id: string) => {
-    setBusyId(id);
+    if (!window.confirm('Remover esta porta? Os números dela serão descadastrados (o refresh reconstrói).')) return;
+    setBusyId(id); setMsg('');
     try { await broadcastApi.deleteMetaToken(id); await load(); onSaved(); }
-    catch { /* ignore */ }
+    catch (e: any) { setMsg('Erro ao remover: ' + (e?.response?.data?.detail || e?.message)); }
     finally { setBusyId(null); }
   };
 
@@ -296,6 +299,10 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
           </span>
         </div>
       </div>
+
+      {msg && !adding && (
+        <div style={{ color: msg.startsWith('Erro') ? C.red : C.sec, fontSize: 12, marginBottom: 10 }}>{msg}</div>
+      )}
 
       {/* lista de portas */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -323,17 +330,19 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <StatusBadge status={t.connection_status} detail={t.connection_detail} />
-              <button onClick={() => testPort(t.id)} disabled={busyId === t.id}
+              <button onClick={() => testPort(t.id)} disabled={busyId !== null} aria-label="Testar conexão da porta"
                 style={{
                   background: 'rgba(6,182,212,.12)', border: '1px solid rgba(6,182,212,.3)',
-                  color: '#22d3ee', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  color: '#22d3ee', borderRadius: 8, padding: '6px 12px',
+                  cursor: busyId !== null ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700,
                 }}>
                 {busyId === t.id ? '⟳' : '↻ Testar'}
               </button>
-              <button onClick={() => removePort(t.id)} disabled={busyId === t.id} title="Remover porta"
+              <button onClick={() => removePort(t.id)} disabled={busyId !== null} title="Remover porta" aria-label="Remover porta"
                 style={{
                   background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.3)',
-                  color: '#f87171', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                  color: '#f87171', borderRadius: 8, padding: '6px 12px',
+                  cursor: busyId !== null ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700,
                 }}>
                 ✕
               </button>

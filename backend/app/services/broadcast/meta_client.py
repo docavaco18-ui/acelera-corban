@@ -135,24 +135,31 @@ class MetaClient:
         waba_ids: list[str] = []
 
         async with httpx.AsyncClient(timeout=15) as client:
+            async def _add_edge(node: str, edge: str) -> None:
+                """Lista WABAs de {node}/{edge} seguindo paginação (paging.next)."""
+                url: str | None = f"{META_BASE}/{node}/{edge}"
+                params: dict | None = {"fields": "id,name", "limit": 100}
+                try:
+                    while url:
+                        r = await client.get(url, params=params, headers=self._auth)
+                        if r.status_code != 200:
+                            return
+                        data = r.json()
+                        for waba in data.get("data", []):
+                            wid = str(waba.get("id", ""))
+                            if wid and wid not in waba_ids:
+                                waba_ids.append(wid)
+                        url = (data.get("paging") or {}).get("next")
+                        params = None  # next já traz os params embutidos
+                except Exception:
+                    return
+
             # ── Strategy 0: BM id explícito (o mais confiável p/ system user) ─
             if bm_id:
-                for edge in ("owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"):
-                    try:
-                        r0 = await client.get(
-                            f"{META_BASE}/{bm_id}/{edge}",
-                            params={"fields": "id,name", "limit": 200},
-                            headers=self._auth,
-                        )
-                        if r0.status_code == 200:
-                            for waba in r0.json().get("data", []):
-                                wid = str(waba.get("id", ""))
-                                if wid and wid not in waba_ids:
-                                    waba_ids.append(wid)
-                    except Exception:
-                        continue
+                await _add_edge(bm_id, "owned_whatsapp_business_accounts")
+                await _add_edge(bm_id, "client_whatsapp_business_accounts")
 
-            # ── Strategy 1: debug_token granular_scopes ──────────────────────
+            # ── Strategy 1: debug_token granular_scopes → owned WABAs ────────
             try:
                 r = await client.get(
                     f"{META_BASE}/debug_token",
@@ -160,55 +167,26 @@ class MetaClient:
                     headers=self._auth,
                 )
                 if r.status_code == 200:
-                    debug = r.json().get("data", {})
-                    business_ids: list[str] = []
-                    for scope in debug.get("granular_scopes", []):
+                    for scope in r.json().get("data", {}).get("granular_scopes", []):
                         if scope.get("scope") == "whatsapp_business_management":
-                            business_ids = [str(t) for t in (scope.get("target_ids") or [])]
+                            for biz_id in (scope.get("target_ids") or []):
+                                await _add_edge(str(biz_id), "owned_whatsapp_business_accounts")
                             break
-
-                    for biz_id in business_ids:
-                        try:
-                            r2 = await client.get(
-                                f"{META_BASE}/{biz_id}/owned_whatsapp_business_accounts",
-                                params={"fields": "id,name", "limit": 100},
-                                headers=self._auth,
-                            )
-                            if r2.status_code == 200:
-                                for waba in r2.json().get("data", []):
-                                    wid = str(waba.get("id", ""))
-                                    if wid and wid not in waba_ids:
-                                        waba_ids.append(wid)
-                        except Exception:
-                            continue
             except Exception:
                 pass
 
-            # ── Strategy 2: /me/businesses ───────────────────────────────────
+            # ── Strategy 2: /me/businesses → owned WABAs ─────────────────────
             try:
                 rb = await client.get(
                     f"{META_BASE}/me/businesses",
-                    params={"limit": 100},
+                    params={"fields": "id", "limit": 100},
                     headers=self._auth,
                 )
                 if rb.status_code == 200:
                     for biz in rb.json().get("data", []):
                         biz_id = str(biz.get("id", ""))
-                        if not biz_id:
-                            continue
-                        try:
-                            r2 = await client.get(
-                                f"{META_BASE}/{biz_id}/owned_whatsapp_business_accounts",
-                                params={"fields": "id,name", "limit": 100},
-                                headers=self._auth,
-                            )
-                            if r2.status_code == 200:
-                                for waba in r2.json().get("data", []):
-                                    wid = str(waba.get("id", ""))
-                                    if wid and wid not in waba_ids:
-                                        waba_ids.append(wid)
-                        except Exception:
-                            continue
+                        if biz_id:
+                            await _add_edge(biz_id, "owned_whatsapp_business_accounts")
             except Exception:
                 pass
 
@@ -216,7 +194,7 @@ class MetaClient:
             try:
                 ra = await client.get(
                     f"{META_BASE}/me/assigned_whatsapp_business_accounts",
-                    params={"limit": 100},
+                    params={"fields": "id,name", "limit": 100},
                     headers=self._auth,
                 )
                 if ra.status_code == 200:
@@ -227,25 +205,25 @@ class MetaClient:
             except Exception:
                 pass
 
-            # ── Strategy 4: env fallback list (validated, always merged) ─────
-            # Antes só rodava se 1-3 voltassem vazias — isso descartava BMs
-            # quando o token via 1 BM granular mas outras só por seed. Agora
-            # sempre mescla; o probe 1-a-1 garante que só entram WABAs que
-            # ESTE token consegue acessar (sem vazar entre tenants).
-            for wid in META_WABA_FALLBACK_IDS:
-                if wid in waba_ids:
-                    continue
-                try:
-                    rv = await client.get(
-                        f"{META_BASE}/{wid}",
-                        params={"fields": "id,name"},
-                        headers=self._auth,
-                        timeout=8,
-                    )
-                    if rv.status_code == 200 and rv.json().get("id"):
-                        waba_ids.append(wid)
-                except Exception:
-                    continue
+            # ── Strategy 4: env seed fallback ────────────────────────────────
+            # Lista GLOBAL (multi-tenant). Só usar quando NÃO há bm_id explícito
+            # E nada foi descoberto — senão um token que enxerga WABAs de outra
+            # BM no seed as anexaria à porta errada (vazamento entre BMs/tenants).
+            if not bm_id and not waba_ids:
+                for wid in META_WABA_FALLBACK_IDS:
+                    if wid in waba_ids:
+                        continue
+                    try:
+                        rv = await client.get(
+                            f"{META_BASE}/{wid}",
+                            params={"fields": "id,name"},
+                            headers=self._auth,
+                            timeout=8,
+                        )
+                        if rv.status_code == 200 and rv.json().get("id"):
+                            waba_ids.append(wid)
+                    except Exception:
+                        continue
 
         return waba_ids
 

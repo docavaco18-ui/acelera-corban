@@ -33,13 +33,17 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
         resp = db.auth.get_user(credentials.credentials)
         return resp.user.id
     except Exception as e:
-        # 401 só para token realmente inválido/expirado. Outras falhas
-        # (Supabase Auth fora do ar) viram 503 — senão o usuário é deslogado
-        # à toa em toda instabilidade transitória. (paridade aesir/chipcare)
-        msg = str(e).lower()
-        if any(k in msg for k in ("invalid", "expired", "jwt", "token", "unauthorized", "401")):
-            raise HTTPException(status_code=401, detail="Invalid token")
-        raise HTTPException(status_code=503, detail="Auth service unavailable")
+        # Viés seguro: token inválido → 401 (re-login resolve). 503 SÓ quando o
+        # erro é claramente de transporte / Auth fora do ar — senão um usuário
+        # com sessão morta cujo erro não bate a heurística ficaria preso em 503.
+        text = f"{type(e).__name__} {e}".lower()
+        transient = any(k in text for k in (
+            "connect", "timeout", "timed out", "temporar", "unavailable",
+            "getaddrinfo", "disconnect", "502", "503", "504",
+        ))
+        if transient:
+            raise HTTPException(status_code=503, detail="Auth service unavailable")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 MAX_META_TOKENS = 10
@@ -113,6 +117,17 @@ async def get_credentials_status(user_id: str = Depends(_get_user_id)):
 
 # ── Meta tokens (multi-BM — até 10 portas) ──────────────────────────────────────
 
+def _conn_from_ident(ident: dict) -> tuple[str, str]:
+    """Status de conexão a partir do resolve_identity. ESTÁVEL exige token
+    válido COM ≥1 WABA — token válido mas 0 WABAs vira 'erro' (não engana o
+    usuário com badge verde numa porta que não dispara nada)."""
+    if not ident.get("valid"):
+        return "erro", ident.get("error") or "token inválido"
+    if (ident.get("waba_count") or 0) <= 0:
+        return "erro", "token válido mas 0 WABAs — confira o BM id / permissões"
+    return "estavel", "conexão ok ESTÁVEL"
+
+
 def _token_public(r: dict) -> dict:
     """Forma pública de uma porta — nunca expõe o token cifrado."""
     return {
@@ -184,15 +199,20 @@ async def add_meta_token(body: MetaTokenIn, user_id: str = Depends(_get_user_id)
     if not tok:
         raise HTTPException(400, "Token vazio")
 
-    existing = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).execute().data or []
+    existing = db.table("vendeai_meta_tokens").select("id,bm_id").eq("owner_id", user_id).execute().data or []
     if len(existing) >= MAX_META_TOKENS:
         raise HTTPException(400, f"Limite de {MAX_META_TOKENS} portas atingido")
 
     bm_id = (body.bm_id or "").strip() or None
+    # dedup por BM — evita 2 portas da mesma BM (mesmos números, meta_token_id ambíguo)
+    if bm_id and any((e.get("bm_id") or "") == bm_id for e in existing):
+        raise HTTPException(400, "Já existe uma porta para essa BM")
+
     ident = await MetaClient(tok).resolve_identity(bm_id=bm_id)
     if not ident.get("valid"):
         raise HTTPException(400, ident.get("error") or "Token Meta inválido")
 
+    status, detail = _conn_from_ident(ident)
     waba_ids = [w.strip() for w in (body.waba_ids or []) if w and w.strip()]
     row = {
         "owner_id": user_id,
@@ -202,8 +222,8 @@ async def add_meta_token(body: MetaTokenIn, user_id: str = Depends(_get_user_id)
         "bm_id": ident.get("bm_id") or bm_id,
         "bm_name": ident.get("bm_name"),
         "waba_count": ident.get("waba_count", 0),
-        "connection_status": "estavel",
-        "connection_detail": "conexão ok ESTÁVEL",
+        "connection_status": status,
+        "connection_detail": detail,
         "last_check_at": datetime.now(timezone.utc).isoformat(),
     }
     res = db.table("vendeai_meta_tokens").insert(row).execute()
@@ -221,17 +241,17 @@ async def test_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
         raise HTTPException(400, "Token corrompido (chave Fernet mudou). Recadastre a porta.")
 
     ident = await MetaClient(tok).resolve_identity(bm_id=rows[0].get("bm_id"))
-    ok = bool(ident.get("valid"))
+    status, detail = _conn_from_ident(ident)
     patch = {
-        "connection_status": "estavel" if ok else "erro",
-        "connection_detail": "conexão ok ESTÁVEL" if ok else (ident.get("error") or "falha de conexão"),
+        "connection_status": status,
+        "connection_detail": detail,
         "bm_id": ident.get("bm_id") or rows[0].get("bm_id"),
         "bm_name": ident.get("bm_name") or rows[0].get("bm_name"),
         "waba_count": ident.get("waba_count", rows[0].get("waba_count", 0)),
         "last_check_at": datetime.now(timezone.utc).isoformat(),
     }
     db.table("vendeai_meta_tokens").update(patch).eq("owner_id", user_id).eq("id", token_id).execute()
-    return {**_token_public({**rows[0], **patch}), "valid": ok, "error": ident.get("error")}
+    return {**_token_public({**rows[0], **patch}), "valid": bool(ident.get("valid")), "error": ident.get("error")}
 
 
 @router.patch("/meta-tokens/{token_id}")
@@ -254,9 +274,10 @@ async def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = 
 @router.delete("/meta-tokens/{token_id}")
 async def delete_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    db.table("vendeai_meta_tokens").delete().eq("owner_id", user_id).eq("id", token_id).execute()
-    # Limpa os números que vieram dessa porta (cache — refresh reconstrói).
+    # Números PRIMEIRO (cache da porta — refresh reconstrói), token DEPOIS.
+    # A FK ON DELETE SET NULL (migração 037) é só backstop p/ deleções externas.
     db.table("broadcast_numbers").delete().eq("owner_id", user_id).eq("meta_token_id", token_id).execute()
+    db.table("vendeai_meta_tokens").delete().eq("owner_id", user_id).eq("id", token_id).execute()
     return {"ok": True}
 
 
@@ -321,6 +342,12 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
 
     tokens = _load_meta_tokens(db, user_id)
     if not tokens:
+        # diferencia "não configurou" de "configurou mas token não decifra (rechave Fernet)"
+        raw = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).execute().data or []
+        legacy = db.table("vendeai_settings").select("meta_token_enc").eq("owner_id", user_id).execute().data
+        had_token = bool(raw) or bool(legacy and legacy[0].get("meta_token_enc"))
+        if had_token:
+            raise HTTPException(400, "Token Meta ilegível (chave Fernet mudou). Recadastre a porta.")
         raise HTTPException(400, "Configure o token Meta antes de sincronizar.")
 
     # ── Step 1: Meta discovery por porta (cada token = 1 BM) ─────────────────
@@ -348,14 +375,22 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             return out
         return await meta.get_all_phones_auto(bm_id=bm_id)
 
+    def _note(msg: str) -> None:
+        nonlocal meta_error
+        meta_error = (meta_error + " | " if meta_error else "") + msg
+
     for t in tokens:
+        label = t.get("label") or t.get("bm_name") or "porta"
         try:
             phones = await _phones_for_token(MetaClient(t["token"]), t.get("waba_ids") or [], t.get("bm_id"))
+            if not phones:
+                # porta sem números não é exceção, mas o usuário precisa saber
+                # (token sem WABAs / BM id errado / permissão revogada)
+                _note(f"{label}: 0 números encontrados")
             for p in phones:
                 collected.append((t.get("id"), t.get("bm_name"), p))
         except Exception as e:
-            label = t.get("label") or "porta"
-            meta_error = (meta_error + " | " if meta_error else "") + f"{label}: {e}"
+            _note(f"{label}: {e}")
 
     # ── Step 2: Chatwoot/VendeAI inboxes (não-fatal, creds únicas legadas) ───
     chatwoot_map: dict[str, str] = {}

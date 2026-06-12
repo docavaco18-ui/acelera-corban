@@ -260,8 +260,11 @@ def classify(convs: list[dict]) -> dict:
 def run_sync(db, owner_id: str, settings_row: dict, run_id: str) -> dict:
     """Roda pipeline completo. Atualiza chatwoot_sync_runs ao final."""
     # F1: token salvo encriptado no DB; decifra só na hora de usar.
-    # safe_decrypt: token salvo com chave Fernet antiga não derruba o sync com 500.
-    token = safe_decrypt(settings_row["api_token"]) or ""
+    # safe_decrypt + fail-fast: token com chave Fernet antiga falha com mensagem
+    # acionável (recadastrar) em vez de marchar com token vazio → 401 genérico.
+    token = safe_decrypt(settings_row["api_token"])
+    if not token:
+        raise RuntimeError("Token Chatwoot ilegível (chave Fernet mudou). Recadastre o token.")
     client = ChatwootClient(settings_row["chatwoot_url"], settings_row["account_id"], token)
 
     # 1. Pega leads do user

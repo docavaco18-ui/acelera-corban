@@ -90,9 +90,9 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     _pwd_fp = hashlib.md5((password or "").encode()).hexdigest()[:8]
     cache_key = f"{owner_id}:{email}:{account_id}:{_pwd_fp}:{_crm_fp}"
     if cache_key not in _vendeai_cache:
-        # cap simples pra não crescer sem limite entre muitos tenants/sessões
-        if len(_vendeai_cache) > 200:
-            _vendeai_cache.clear()
+        # evict LRU-ish (mais antigo) — evita wipe total que causa login-storm
+        if len(_vendeai_cache) >= 200:
+            _vendeai_cache.pop(next(iter(_vendeai_cache)), None)
         _vendeai_cache[cache_key] = VendeAIClient(email, password, account_id=account_id, crm_token=crm_token)
     vendeai = _vendeai_cache[cache_key]
 
@@ -156,7 +156,16 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
                 .eq("owner_id", owner_id) \
                 .execute()
             for num in (numbers_resp.data or []):
-                meta = clients.get(num.get("meta_token_id")) or default_client
+                tid = num.get("meta_token_id")
+                meta = clients.get(tid)
+                if meta is None:
+                    # porta legada (tid None) → token default; porta órfã (uuid
+                    # de token já deletado) NÃO consulta com token de outra BM
+                    # (evita 400 em loop + qualidade congelada).
+                    if tid is None:
+                        meta = default_client
+                    else:
+                        continue
                 if not meta:
                     continue
                 try:
