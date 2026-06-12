@@ -83,10 +83,16 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     except Exception:
         crm_token = None
 
-    # Reuse client — cache key includes token fingerprint so cache invalidates on token rotation
-    _tok_fp = hashlib.md5((crm_token or "").encode()).hexdigest()[:8]
-    cache_key = f"{owner_id}:{email}:{account_id}:{_tok_fp}"
+    # Reuse client — cache key inclui fingerprint de senha E token CRM, então
+    # rotacionar qualquer um invalida o client cacheado (antes só o token CRM
+    # estava na chave → troca de senha mantinha client velho).
+    _crm_fp = hashlib.md5((crm_token or "").encode()).hexdigest()[:8]
+    _pwd_fp = hashlib.md5((password or "").encode()).hexdigest()[:8]
+    cache_key = f"{owner_id}:{email}:{account_id}:{_pwd_fp}:{_crm_fp}"
     if cache_key not in _vendeai_cache:
+        # cap simples pra não crescer sem limite entre muitos tenants/sessões
+        if len(_vendeai_cache) > 200:
+            _vendeai_cache.clear()
         _vendeai_cache[cache_key] = VendeAIClient(email, password, account_id=account_id, crm_token=crm_token)
     vendeai = _vendeai_cache[cache_key]
 
@@ -116,7 +122,7 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
                             "sent_count": mailing.get("sent_count", 0),
                             "failed_count": mailing.get("failed_count", 0),
                             "last_poll_at": _utcnow(),
-                        }).eq("id", tracked_ids[mailing_id]).execute()
+                        }).eq("owner_id", owner_id).eq("id", tracked_ids[mailing_id]).execute()
                         found += 1
                 if len(results) < 100:
                     break  # no more pages
@@ -125,14 +131,34 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
         logger.warning(f"VendeAI poll failed for {owner_id}: {e}")
 
     # 2. Poll Meta API → update quality/tier
+    #    Multi-porta: cada número é consultado com o token da SUA BM (um token
+    #    não lê um número de uma BM que não acessa). Token legado = porta None.
+    clients: dict = {}
+    try:
+        token_rows = db.table("vendeai_meta_tokens") \
+            .select("id,meta_token_enc") \
+            .eq("owner_id", owner_id) \
+            .execute()
+        for tr in (token_rows.data or []):
+            tk = decrypt(tr.get("meta_token_enc")) if tr.get("meta_token_enc") else None
+            if tk:
+                clients[tr["id"]] = MetaClient(tk)
+    except Exception as e:
+        logger.warning(f"Load meta tokens failed for {owner_id}: {e}")
     if meta_token:
+        clients[None] = MetaClient(meta_token)
+
+    if clients:
+        default_client = clients.get(None) or next(iter(clients.values()), None)
         try:
-            meta = MetaClient(meta_token)
             numbers_resp = db.table("broadcast_numbers") \
-                .select("phone_id,quality_rating") \
+                .select("phone_id,quality_rating,meta_token_id") \
                 .eq("owner_id", owner_id) \
                 .execute()
             for num in (numbers_resp.data or []):
+                meta = clients.get(num.get("meta_token_id")) or default_client
+                if not meta:
+                    continue
                 try:
                     quality_data = await meta.get_phone_quality(num["phone_id"])
                     update_fields = {

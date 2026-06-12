@@ -32,8 +32,17 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     try:
         resp = db.auth.get_user(credentials.credentials)
         return resp.user.id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        # 401 só para token realmente inválido/expirado. Outras falhas
+        # (Supabase Auth fora do ar) viram 503 — senão o usuário é deslogado
+        # à toa em toda instabilidade transitória. (paridade aesir/chipcare)
+        msg = str(e).lower()
+        if any(k in msg for k in ("invalid", "expired", "jwt", "token", "unauthorized", "401")):
+            raise HTTPException(status_code=401, detail="Invalid token")
+        raise HTTPException(status_code=503, detail="Auth service unavailable")
+
+
+MAX_META_TOKENS = 10
 
 
 # ── Credentials ──────────────────────────────────────────────────────────────
@@ -102,6 +111,155 @@ async def get_credentials_status(user_id: str = Depends(_get_user_id)):
     }
 
 
+# ── Meta tokens (multi-BM — até 10 portas) ──────────────────────────────────────
+
+def _token_public(r: dict) -> dict:
+    """Forma pública de uma porta — nunca expõe o token cifrado."""
+    return {
+        "id": r.get("id"),
+        "label": r.get("label"),
+        "bm_id": r.get("bm_id"),
+        "bm_name": r.get("bm_name"),
+        "waba_count": r.get("waba_count", 0),
+        "connection_status": r.get("connection_status", "unknown"),
+        "connection_detail": r.get("connection_detail"),
+        "last_check_at": r.get("last_check_at"),
+    }
+
+
+def _load_meta_tokens(db, user_id: str) -> list[dict]:
+    """Todas as portas Meta do usuário com o token decifrado.
+    Fallback: se não houver portas (ou a tabela ainda não existir, ex. código
+    deployado antes da migração 036), usa o token único legado de vendeai_settings."""
+    try:
+        rows = db.table("vendeai_meta_tokens").select("*").eq("owner_id", user_id).order("created_at").execute().data or []
+    except Exception:
+        rows = []
+    out: list[dict] = []
+    for r in rows:
+        tok = safe_decrypt(r.get("meta_token_enc"))
+        if tok:
+            out.append({
+                "id": r.get("id"), "label": r.get("label"), "token": tok,
+                "waba_ids": r.get("waba_ids") or [], "bm_name": r.get("bm_name"),
+                "bm_id": r.get("bm_id"),
+            })
+    if not out:
+        legacy = db.table("vendeai_settings").select("meta_token_enc,waba_ids").eq("owner_id", user_id).execute().data
+        if legacy:
+            tok = safe_decrypt(legacy[0].get("meta_token_enc"))
+            if tok:
+                out.append({
+                    "id": None, "label": "Principal", "token": tok,
+                    "waba_ids": legacy[0].get("waba_ids") or [], "bm_name": None,
+                    "bm_id": None,
+                })
+    return out
+
+
+class MetaTokenIn(BaseModel):
+    label: Optional[str] = None
+    meta_token: str
+    bm_id: Optional[str] = None          # Portfólio empresarial — destrava descoberta p/ system user
+    waba_ids: Optional[list[str]] = None
+
+
+class MetaTokenPatch(BaseModel):
+    label: Optional[str] = None
+    bm_id: Optional[str] = None
+    waba_ids: Optional[list[str]] = None
+
+
+@router.get("/meta-tokens")
+async def list_meta_tokens(user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    rows = db.table("vendeai_meta_tokens").select("*").eq("owner_id", user_id).order("created_at").execute().data or []
+    return {"tokens": [_token_public(r) for r in rows], "max": MAX_META_TOKENS}
+
+
+@router.post("/meta-tokens")
+async def add_meta_token(body: MetaTokenIn, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    tok = (body.meta_token or "").strip()
+    if not tok:
+        raise HTTPException(400, "Token vazio")
+
+    existing = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).execute().data or []
+    if len(existing) >= MAX_META_TOKENS:
+        raise HTTPException(400, f"Limite de {MAX_META_TOKENS} portas atingido")
+
+    bm_id = (body.bm_id or "").strip() or None
+    ident = await MetaClient(tok).resolve_identity(bm_id=bm_id)
+    if not ident.get("valid"):
+        raise HTTPException(400, ident.get("error") or "Token Meta inválido")
+
+    waba_ids = [w.strip() for w in (body.waba_ids or []) if w and w.strip()]
+    row = {
+        "owner_id": user_id,
+        "label": (body.label or "").strip() or ident.get("bm_name") or "Porta",
+        "meta_token_enc": encrypt(tok),
+        "waba_ids": waba_ids,
+        "bm_id": ident.get("bm_id") or bm_id,
+        "bm_name": ident.get("bm_name"),
+        "waba_count": ident.get("waba_count", 0),
+        "connection_status": "estavel",
+        "connection_detail": "conexão ok ESTÁVEL",
+        "last_check_at": datetime.now(timezone.utc).isoformat(),
+    }
+    res = db.table("vendeai_meta_tokens").insert(row).execute()
+    return _token_public(res.data[0] if res.data else row)
+
+
+@router.post("/meta-tokens/{token_id}/test")
+async def test_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    rows = db.table("vendeai_meta_tokens").select("*").eq("owner_id", user_id).eq("id", token_id).execute().data
+    if not rows:
+        raise HTTPException(404, "Porta não encontrada")
+    tok = safe_decrypt(rows[0].get("meta_token_enc"))
+    if not tok:
+        raise HTTPException(400, "Token corrompido (chave Fernet mudou). Recadastre a porta.")
+
+    ident = await MetaClient(tok).resolve_identity(bm_id=rows[0].get("bm_id"))
+    ok = bool(ident.get("valid"))
+    patch = {
+        "connection_status": "estavel" if ok else "erro",
+        "connection_detail": "conexão ok ESTÁVEL" if ok else (ident.get("error") or "falha de conexão"),
+        "bm_id": ident.get("bm_id") or rows[0].get("bm_id"),
+        "bm_name": ident.get("bm_name") or rows[0].get("bm_name"),
+        "waba_count": ident.get("waba_count", rows[0].get("waba_count", 0)),
+        "last_check_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("vendeai_meta_tokens").update(patch).eq("owner_id", user_id).eq("id", token_id).execute()
+    return {**_token_public({**rows[0], **patch}), "valid": ok, "error": ident.get("error")}
+
+
+@router.patch("/meta-tokens/{token_id}")
+async def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    rows = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).eq("id", token_id).execute().data
+    if not rows:
+        raise HTTPException(404, "Porta não encontrada")
+    patch: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if body.label is not None:
+        patch["label"] = body.label.strip() or "Porta"
+    if body.bm_id is not None:
+        patch["bm_id"] = body.bm_id.strip() or None
+    if body.waba_ids is not None:
+        patch["waba_ids"] = [w.strip() for w in body.waba_ids if w and w.strip()]
+    db.table("vendeai_meta_tokens").update(patch).eq("owner_id", user_id).eq("id", token_id).execute()
+    return {"ok": True}
+
+
+@router.delete("/meta-tokens/{token_id}")
+async def delete_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
+    db = get_db()
+    db.table("vendeai_meta_tokens").delete().eq("owner_id", user_id).eq("id", token_id).execute()
+    # Limpa os números que vieram dessa porta (cache — refresh reconstrói).
+    db.table("broadcast_numbers").delete().eq("owner_id", user_id).eq("meta_token_id", token_id).execute()
+    return {"ok": True}
+
+
 # ── Numbers ───────────────────────────────────────────────────────────────────
 
 @router.get("/numbers")
@@ -134,10 +292,12 @@ class WabaIdsIn(BaseModel):
 @router.post("/waba-ids")
 async def save_waba_ids(body: WabaIdsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    db.table("vendeai_settings").upsert({
-        "owner_id": user_id,
-        "waba_ids": body.waba_ids,
-    }, on_conflict="owner_id").execute()
+    # Update-only: não cria row órfã (sem email/senha) — isso furava a trava
+    # de "Email e senha obrigatórios na primeira gravação" do save_credentials.
+    existing = db.table("vendeai_settings").select("owner_id").eq("owner_id", user_id).execute().data
+    if not existing:
+        raise HTTPException(400, "Configure as credenciais antes dos WABA IDs")
+    db.table("vendeai_settings").update({"waba_ids": body.waba_ids}).eq("owner_id", user_id).execute()
     return {"ok": True, "waba_ids": body.waba_ids}
 
 
@@ -158,74 +318,83 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     Números Meta sem match Chatwoot ainda são salvos (chatwoot_connected=False).
     """
     db = get_db()
-    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
-    if not creds.data:
-        raise HTTPException(400, "Configure credenciais primeiro")
 
-    meta_token = safe_decrypt(creds.data.get("meta_token_enc"))
-    vendeai_email = safe_decrypt(creds.data.get("email_enc"))
-    vendeai_pass = safe_decrypt(creds.data.get("password_enc"))
-    account_id = creds.data.get("account_id")
-    crm_token = safe_decrypt(creds.data.get("crm_token_enc"))
-    waba_ids: list[str] = creds.data.get("waba_ids") or []
-
-    if not meta_token:
+    tokens = _load_meta_tokens(db, user_id)
+    if not tokens:
         raise HTTPException(400, "Configure o token Meta antes de sincronizar.")
 
-    # ── Step 1: Meta discovery (independente do CRM) ─────────────────────────
+    # ── Step 1: Meta discovery por porta (cada token = 1 BM) ─────────────────
     meta_error: str | None = None
-    meta_phones_list: list[dict] = []
-    meta = MetaClient(meta_token)
-    try:
+    collected: list[tuple[Any, Any, dict]] = []   # (meta_token_id, bm_name, phone)
+
+    async def _phones_for_token(meta: MetaClient, waba_ids: list[str], bm_id: str | None) -> list[dict]:
         if waba_ids:
-            async def _safe_phones(wid: str):
+            async def _safe(wid: str):
                 try:
-                    waba_info = await meta.get_waba_info(wid)
+                    info = await meta.get_waba_info(wid)
                     phones = await meta.get_all_phones(wid)
                     for p in phones:
-                        p["waba_name"] = waba_info.get("name", "")
-                        p["account_review_status"] = waba_info.get("account_review_status", "UNKNOWN")
-                        p["business_verification_status"] = waba_info.get("business_verification_status", "unknown")
-                        p["waba_currency"] = waba_info.get("currency", "")
-                        p["waba_country"] = waba_info.get("country", "")
+                        p["waba_name"] = info.get("name", "")
+                        p["account_review_status"] = info.get("account_review_status", "UNKNOWN")
+                        p["business_verification_status"] = info.get("business_verification_status", "unknown")
+                        p["waba_currency"] = info.get("currency", "")
+                        p["waba_country"] = info.get("country", "")
                     return phones
                 except Exception:
                     return []
-            results = await asyncio.gather(*[_safe_phones(w) for w in waba_ids])
-            for phones in results:
-                meta_phones_list.extend(phones)
-        else:
-            meta_phones_list = await meta.get_all_phones_auto()
-    except Exception as e:
-        meta_error = str(e)
+            out: list[dict] = []
+            for chunk in await asyncio.gather(*[_safe(w) for w in waba_ids]):
+                out.extend(chunk)
+            return out
+        return await meta.get_all_phones_auto(bm_id=bm_id)
 
-    # ── Step 2: Chatwoot/VendeAI inboxes (não-fatal) ─────────────────────────
+    for t in tokens:
+        try:
+            phones = await _phones_for_token(MetaClient(t["token"]), t.get("waba_ids") or [], t.get("bm_id"))
+            for p in phones:
+                collected.append((t.get("id"), t.get("bm_name"), p))
+        except Exception as e:
+            label = t.get("label") or "porta"
+            meta_error = (meta_error + " | " if meta_error else "") + f"{label}: {e}"
+
+    # ── Step 2: Chatwoot/VendeAI inboxes (não-fatal, creds únicas legadas) ───
     chatwoot_map: dict[str, str] = {}
     chatwoot_error: str | None = None
-    if vendeai_email and vendeai_pass:
-        try:
-            va = VendeAIClient(vendeai_email, vendeai_pass, account_id=account_id, crm_token=crm_token)
-            inboxes = await va.list_inboxes()
-            for inbox in inboxes:
-                raw_phone = inbox.get("phone_number") or inbox.get("phone") or ""
-                digits = "".join(c for c in raw_phone if c.isdigit())
-                if len(digits) >= 8:
-                    key = digits[-10:]
-                    chatwoot_map[key] = str(inbox.get("id") or inbox.get("inbox_id") or "")
-        except Exception as e:
-            chatwoot_error = str(e)
+    settings_row = db.table("vendeai_settings").select(
+        "email_enc,password_enc,account_id,crm_token_enc"
+    ).eq("owner_id", user_id).execute().data
+    if settings_row:
+        s = settings_row[0]
+        vendeai_email = safe_decrypt(s.get("email_enc"))
+        vendeai_pass = safe_decrypt(s.get("password_enc"))
+        if vendeai_email and vendeai_pass:
+            try:
+                va = VendeAIClient(
+                    vendeai_email, vendeai_pass,
+                    account_id=s.get("account_id"),
+                    crm_token=safe_decrypt(s.get("crm_token_enc")),
+                )
+                inboxes = await va.list_inboxes()
+                for inbox in inboxes:
+                    raw_phone = inbox.get("phone_number") or inbox.get("phone") or ""
+                    digits = "".join(c for c in raw_phone if c.isdigit())
+                    if len(digits) >= 8:
+                        chatwoot_map[digits[-10:]] = str(inbox.get("id") or inbox.get("inbox_id") or "")
+            except Exception as e:
+                chatwoot_error = str(e)
 
-    # ── Step 3: Upsert each Meta phone (com ou sem match Chatwoot) ───────────
+    # ── Step 3: Upsert cada número Meta (marca a porta/BM de origem) ──────────
     now_iso = datetime.now(timezone.utc).isoformat()
     updated: list[str] = []
 
-    for p in meta_phones_list:
+    for token_id, bm_name, p in collected:
         digits = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
         suffix = digits[-10:] if len(digits) >= 10 else digits
         inbox_id = chatwoot_map.get(suffix)
 
         record = {
             "owner_id": user_id,
+            "meta_token_id": token_id,
             "waba_id": p.get("waba_id") or "",
             "phone_id": p.get("phone_id") or "",
             "display_phone": p.get("display_phone") or "",
@@ -243,7 +412,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "additional_info": p.get("additional_info") or [],
             "has_payment_issue": p.get("has_payment_issue", False),
             "display_name_pending": p.get("display_name_pending", False),
-            "waba_name": p.get("waba_name"),
+            "waba_name": p.get("waba_name") or bm_name,
             "account_review_status": p.get("account_review_status"),
             "business_verification_status": p.get("business_verification_status"),
             "waba_currency": p.get("waba_currency"),
@@ -256,15 +425,16 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         try:
             db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
             updated.append(p.get("phone_id") or "")
-        except Exception:
-            pass  # uma falha não mata os outros
+        except Exception as e:
+            log.warning(f"broadcast_numbers upsert falhou owner={user_id} phone={p.get('phone_id')}: {e}")
 
     return {
         "ok": True,
         "updated": updated,
         "total": len(updated),
-        "meta_total": len(meta_phones_list),
-        "chatwoot_matched": sum(1 for p in meta_phones_list
+        "meta_total": len(collected),
+        "tokens": len(tokens),
+        "chatwoot_matched": sum(1 for _, _, p in collected
                                 if chatwoot_map.get(("".join(c for c in (p.get("display_phone") or "") if c.isdigit()))[-10:])),
         "chatwoot_inboxes_found": len(chatwoot_map),
         "meta_error": meta_error,

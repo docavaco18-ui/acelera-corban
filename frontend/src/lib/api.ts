@@ -639,6 +639,14 @@ export const broadcastApi = {
   getCredentialsStatus: () => broadcastAxios.get("/api/broadcast/credentials"),
   saveCredentials: (data: { email?: string; password?: string; meta_token?: string; account_id?: string; crm_token?: string }) =>
     broadcastAxios.post("/api/broadcast/credentials", data),
+  // Multi-token Meta — até 10 portas (cada porta = 1 Business Manager)
+  listMetaTokens: () => broadcastAxios.get<{ tokens: any[]; max: number }>("/api/broadcast/meta-tokens"),
+  addMetaToken: (data: { label?: string; meta_token: string; bm_id?: string; waba_ids?: string[] }) =>
+    broadcastAxios.post("/api/broadcast/meta-tokens", data),
+  testMetaToken: (id: string) => broadcastAxios.post(`/api/broadcast/meta-tokens/${id}/test`),
+  updateMetaToken: (id: string, data: { label?: string; waba_ids?: string[] }) =>
+    broadcastAxios.patch(`/api/broadcast/meta-tokens/${id}`, data),
+  deleteMetaToken: (id: string) => broadcastAxios.delete(`/api/broadcast/meta-tokens/${id}`),
   listNumbers: () => broadcastAxios.get<any[]>("/api/broadcast/numbers"),
   refreshNumbers: () => broadcastAxios.post<{
     ok: boolean;

@@ -173,119 +173,223 @@ function CredentialsPanel({ onSaved }: { onSaved: () => void }) {
 
 // ── Meta Panel ──────────────────────────────────────────────────────────────
 
+// ── Meta — Portas de Conexão (multi-token, até 10 BMs) ──────────────────────
+type MetaTokenRow = {
+  id: string;
+  label?: string;
+  bm_id?: string | null;
+  bm_name?: string | null;
+  waba_count?: number;
+  connection_status?: 'estavel' | 'erro' | 'unknown';
+  connection_detail?: string | null;
+  last_check_at?: string | null;
+};
+
+function StatusBadge({ status, detail }: { status?: string; detail?: string | null }) {
+  if (status === 'estavel') {
+    return (
+      <span style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6, color: '#10b981',
+        background: 'rgba(16,185,129,.12)', border: '1px solid rgba(16,185,129,.35)',
+        borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 800, letterSpacing: '0.06em',
+      }}>
+        <PulseDot color="#10b981" /> ✓ CONEXÃO OK ESTÁVEL
+      </span>
+    );
+  }
+  if (status === 'erro') {
+    return (
+      <span title={detail || ''} style={{
+        color: '#ef4444', background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.35)',
+        borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 800, letterSpacing: '0.06em',
+      }}>
+        ⚠ ERRO{detail ? ` · ${detail}` : ''}
+      </span>
+    );
+  }
+  return (
+    <span style={{
+      color: C.muted, background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+      borderRadius: 6, padding: '4px 10px', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
+    }}>
+      NÃO TESTADO
+    </span>
+  );
+}
+
 function MetaPanel({ onSaved }: { onSaved: () => void }) {
-  const [metaOk, setMetaOk] = useState(false);
-  const [savedWabaIds, setSavedWabaIds] = useState<string[]>([]);
-  const [tok, setTok] = useState('');
-  const [wabaText, setWabaText] = useState('');
+  const [tokens, setTokens] = useState<MetaTokenRow[]>([]);
+  const [max, setMax] = useState(10);
+  const [loaded, setLoaded] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [newLabel, setNewLabel] = useState('');
+  const [newTok, setNewTok] = useState('');
+  const [newBm, setNewBm] = useState('');
+  const [newWaba, setNewWaba] = useState('');
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
-  const [expanded, setExpanded] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  useEffect(() => {
-    broadcastApi.getCredentialsStatus().then((r: any) => {
-      const d = r.data ?? r;
-      setMetaOk(d.meta_configured || false);
-      if (d.waba_ids?.length) setSavedWabaIds(d.waba_ids);
-      setExpanded(!d.meta_configured);
-      setLoaded(true);
-    }).catch(() => { setExpanded(true); setLoaded(true); });
-  }, []);
-
-  const save = async () => {
-    if (!tok.trim() && !wabaText.trim()) { setMsg('Informe o token ou WABA IDs'); return; }
-    if (!metaOk && !tok.trim()) { setMsg('Primeira gravação exige o token'); return; }
-    setSaving(true);
+  const load = async () => {
     try {
-      if (tok.trim()) await broadcastApi.saveCredentials({ meta_token: tok.trim() });
-      const waba_ids = wabaText.split('\n').map((s: string) => s.trim()).filter(Boolean);
-      if (waba_ids.length) await broadcastApi.saveWabaIds(waba_ids);
-      setMetaOk(true);
-      if (waba_ids.length) setSavedWabaIds(waba_ids);
-      setTok(''); setWabaText('');
-      setMsg('Salvo!');
+      const r: any = await broadcastApi.listMetaTokens();
+      const d = r.data ?? r;
+      setTokens(d.tokens || []);
+      setMax(d.max || 10);
+    } catch { /* silencioso — UI mostra estado vazio */ }
+    finally { setLoaded(true); }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const addPort = async () => {
+    if (!newTok.trim()) { setMsg('Cole o token do System User'); return; }
+    setSaving(true); setMsg('Conectando à BM...');
+    try {
+      const waba_ids = newWaba.split('\n').map((s: string) => s.trim()).filter(Boolean);
+      await broadcastApi.addMetaToken({
+        label: newLabel.trim() || undefined,
+        meta_token: newTok.trim(),
+        bm_id: newBm.trim() || undefined,
+        waba_ids,
+      });
+      setNewTok(''); setNewLabel(''); setNewBm(''); setNewWaba(''); setAdding(false); setMsg('');
+      await load();
       onSaved();
-      setTimeout(() => { setExpanded(false); setMsg(''); }, 800);
-    } catch (e: any) { setMsg('Erro: ' + (e?.response?.data?.detail || e?.message)); }
-    finally { setSaving(false); }
+    } catch (e: any) {
+      setMsg('Erro: ' + (e?.response?.data?.detail || e?.message));
+    } finally { setSaving(false); }
+  };
+
+  const testPort = async (id: string) => {
+    setBusyId(id);
+    try {
+      const r: any = await broadcastApi.testMetaToken(id);
+      const d = r.data ?? r;
+      setTokens(ts => ts.map(t => (t.id === id ? { ...t, ...d } : t)));
+    } catch { /* mantém estado */ }
+    finally { setBusyId(null); }
+  };
+
+  const removePort = async (id: string) => {
+    setBusyId(id);
+    try { await broadcastApi.deleteMetaToken(id); await load(); onSaved(); }
+    catch { /* ignore */ }
+    finally { setBusyId(null); }
   };
 
   if (!loaded) return null;
 
-  if (!expanded) {
-    const detail = savedWabaIds.length ? `${savedWabaIds.length} WABA(s)` : 'auto-descoberta ativa';
-    return (
-      <CollapsedChip
-        icon="📡" gradient={G.cyan} dotColor="#06b6d4"
-        title="Meta BM OK"
-        detail={detail}
-        onEdit={() => setExpanded(true)}
-      />
-    );
-  }
-
   return (
     <div style={glassCard(G.cyan)}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 20, justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 12, background: G.cyan,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 22, boxShadow: '0 4px 16px rgba(0,0,0,.3)',
-          }}>📡</div>
-          <div>
-            <h2 style={{ ...sectionTitle(G.cyan), marginBottom: 0 }}>Meta Business Manager</h2>
-            {metaOk && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                <PulseDot color="#06b6d4" />
-                <span style={{ color: '#06b6d4', fontSize: 13 }}>Editando configuração existente</span>
-              </div>
-            )}
+      {/* header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 12, background: G.cyan,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22,
+          boxShadow: '0 4px 16px rgba(0,0,0,.3)',
+        }}>📡</div>
+        <div>
+          <h2 style={{ ...sectionTitle(G.cyan), marginBottom: 0 }}>Meta — Portas de Conexão</h2>
+          <span style={{ color: C.sec, fontSize: 12 }}>
+            {tokens.length}/{max} portas · cada porta = 1 Business Manager
+          </span>
+        </div>
+      </div>
+
+      {/* lista de portas */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {tokens.length === 0 && (
+          <div style={{ color: C.muted, fontSize: 13, padding: '8px 2px' }}>
+            Nenhuma porta conectada. Adicione o token do System User da sua BM abaixo.
           </div>
-        </div>
-        {metaOk && (
-          <button onClick={() => { setExpanded(false); setMsg(''); setTok(''); setWabaText(''); }}
-            style={{
-              background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
-              color: C.sec, borderRadius: 8, padding: '6px 14px',
-              cursor: 'pointer', fontSize: 12, fontWeight: 600,
-            }}>
-            ✕ Ocultar
-          </button>
         )}
+        {tokens.map(t => (
+          <div key={t.id} style={{
+            background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.08)',
+            borderRadius: 12, padding: '12px 16px',
+            display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'space-between', flexWrap: 'wrap',
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>
+              <span style={{ fontSize: 18 }}>🏢</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ color: C.text, fontWeight: 800, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {t.bm_name || t.label || 'BM'}
+                </div>
+                <div style={{ color: C.muted, fontSize: 11 }}>
+                  {t.waba_count ?? 0} WABA(s){t.label && t.bm_name && t.label !== t.bm_name ? ` · ${t.label}` : ''}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <StatusBadge status={t.connection_status} detail={t.connection_detail} />
+              <button onClick={() => testPort(t.id)} disabled={busyId === t.id}
+                style={{
+                  background: 'rgba(6,182,212,.12)', border: '1px solid rgba(6,182,212,.3)',
+                  color: '#22d3ee', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                }}>
+                {busyId === t.id ? '⟳' : '↻ Testar'}
+              </button>
+              <button onClick={() => removePort(t.id)} disabled={busyId === t.id} title="Remover porta"
+                style={{
+                  background: 'rgba(239,68,68,.1)', border: '1px solid rgba(239,68,68,.3)',
+                  color: '#f87171', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 12, fontWeight: 700,
+                }}>
+                ✕
+              </button>
+            </div>
+          </div>
+        ))}
       </div>
 
-      <p style={{ color: C.sec, fontSize: 14, marginBottom: 16, lineHeight: 1.6 }}>
-        Token permanente do System User BM.{' '}
-        <span style={{ color: C.text, fontWeight: 600 }}>WABA IDs são opcionais</span> — o token auto-descobre todos os WABAs da BM ao Refresh.
-      </p>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div>
-          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            System User Token
-          </label>
-          <input className="ds-input" style={INPUT_STYLE} type="password"
-            placeholder={metaOk ? '••••••••  (salvo — em branco = manter)' : 'EAAOKxO1...'}
-            value={tok} onChange={e => setTok(e.target.value)} />
+      {/* adicionar porta */}
+      {tokens.length < max && (
+        <div style={{ marginTop: 14 }}>
+          {!adding ? (
+            <button className="ds-btn" onClick={() => { setAdding(true); setMsg(''); }}
+              style={{ ...btnStyle(G.cyan, false), width: '100%' }}>
+              + Adicionar porta ({tokens.length}/{max})
+            </button>
+          ) : (
+            <div style={{
+              display: 'flex', flexDirection: 'column', gap: 10,
+              border: '1px solid rgba(6,182,212,.25)', borderRadius: 12, padding: 14,
+            }}>
+              <p style={{ color: C.sec, fontSize: 13, margin: 0, lineHeight: 1.5 }}>
+                Cole o <span style={{ color: C.text, fontWeight: 600 }}>System User Token</span> da BM.
+                Ao conectar, trago o nome da BM e marco <span style={{ color: '#10b981', fontWeight: 700 }}>conexão ok ESTÁVEL</span>.
+              </p>
+              <input className="ds-input" style={INPUT_STYLE} placeholder="Apelido (opcional — ex: BM Principal)"
+                value={newLabel} onChange={e => setNewLabel(e.target.value)} />
+              <input className="ds-input" style={INPUT_STYLE} type="password" placeholder="System User Token (EAA...)"
+                value={newTok} onChange={e => setNewTok(e.target.value)} />
+              <div>
+                <input className="ds-input" style={INPUT_STYLE} placeholder="ID do Portfólio Empresarial / BM (recomendado)"
+                  value={newBm} onChange={e => setNewBm(e.target.value)} />
+                <span style={{ color: '#f59e0b', fontSize: 11, marginTop: 4, display: 'block' }}>
+                  ⚡ Para token System User, informe o BM id — garante que TODAS as WABAs sejam puxadas.
+                </span>
+              </div>
+              <textarea className="ds-input" style={{ ...INPUT_STYLE, height: 60, resize: 'vertical', fontFamily: 'monospace' }}
+                placeholder={'WABA IDs (opcional — vazio = auto-descoberta)'}
+                value={newWaba} onChange={e => setNewWaba(e.target.value)} />
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button className="ds-btn" style={btnStyle(G.cyan, saving)} onClick={addPort} disabled={saving}>
+                  {saving ? '⟳ Conectando...' : '🔌 Conectar BM'}
+                </button>
+                <button onClick={() => { setAdding(false); setMsg(''); setNewTok(''); setNewLabel(''); setNewWaba(''); }}
+                  style={{
+                    background: 'rgba(255,255,255,.04)', border: '1px solid rgba(255,255,255,.1)',
+                    color: C.sec, borderRadius: 8, padding: '8px 14px', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                  }}>
+                  Cancelar
+                </button>
+                {msg && <span style={{ color: msg.startsWith('Erro') ? C.red : C.sec, fontSize: 12 }}>{msg}</span>}
+              </div>
+            </div>
+          )}
         </div>
-        <div>
-          <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>
-            WABA IDs
-            <span style={{ color: '#7c3aed', marginLeft: 8, fontWeight: 400, textTransform: 'none', fontSize: 11 }}>opcional — deixe vazio para auto-descoberta</span>
-          </label>
-          <textarea className="ds-input" style={{ ...INPUT_STYLE, height: 72, resize: 'vertical', fontFamily: 'monospace' }}
-            placeholder={'Opcional — token auto-descobre\n123456789\n987654321'}
-            value={wabaText} onChange={e => setWabaText(e.target.value)} />
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
-          <button className="ds-btn" style={btnStyle(G.cyan, saving)} onClick={save} disabled={saving}>
-            {saving ? '⟳ Salvando...' : '💾 Salvar e Ocultar'}
-          </button>
-          {msg && <span style={{ color: msg.startsWith('Erro') ? C.red : '#10b981', fontSize: 12 }}>{msg}</span>}
-        </div>
-      </div>
+      )}
     </div>
   );
 }

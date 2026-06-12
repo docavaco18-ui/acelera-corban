@@ -118,22 +118,40 @@ class MetaClient:
         # URLs de log (httpx inclui a URL completa em erros) e no paging.next
         self._auth = {"Authorization": f"Bearer {access_token}"}
 
-    async def discover_wabas(self) -> list[str]:
+    async def discover_wabas(self, bm_id: str | None = None) -> list[str]:
         """Auto-discover WABA IDs accessible by this token.
 
         Strategy (multi-prong, each non-fatal):
+          0. bm_id explícito (Portfólio) → /{bm}/owned + client_whatsapp_business_accounts
           1. debug_token → granular_scopes target_ids → owned_whatsapp_business_accounts
           2. /me/businesses → /{biz}/owned_whatsapp_business_accounts
           3. /me/assigned_whatsapp_business_accounts (direct SU assignments)
           4. Fallback seed list (META_WABA_FALLBACK_IDS env) — validated 1-by-1
 
-        Tokens issued by apps like "CLAUDE DISPARO" return empty for 1-3, so the
-        env fallback is the only viable path. We probe each seed ID to filter
-        out any the current token can't actually access.
+        Tokens de apps "CLAUDE DISPARO"/system users costumam voltar VAZIO em
+        1-3 (target_ids vazio + /me/businesses vazio). Pra esses, o caminho
+        confiável é a Strategy 0 (BM id que o usuário informa) ou o seed env.
         """
         waba_ids: list[str] = []
 
         async with httpx.AsyncClient(timeout=15) as client:
+            # ── Strategy 0: BM id explícito (o mais confiável p/ system user) ─
+            if bm_id:
+                for edge in ("owned_whatsapp_business_accounts", "client_whatsapp_business_accounts"):
+                    try:
+                        r0 = await client.get(
+                            f"{META_BASE}/{bm_id}/{edge}",
+                            params={"fields": "id,name", "limit": 200},
+                            headers=self._auth,
+                        )
+                        if r0.status_code == 200:
+                            for waba in r0.json().get("data", []):
+                                wid = str(waba.get("id", ""))
+                                if wid and wid not in waba_ids:
+                                    waba_ids.append(wid)
+                    except Exception:
+                        continue
+
             # ── Strategy 1: debug_token granular_scopes ──────────────────────
             try:
                 r = await client.get(
@@ -209,22 +227,102 @@ class MetaClient:
             except Exception:
                 pass
 
-            # ── Strategy 4: env fallback list (validated) ────────────────────
-            if not waba_ids and META_WABA_FALLBACK_IDS:
-                for wid in META_WABA_FALLBACK_IDS:
-                    try:
-                        rv = await client.get(
-                            f"{META_BASE}/{wid}",
-                            params={"fields": "id,name"},
-                            headers=self._auth,
-                            timeout=8,
-                        )
-                        if rv.status_code == 200 and rv.json().get("id"):
-                            waba_ids.append(wid)
-                    except Exception:
-                        continue
+            # ── Strategy 4: env fallback list (validated, always merged) ─────
+            # Antes só rodava se 1-3 voltassem vazias — isso descartava BMs
+            # quando o token via 1 BM granular mas outras só por seed. Agora
+            # sempre mescla; o probe 1-a-1 garante que só entram WABAs que
+            # ESTE token consegue acessar (sem vazar entre tenants).
+            for wid in META_WABA_FALLBACK_IDS:
+                if wid in waba_ids:
+                    continue
+                try:
+                    rv = await client.get(
+                        f"{META_BASE}/{wid}",
+                        params={"fields": "id,name"},
+                        headers=self._auth,
+                        timeout=8,
+                    )
+                    if rv.status_code == 200 and rv.json().get("id"):
+                        waba_ids.append(wid)
+                except Exception:
+                    continue
 
         return waba_ids
+
+    async def resolve_identity(self, bm_id: str | None = None) -> dict:
+        """Valida o token e resolve o nome do Business Manager para o UX
+        "conexão ok ESTÁVEL". Retorna:
+          {valid, bm_id, bm_name, app, waba_count, error}
+
+        Se `bm_id` (Portfólio) for informado, usa ele direto pra nome da BM e
+        contagem de WABAs — caminho confiável p/ tokens system user que voltam
+        vazio em /me/businesses (ex: apps DISPARO / CLAUDE DISPARO).
+        """
+        out: dict = {
+            "valid": False, "bm_id": None, "bm_name": None,
+            "app": None, "waba_count": 0, "error": None,
+        }
+        async with httpx.AsyncClient(timeout=15) as client:
+            # 1. debug_token → validade + app
+            try:
+                r = await client.get(
+                    f"{META_BASE}/debug_token",
+                    params={"input_token": self.access_token},
+                    headers=self._auth,
+                )
+                data = (r.json() or {}).get("data", {})
+                if not data.get("is_valid"):
+                    out["error"] = "Token inválido ou expirado"
+                    return out
+                out["valid"] = True
+                out["app"] = data.get("application")
+            except Exception as e:
+                out["error"] = f"Falha ao validar token: {e}"
+                return out
+
+            # 2a. BM id explícito → nome da BM direto (caminho confiável)
+            if bm_id:
+                try:
+                    rbm = await client.get(
+                        f"{META_BASE}/{bm_id}",
+                        params={"fields": "id,name"},
+                        headers=self._auth,
+                    )
+                    if rbm.status_code == 200:
+                        j = rbm.json() or {}
+                        out["bm_id"] = str(j.get("id") or bm_id) or None
+                        out["bm_name"] = j.get("name") or out["bm_name"]
+                except Exception:
+                    pass
+
+            # 2b. Nome da BM via /me/businesses (1ª business possuída)
+            if not out["bm_name"]:
+                try:
+                    rb = await client.get(
+                        f"{META_BASE}/me/businesses",
+                        params={"fields": "id,name", "limit": 1},
+                        headers=self._auth,
+                    )
+                    biz = (rb.json() or {}).get("data") or []
+                    if biz:
+                        out["bm_id"] = out["bm_id"] or (str(biz[0].get("id") or "") or None)
+                        out["bm_name"] = biz[0].get("name")
+                except Exception:
+                    pass
+
+        # 3. Contagem de WABAs (+ nome da BM via 1ª WABA se ainda sem nome)
+        try:
+            wabas = await self.discover_wabas(bm_id=bm_id)
+            out["waba_count"] = len(wabas)
+            if not out["bm_name"] and wabas:
+                info = await self.get_waba_info(wabas[0])
+                out["bm_name"] = info.get("name") or None
+        except Exception:
+            pass
+
+        if not out["bm_name"]:
+            out["bm_name"] = "BM (sem nome)"
+        return out
 
     async def get_waba_info(self, waba_id: str) -> dict:
         """Fetch WABA-level fields: account review, business verification, currency, country."""
@@ -240,10 +338,10 @@ class MetaClient:
                 return {}
             return r.json()
 
-    async def get_all_phones_auto(self) -> list[dict]:
-        """Discover WABAs from token then fetch all phone numbers — no manual WABA IDs needed.
+    async def get_all_phones_auto(self, bm_id: str | None = None) -> list[dict]:
+        """Discover WABAs from token (ou via BM id) then fetch all phone numbers.
         Each phone is enriched with WABA-level review/verification fields."""
-        waba_ids = await self.discover_wabas()
+        waba_ids = await self.discover_wabas(bm_id=bm_id)
         all_phones: list[dict] = []
         for wid in waba_ids:
             try:

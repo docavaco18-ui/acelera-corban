@@ -68,7 +68,7 @@ async def evaluate_and_intervene(
                         pass
                 db.table("broadcast_dispatch_assignments").update({
                     "status": "paused"
-                }).eq("id", asn["id"]).execute()
+                }).eq("owner_id", owner_id).eq("id", asn["id"]).execute()
                 db.table("broadcast_numbers").update({
                     "is_paused": True
                 }).eq("owner_id", owner_id).eq("phone_id", phone_id).execute()
@@ -92,7 +92,7 @@ async def evaluate_and_intervene(
                         pass
                 db.table("broadcast_dispatch_assignments").update({
                     "status": "paused"
-                }).eq("id", asn["id"]).execute()
+                }).eq("owner_id", owner_id).eq("id", asn["id"]).execute()
 
         # Trigger 3: quality YELLOW — warn only
         elif quality == "YELLOW":
@@ -197,7 +197,7 @@ async def _attempt_failover(
         new_planned = (existing.data[0]["planned_count"] or 0) + remaining
         db.table("broadcast_dispatch_assignments").update({
             "planned_count": new_planned
-        }).eq("id", asn_id).execute()
+        }).eq("owner_id", owner_id).eq("id", asn_id).execute()
     else:
         db.table("broadcast_dispatch_assignments").insert({
             "dispatch_id": dispatch_id,
