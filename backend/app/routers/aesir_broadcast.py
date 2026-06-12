@@ -129,7 +129,7 @@ class AesirMetaCredsIn(BaseModel):
 
 
 @router.post("/credentials")
-async def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_id)):
+def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
     payload = {
         "owner_id": user_id,
@@ -142,7 +142,7 @@ async def save_credentials(body: AesirCredsIn, user_id: str = Depends(_get_user_
 
 
 @router.post("/meta-credentials")
-async def save_meta_credentials(body: AesirMetaCredsIn, user_id: str = Depends(_get_user_id)):
+def save_meta_credentials(body: AesirMetaCredsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
     existing = db.table("aesir_settings").select("owner_id").eq("owner_id", user_id).execute()
     if not existing.data:
@@ -158,7 +158,7 @@ async def save_meta_credentials(body: AesirMetaCredsIn, user_id: str = Depends(_
 
 
 @router.get("/credentials")
-async def get_credentials(user_id: str = Depends(_get_user_id)):
+def get_credentials(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("aesir_settings").select("owner_id, account_id, meta_token_enc, waba_ids, updated_at").eq("owner_id", user_id).execute()
     if not resp.data:
@@ -176,21 +176,21 @@ async def get_credentials(user_id: str = Depends(_get_user_id)):
 # ── Instances ─────────────────────────────────────────────────────────────────
 
 @router.get("/instances")
-async def list_instances(user_id: str = Depends(_get_user_id)):
+def list_instances(user_id: str = Depends(_get_user_id)):
     db = get_db()
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     return stored.data or []
 
 
 @router.post("/instances/{instance_id}/pause")
-async def pause_instance(instance_id: str, user_id: str = Depends(_get_user_id)):
+def pause_instance(instance_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
     db.table("aesir_instances").update({"is_paused": True}).eq("owner_id", user_id).eq("instance_id", instance_id).execute()
     return {"ok": True}
 
 
 @router.post("/instances/{instance_id}/resume")
-async def resume_instance(instance_id: str, user_id: str = Depends(_get_user_id)):
+def resume_instance(instance_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
     db.table("aesir_instances").update({"is_paused": False}).eq("owner_id", user_id).eq("instance_id", instance_id).execute()
     return {"ok": True}
@@ -585,7 +585,7 @@ def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db, owne
 # ── Dispatch control ──────────────────────────────────────────────────────────
 
 @router.post("/dispatches/{dispatch_id}/pause")
-async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
@@ -601,7 +601,7 @@ async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id))
 
 
 @router.post("/dispatches/{dispatch_id}/cancel")
-async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
@@ -619,7 +619,7 @@ async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
 # ── Read endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/snapshot")
-async def get_snapshot(user_id: str = Depends(_get_user_id)):
+def get_snapshot(user_id: str = Depends(_get_user_id)):
     db = get_db()
     instances = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     active = db.table("aesir_dispatches").select("*").eq("owner_id", user_id).in_("status", ["running", "paused"]).order("created_at", desc=True).limit(10).execute()
@@ -630,14 +630,14 @@ async def get_snapshot(user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/dispatches")
-async def list_dispatches(user_id: str = Depends(_get_user_id)):
+def list_dispatches(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("aesir_dispatches").select("*").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(50).execute()
     return resp.data or []
 
 
 @router.get("/analytics")
-async def get_analytics(user_id: str = Depends(_get_user_id)):
+def get_analytics(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("aesir_dispatches").select("id, campaign_name, total_leads, assignments_json, status, created_at, finished_at").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(20).execute()
     rows = resp.data or []

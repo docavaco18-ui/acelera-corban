@@ -166,7 +166,7 @@ class ChipcareCredsIn(BaseModel):
 
 
 @router.post("/credentials")
-async def save_credentials(body: ChipcareCredsIn, user_id: str = Depends(_get_user_id)):
+def save_credentials(body: ChipcareCredsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
     payload = {
         "owner_id": user_id,
@@ -192,7 +192,7 @@ _SA_HASH_RE = _re.compile(r'^[0-9a-f]{40,}$', _re.IGNORECASE)
 
 
 @router.post("/sa-hashes")
-async def update_sa_hashes(body: SaHashesIn, user_id: str = Depends(_get_user_id)):
+def update_sa_hashes(body: SaHashesIn, user_id: str = Depends(_get_user_id)):
     """Atualizar hashes SA quando Chipcare fizer deploy e os hashes mudarem."""
     db = get_db()
     patch: dict = {}
@@ -210,7 +210,7 @@ async def update_sa_hashes(body: SaHashesIn, user_id: str = Depends(_get_user_id
 
 
 @router.get("/credentials")
-async def get_credentials(user_id: str = Depends(_get_user_id)):
+def get_credentials(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("chipcare_settings").select(
         "owner_id, tenant_id, sa_create, sa_activate, meta_token_enc, waba_ids, updated_at"
@@ -235,7 +235,7 @@ class MetaCredsIn(BaseModel):
 
 
 @router.post("/meta-credentials")
-async def save_meta_credentials(body: MetaCredsIn, user_id: str = Depends(_get_user_id)):
+def save_meta_credentials(body: MetaCredsIn, user_id: str = Depends(_get_user_id)):
     """Salva token Meta System User + opcional lista de WABA IDs (regra padrão dos 3 disparadores)."""
     db = get_db()
     existing = db.table("chipcare_settings").select("owner_id").eq("owner_id", user_id).execute()
@@ -439,21 +439,21 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/channels")
-async def list_channels(user_id: str = Depends(_get_user_id)):
+def list_channels(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("chipcare_channels").select("*").eq("owner_id", user_id).execute()
     return resp.data or []
 
 
 @router.post("/channels/{channel_id}/pause")
-async def pause_channel(channel_id: int, user_id: str = Depends(_get_user_id)):
+def pause_channel(channel_id: int, user_id: str = Depends(_get_user_id)):
     db = get_db()
     db.table("chipcare_channels").update({"is_paused": True}).eq("owner_id", user_id).eq("channel_id", channel_id).execute()
     return {"ok": True}
 
 
 @router.post("/channels/{channel_id}/resume")
-async def resume_channel(channel_id: int, user_id: str = Depends(_get_user_id)):
+def resume_channel(channel_id: int, user_id: str = Depends(_get_user_id)):
     db = get_db()
     db.table("chipcare_channels").update({"is_paused": False}).eq("owner_id", user_id).eq("channel_id", channel_id).execute()
     return {"ok": True}
@@ -775,7 +775,7 @@ async def activate_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_i
 
 
 @router.post("/dispatches/{dispatch_id}/cancel")
-async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
     existing = db.table("chipcare_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
@@ -790,7 +790,7 @@ async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
 # ── Read endpoints ─────────────────────────────────────────────────────────────
 
 @router.get("/snapshot")
-async def get_snapshot(user_id: str = Depends(_get_user_id)):
+def get_snapshot(user_id: str = Depends(_get_user_id)):
     db = get_db()
     channels = db.table("chipcare_channels").select("*").eq("owner_id", user_id).execute()
     active = db.table("chipcare_dispatches").select("*").eq("owner_id", user_id).in_("status", ["running", "paused"]).order("created_at", desc=True).limit(10).execute()
@@ -801,14 +801,14 @@ async def get_snapshot(user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/dispatches")
-async def list_dispatches(user_id: str = Depends(_get_user_id)):
+def list_dispatches(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("chipcare_dispatches").select("*").eq("owner_id", user_id).not_.eq("status", "pending_confirm").order("created_at", desc=True).limit(50).execute()
     return resp.data or []
 
 
 @router.get("/analytics")
-async def get_analytics(user_id: str = Depends(_get_user_id)):
+def get_analytics(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("chipcare_dispatches").select(
         "id, campaign_name, total_leads, assignments_json, template_name, status, created_at"
