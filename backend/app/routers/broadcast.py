@@ -51,7 +51,7 @@ class CredentialsIn(BaseModel):
 
 
 @router.post("/credentials")
-async def save_credentials(
+def save_credentials(
     body: CredentialsIn,
     user_id: str = Depends(_get_user_id),
 ):
@@ -87,7 +87,7 @@ async def save_credentials(
 
 
 @router.get("/credentials")
-async def get_credentials_status(user_id: str = Depends(_get_user_id)):
+def get_credentials_status(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("vendeai_settings").select("*").eq("owner_id", user_id).execute()
     if not resp.data:
@@ -177,7 +177,7 @@ class MetaTokenPatch(BaseModel):
 
 
 @router.get("/meta-tokens")
-async def list_meta_tokens(user_id: str = Depends(_get_user_id)):
+def list_meta_tokens(user_id: str = Depends(_get_user_id)):
     db = get_db()
     rows = db.table("vendeai_meta_tokens").select("*").eq("owner_id", user_id).order("created_at").execute().data or []
     return {"tokens": [_token_public(r) for r in rows], "max": MAX_META_TOKENS}
@@ -246,7 +246,7 @@ async def test_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
 
 
 @router.patch("/meta-tokens/{token_id}")
-async def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depends(_get_user_id)):
+def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depends(_get_user_id)):
     db = get_db()
     rows = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).eq("id", token_id).execute().data
     if not rows:
@@ -263,7 +263,7 @@ async def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = 
 
 
 @router.delete("/meta-tokens/{token_id}")
-async def delete_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
+def delete_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
     # Números PRIMEIRO (cache da porta — refresh reconstrói), token DEPOIS.
     # A FK ON DELETE SET NULL (migração 037) é só backstop p/ deleções externas.
@@ -275,14 +275,14 @@ async def delete_meta_token(token_id: str, user_id: str = Depends(_get_user_id))
 # ── Numbers ───────────────────────────────────────────────────────────────────
 
 @router.get("/numbers")
-async def list_numbers(user_id: str = Depends(_get_user_id)):
+def list_numbers(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("broadcast_numbers").select("*").eq("owner_id", user_id).execute()
     return resp.data or []
 
 
 @router.post("/numbers/{phone_id}/resume")
-async def resume_number(phone_id: str, user_id: str = Depends(_get_user_id)):
+def resume_number(phone_id: str, user_id: str = Depends(_get_user_id)):
     """Un-pause a number that was auto-paused by the intervention loop."""
     db = get_db()
     existing = db.table("broadcast_numbers") \
@@ -302,7 +302,7 @@ class WabaIdsIn(BaseModel):
 
 
 @router.post("/waba-ids")
-async def save_waba_ids(body: WabaIdsIn, user_id: str = Depends(_get_user_id)):
+def save_waba_ids(body: WabaIdsIn, user_id: str = Depends(_get_user_id)):
     db = get_db()
     # Update-only: não cria row órfã (sem email/senha) — isso furava a trava
     # de "Email e senha obrigatórios na primeira gravação" do save_credentials.
@@ -314,7 +314,7 @@ async def save_waba_ids(body: WabaIdsIn, user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/waba-ids")
-async def get_waba_ids(user_id: str = Depends(_get_user_id)):
+def get_waba_ids(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("vendeai_settings").select("waba_ids").eq("owner_id", user_id).execute()
     if not resp.data:
@@ -793,7 +793,7 @@ async def confirm_dispatch(
 # ── Snapshot (bootstrap for monitoring panel) ─────────────────────────────────
 
 @router.get("/snapshot")
-async def get_snapshot(user_id: str = Depends(_get_user_id)):
+def get_snapshot(user_id: str = Depends(_get_user_id)):
     """Returns current numbers + active dispatches with assignments for monitoring bootstrap."""
     db = get_db()
     numbers = db.table("broadcast_numbers").select("*").eq("owner_id", user_id).execute()
@@ -833,7 +833,7 @@ async def get_snapshot(user_id: str = Depends(_get_user_id)):
 # ── List / Detail Dispatches ──────────────────────────────────────────────────
 
 @router.get("/dispatches")
-async def list_dispatches(user_id: str = Depends(_get_user_id)):
+def list_dispatches(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("broadcast_dispatches") \
         .select("*, broadcast_dispatch_assignments(*)") \
@@ -845,7 +845,7 @@ async def list_dispatches(user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/dispatches/{dispatch_id}")
-async def get_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+def get_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("broadcast_dispatches") \
         .select("*, broadcast_dispatch_assignments(*)") \
@@ -861,7 +861,7 @@ async def get_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
 # ── Fatia 1 — Real per-campaign metrics ───────────────────────────────────────
 
 @router.get("/dispatches/{dispatch_id}/metrics")
-async def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     """Real campaign funnel.
 
     Honest about data sources:
@@ -927,7 +927,7 @@ async def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_use
 
 
 @router.get("/dispatches/{dispatch_id}/recipients")
-async def list_dispatch_recipients(
+def list_dispatch_recipients(
     dispatch_id: str,
     status: str | None = None,
     phone_id: str | None = None,
@@ -1103,7 +1103,7 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
 # ── Analytics + Alerts ────────────────────────────────────────────────────────
 
 @router.get("/analytics")
-async def get_analytics(user_id: str = Depends(_get_user_id)):
+def get_analytics(user_id: str = Depends(_get_user_id)):
     db = get_db()
     asns = db.table("broadcast_dispatch_assignments") \
         .select("phone_id, sent_count, failed_count, open_count, converted_count") \
@@ -1122,7 +1122,7 @@ async def get_analytics(user_id: str = Depends(_get_user_id)):
 
 
 @router.get("/alerts")
-async def list_alerts(user_id: str = Depends(_get_user_id)):
+def list_alerts(user_id: str = Depends(_get_user_id)):
     db = get_db()
     resp = db.table("broadcast_alerts") \
         .select("*") \
