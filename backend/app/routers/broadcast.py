@@ -27,6 +27,10 @@ from app.services.broadcast.vendeai_client import VendeAIClient
 router = APIRouter(prefix="/api/broadcast", tags=["broadcast"])
 security = HTTPBearer()
 
+# Segura referências fortes das tasks de disparo em background — sem isto o GC
+# do asyncio pode coletar a task e cancelá-la no meio do disparo.
+_BG_DISPATCH_TASKS: set = set()
+
 
 def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
     # Validação LOCAL do JWT (JWKS/HS256, chaves cacheadas 1h) — sem round-trip
@@ -626,167 +630,192 @@ async def confirm_dispatch(
         db, user_id, body.assignments, total_leads_for_dispatch, allow_partial=body.allow_partial
     )
 
-    dispatch_errors: list[str] = []
-    mailing_ids = []
-    row_offset = 0
-    # Prevent double-submit: mark dispatching only after pre-validation passes
+    # Pré-flight de auth VendeAI: valida o login UMA vez (rápido) ANTES de ir pro
+    # background. Sem isto, senha errada vira 401 dentro do loop async → todo
+    # disparo falha SILENCIOSO (status=error, sem motivo claro pro usuário).
+    # O token fica cacheado no client → o loop em background reusa.
+    try:
+        await vendeai._ensure_token()
+    except Exception as auth_exc:
+        db.table("broadcast_dispatches").update({"status": "pending_confirm"}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+        raise HTTPException(400, f"Login VendeAI falhou — verifique email/senha em Configurações → VendeAI. ({str(auth_exc)[:140]})")
+
+    # Marca dispatching ANTES de spawnar (guard anti-duplo-submit imediato).
     db.table("broadcast_dispatches").update({"status": "dispatching"}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
-    for asn in body.assignments:
-        phone_id = asn["phone_id"]
-        planned = int(asn.get("planned_count") or 0)
-        inbox_id = asn.get("inbox_id", "")
-        template_id = asn.get("template_id", "")
 
-        # Each number only receives its own slice of the CSV
-        if planned <= 0:
-            continue
-        slice_bytes = _slice_csv(data_rows, row_offset, planned)
-        row_offset += planned
-
-        variable_mappings: dict = asn.get("variable_mappings") or {}
+    # ── Disparo roda em BACKGROUND ──────────────────────────────────────────
+    # O loop VendeAI (login BFF + upload CSV por número) passa do timeout do
+    # Cloudflare (100s) em bases grandes -> 502 no browser mesmo com disparo OK,
+    # e bloqueia o unico worker uvicorn. Respondemos 202 ja e processamos async;
+    # o MonitorPanel acompanha via /snapshot. Validacao acima e sincrona.
+    async def _runner():
+        dispatch_errors: list[str] = []
+        mailing_ids = []
+        row_offset = 0
         try:
-            resp = await vendeai.dispatch_csv(
-                csv_bytes=slice_bytes,
-                csv_filename=dispatch.data.get("csv_filename", "leads.csv"),
-                inbox_id=inbox_id,
-                template_id=template_id,
-                phone_column=body.phone_column,
-                campaign_name=body.campaign_name,
-                cooldown_seconds=body.cooldown_seconds,
-                skip_weekends=body.skip_weekends,
-                skip_night=body.skip_night,
-                dedup_window_hours=body.dedup_window_hours,
-                variable_mappings=variable_mappings or None,
-            )
-        except Exception as exc:
-            dispatch_errors.append(f"{phone_id}: {exc}")
-            # Persist error assignment so monitor shows the affected leads
-            try:
-                db.table("broadcast_dispatch_assignments").insert({
+            for asn in body.assignments:
+                phone_id = asn["phone_id"]
+                planned = int(asn.get("planned_count") or 0)
+                inbox_id = asn.get("inbox_id", "")
+                template_id = asn.get("template_id", "")
+
+                # Each number only receives its own slice of the CSV
+                if planned <= 0:
+                    continue
+                slice_bytes = _slice_csv(data_rows, row_offset, planned)
+                row_offset += planned
+
+                variable_mappings: dict = asn.get("variable_mappings") or {}
+                try:
+                    resp = await vendeai.dispatch_csv(
+                        csv_bytes=slice_bytes,
+                        csv_filename=dispatch.data.get("csv_filename", "leads.csv"),
+                        inbox_id=inbox_id,
+                        template_id=template_id,
+                        phone_column=body.phone_column,
+                        campaign_name=body.campaign_name,
+                        cooldown_seconds=body.cooldown_seconds,
+                        skip_weekends=body.skip_weekends,
+                        skip_night=body.skip_night,
+                        dedup_window_hours=body.dedup_window_hours,
+                        variable_mappings=variable_mappings or None,
+                    )
+                except Exception as exc:
+                    dispatch_errors.append(f"{phone_id}: {exc}")
+                    # Persist error assignment so monitor shows the affected leads
+                    try:
+                        db.table("broadcast_dispatch_assignments").insert({
+                            "dispatch_id": body.dispatch_id,
+                            "owner_id": user_id,
+                            "phone_id": phone_id,
+                            "planned_count": planned,
+                            "status": "error",
+                            "template_id": asn.get("template_id", ""),
+                            "inbox_id": asn.get("inbox_id", ""),
+                            "display_phone": asn.get("display_phone", ""),
+                        }).execute()
+                    except Exception:
+                        pass
+                    continue
+
+                mailing_id = (
+                    resp.get("id")
+                    or resp.get("mailing_id")
+                    or (resp.get("mailing") or {}).get("id")
+                    or (resp[0].get("id") if isinstance(resp, list) and resp else None)
+                )
+
+                # Fallback: VendeAI response didn't include mailing id — find it by inbox_phone + recency
+                if not mailing_id:
+                    try:
+                        num_resp = db.table("broadcast_numbers").select("display_phone") \
+                            .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
+                        display_phone = num_resp.data[0].get("display_phone", "") if num_resp.data else ""
+                        display_digits = re.sub(r"\D", "", display_phone)
+                        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
+                        ml_data = await vendeai.list_mailings(page=1, page_size=5)
+                        for m in ml_data.get("results", []):
+                            inbox_digits = re.sub(r"\D", "", m.get("inbox_phone", ""))
+                            if inbox_digits == display_digits and m.get("created_at", "") >= cutoff:
+                                mailing_id = str(m["id"])
+                                break
+                    except Exception:
+                        pass
+
+                # Capture quality at dispatch time
+                num_rec = db.table("broadcast_numbers").select("quality_rating") \
+                    .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
+                quality_at_start = (num_rec.data[0].get("quality_rating") if num_rec.data else None)
+
+                asn_insert = db.table("broadcast_dispatch_assignments").insert({
                     "dispatch_id": body.dispatch_id,
                     "owner_id": user_id,
                     "phone_id": phone_id,
+                    "vendeai_mailing_id": mailing_id,
                     "planned_count": planned,
-                    "status": "error",
+                    "status": "running",
                     "template_id": asn.get("template_id", ""),
                     "inbox_id": asn.get("inbox_id", ""),
+                    "variable_mappings": asn.get("variable_mappings") or {},
+                    "quality_at_start": quality_at_start,
                     "display_phone": asn.get("display_phone", ""),
                 }).execute()
-            except Exception:
-                pass
-            continue
+                mailing_ids.append(mailing_id)
 
-        mailing_id = (
-            resp.get("id")
-            or resp.get("mailing_id")
-            or (resp.get("mailing") or {}).get("id")
-            or (resp[0].get("id") if isinstance(resp, list) and resp else None)
-        )
+                # Fatia 1 — persist per-recipient rows for funnel analytics.
+                # Best-effort: failure here must NOT abort dispatch.
+                try:
+                    assignment_id = (asn_insert.data[0]["id"] if asn_insert.data else None)
+                    import io
+                    slice_text = slice_bytes.decode("utf-8", errors="replace")
+                    if slice_text.startswith("﻿"):
+                        slice_text = slice_text[1:]
+                    reader = csv_mod.DictReader(io.StringIO(slice_text))
+                    var_cols = set(((variable_mappings or {}).values())) if variable_mappings else set()
+                    keep_cols = {body.phone_column, *var_cols}
+                    recipients_rows: list[dict] = []
+                    for idx, row in enumerate(reader):
+                        phone_raw = (row.get(body.phone_column) or "").strip()
+                        if not phone_raw:
+                            continue
+                        phone_norm = re.sub(r"\D", "", phone_raw)
+                        payload = {k: v for k, v in row.items() if k in keep_cols and k != body.phone_column}
+                        name = (row.get("nome") or row.get("name") or row.get("Nome") or "").strip() or None
+                        recipients_rows.append({
+                            "owner_id": user_id,
+                            "dispatch_id": body.dispatch_id,
+                            "assignment_id": assignment_id,
+                            "phone_id": phone_id,
+                            "display_phone": asn.get("display_phone") or "",
+                            "recipient_phone": phone_norm,
+                            "recipient_name": name,
+                            "csv_row_index": idx,
+                            "csv_payload": payload,
+                            "template_id": template_id,
+                            "provider": "vendeai",
+                            "provider_mailing_id": mailing_id,
+                            "status": "queued",
+                        })
+                    BATCH = 200
+                    for i in range(0, len(recipients_rows), BATCH):
+                        db.table("broadcast_recipients").insert(recipients_rows[i:i + BATCH]).execute()
+                except Exception as rec_exc:
+                    log.warning("[broadcast] recipients insertion failed phone_id=%s: %s", phone_id, rec_exc)
 
-        # Fallback: VendeAI response didn't include mailing id — find it by inbox_phone + recency
-        if not mailing_id:
+            if mailing_ids and dispatch_errors:
+                final_status = "partial_error"
+            elif mailing_ids:
+                final_status = "running"
+            else:
+                final_status = "error"
+            db.table("broadcast_dispatches").update({
+                "status": final_status,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "campaign_name": body.campaign_name,
+                "phone_column": body.phone_column,
+                "cooldown_seconds": body.cooldown_seconds,
+                "skip_weekends": body.skip_weekends,
+                "skip_night": body.skip_night,
+                "dedup_window_hours": body.dedup_window_hours,
+            }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+        except Exception as run_exc:
+            log.error("[broadcast] dispatch background falhou dispatch=%s: %s", body.dispatch_id, run_exc)
             try:
-                num_resp = db.table("broadcast_numbers").select("display_phone") \
-                    .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
-                display_phone = num_resp.data[0].get("display_phone", "") if num_resp.data else ""
-                display_digits = re.sub(r"\D", "", display_phone)
-                cutoff = (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()
-                ml_data = await vendeai.list_mailings(page=1, page_size=5)
-                for m in ml_data.get("results", []):
-                    inbox_digits = re.sub(r"\D", "", m.get("inbox_phone", ""))
-                    if inbox_digits == display_digits and m.get("created_at", "") >= cutoff:
-                        mailing_id = str(m["id"])
-                        break
+                db.table("broadcast_dispatches").update({"status": "error"}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
             except Exception:
                 pass
 
-        # Capture quality at dispatch time
-        num_rec = db.table("broadcast_numbers").select("quality_rating") \
-            .eq("owner_id", user_id).eq("phone_id", phone_id).execute()
-        quality_at_start = (num_rec.data[0].get("quality_rating") if num_rec.data else None)
-
-        asn_insert = db.table("broadcast_dispatch_assignments").insert({
-            "dispatch_id": body.dispatch_id,
-            "owner_id": user_id,
-            "phone_id": phone_id,
-            "vendeai_mailing_id": mailing_id,
-            "planned_count": planned,
-            "status": "running",
-            "template_id": asn.get("template_id", ""),
-            "inbox_id": asn.get("inbox_id", ""),
-            "variable_mappings": asn.get("variable_mappings") or {},
-            "quality_at_start": quality_at_start,
-            "display_phone": asn.get("display_phone", ""),
-        }).execute()
-        mailing_ids.append(mailing_id)
-
-        # Fatia 1 — persist per-recipient rows for funnel analytics.
-        # Best-effort: failure here must NOT abort dispatch.
-        try:
-            assignment_id = (asn_insert.data[0]["id"] if asn_insert.data else None)
-            import io
-            slice_text = slice_bytes.decode("utf-8", errors="replace")
-            if slice_text.startswith("﻿"):
-                slice_text = slice_text[1:]
-            reader = csv_mod.DictReader(io.StringIO(slice_text))
-            var_cols = set(((variable_mappings or {}).values())) if variable_mappings else set()
-            keep_cols = {body.phone_column, *var_cols}
-            recipients_rows: list[dict] = []
-            for idx, row in enumerate(reader):
-                phone_raw = (row.get(body.phone_column) or "").strip()
-                if not phone_raw:
-                    continue
-                phone_norm = re.sub(r"\D", "", phone_raw)
-                payload = {k: v for k, v in row.items() if k in keep_cols and k != body.phone_column}
-                name = (row.get("nome") or row.get("name") or row.get("Nome") or "").strip() or None
-                recipients_rows.append({
-                    "owner_id": user_id,
-                    "dispatch_id": body.dispatch_id,
-                    "assignment_id": assignment_id,
-                    "phone_id": phone_id,
-                    "display_phone": asn.get("display_phone") or "",
-                    "recipient_phone": phone_norm,
-                    "recipient_name": name,
-                    "csv_row_index": idx,
-                    "csv_payload": payload,
-                    "template_id": template_id,
-                    "provider": "vendeai",
-                    "provider_mailing_id": mailing_id,
-                    "status": "queued",
-                })
-            BATCH = 200
-            for i in range(0, len(recipients_rows), BATCH):
-                db.table("broadcast_recipients").insert(recipients_rows[i:i + BATCH]).execute()
-        except Exception as rec_exc:
-            log.warning("[broadcast] recipients insertion failed phone_id=%s: %s", phone_id, rec_exc)
-
-    if mailing_ids and dispatch_errors:
-        final_status = "partial_error"
-    elif mailing_ids:
-        final_status = "running"
-    else:
-        final_status = "error"
-    db.table("broadcast_dispatches").update({
-        "status": final_status,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "campaign_name": body.campaign_name,
-        "phone_column": body.phone_column,
-        "cooldown_seconds": body.cooldown_seconds,
-        "skip_weekends": body.skip_weekends,
-        "skip_night": body.skip_night,
-        "dedup_window_hours": body.dedup_window_hours,
-    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
-
-    if dispatch_errors and not mailing_ids:
-        raise HTTPException(502, f"Nenhum disparo iniciado. Erros: {'; '.join(dispatch_errors)}")
+    import asyncio as _asyncio
+    _task = _asyncio.create_task(_runner())
+    _BG_DISPATCH_TASKS.add(_task)
+    _task.add_done_callback(_BG_DISPATCH_TASKS.discard)
 
     return {
         "ok": True,
-        "mailing_ids": mailing_ids,
-        "errors": dispatch_errors,
+        "status": "dispatching",
+        "dispatch_id": body.dispatch_id,
         "assigned_count": assigned_count,
         "unassigned_count": unassigned_count,
-        "partial": bool(dispatch_errors and mailing_ids),
     }
 
 

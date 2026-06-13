@@ -40,13 +40,30 @@ async def advise_split(
     remaining = total_leads
     assignments = []
 
-    for i, n in enumerate(active):
+    # 1ª passada: proporcional à capacidade, SEMPRE capado pelo daily_limit do
+    # número (inclusive o último — antes o último levava todo o `remaining` e
+    # estourava o próprio limite → VendeAI/Meta rejeitava ou queimava o número).
+    plans: list[list] = []  # [n, planned, limit]
+    for n in active:
         limit = n.get("daily_limit", 0)
-        if i == len(active) - 1:
-            planned = remaining
-        else:
-            planned = min(round(total_leads * limit / total_capacity), remaining, limit)
+        planned = min(round(total_leads * limit / total_capacity), remaining, limit)
         remaining -= planned
+        plans.append([n, planned, limit])
+
+    # 2ª passada: distribui a sobra de arredondamento só em números com folga,
+    # 1 lead por vez, respeitando o limit de cada. Sobra real (base > capacidade
+    # total) fica sem atribuir → validação exige allow_partial (correto).
+    guard = 0
+    while remaining > 0 and any(p[1] < p[2] for p in plans) and guard < 100000:
+        for p in plans:
+            if remaining <= 0:
+                break
+            if p[1] < p[2]:
+                p[1] += 1
+                remaining -= 1
+        guard += 1
+
+    for n, planned, limit in plans:
         quality = n.get("quality_rating", "UNKNOWN")
         can_send = n.get("can_send", "UNKNOWN")
         assignments.append({

@@ -46,6 +46,9 @@ import time as _time
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chipcare-broadcast", tags=["chipcare-broadcast"])
+
+# Segura ref forte das tasks de disparo Chipcare em background (senão GC cancela).
+_BG_CHIPCARE_TASKS: set = set()
 security = HTTPBearer()
 
 # JWT cache: user_id → (jwt_token, expires_at_epoch). TTL 60min (conservative under Chipcare's ~2h lifetime).
@@ -638,110 +641,121 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     header = csv_lines[0] if csv_lines else ""
     data_rows = csv_lines[1:] if len(csv_lines) > 1 else []
 
-    per_assignment: list[dict] = []
-    row_offset = 0
-    for asn in body.assignments:
-        planned = asn.planned_count
-        entry: dict = {
-            "channel_id": asn.channel_id,
-            "planned_count": planned,
-            "chipcare_campaign_id": None,
-            "status": "skipped" if planned <= 0 else "pending",
-        }
-        if planned <= 0:
-            per_assignment.append(entry)
-            continue
-
-        slice_rows = data_rows[row_offset: row_offset + planned]
-        row_offset += planned
-
-        slice_xlsx = None
-        if body.source_type == "XLSX_FILE":
-            slice_csv = ("\n".join([header] + slice_rows)).encode("utf-8")
-            slice_xlsx = csv_to_xlsx_bytes(slice_csv)
-
-        per_channel_name = f"{campaign_name}_ch{asn.channel_id}" if len(channel_ids_all) > 1 else campaign_name
+    async def _run():
         try:
-            result = await client.create_campaign(
-                jwt=jwt,
-                name=per_channel_name,
-                channel_ids=[asn.channel_id],
-                template=template_payload,
-                source_type=body.source_type,
-                chat_status=body.chat_status,
-                channel_mode=body.channel_mode,
-                min_interval_ms=body.min_interval_ms,
-                max_interval_ms=body.max_interval_ms,
-                aggression_level=body.aggression_level,
-                xlsx_bytes=slice_xlsx,
-                dry_run=False,
-            )
-            entry["chipcare_campaign_id"] = result.get("campaign_id")
-            entry["status"] = "created" if result.get("campaign_id") else "error"
-            if not result.get("campaign_id"):
-                entry["error"] = "Chipcare não retornou campaign_id"
-        except Exception as e:
-            log.exception("chipcare create_campaign per-channel error channel=%s: %s", asn.channel_id, e)
-            entry["status"] = "error"
-            entry["error"] = str(e)[:200]
-        per_assignment.append(entry)
+            per_assignment: list[dict] = []
+            row_offset = 0
+            for asn in body.assignments:
+                planned = asn.planned_count
+                entry: dict = {
+                    "channel_id": asn.channel_id,
+                    "planned_count": planned,
+                    "chipcare_campaign_id": None,
+                    "status": "skipped" if planned <= 0 else "pending",
+                }
+                if planned <= 0:
+                    per_assignment.append(entry)
+                    continue
 
-    created_ids = [e["chipcare_campaign_id"] for e in per_assignment if e.get("chipcare_campaign_id")]
-    if not created_ids:
-        db.table("chipcare_dispatches").update({
-            "status": "error",
-            "assignments_json": per_assignment,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
-        raise HTTPException(502, f"Nenhuma campanha Chipcare criada. Detalhes em assignments_json.")
+                slice_rows = data_rows[row_offset: row_offset + planned]
+                row_offset += planned
 
-    # Activate created campaigns if requested
-    activated_count = 0
-    if body.activate_immediately:
-        for entry in per_assignment:
-            cid = entry.get("chipcare_campaign_id")
-            if not cid:
-                continue
+                slice_xlsx = None
+                if body.source_type == "XLSX_FILE":
+                    slice_csv = ("\n".join([header] + slice_rows)).encode("utf-8")
+                    slice_xlsx = csv_to_xlsx_bytes(slice_csv)
+
+                per_channel_name = f"{campaign_name}_ch{asn.channel_id}" if len(channel_ids_all) > 1 else campaign_name
+                try:
+                    result = await client.create_campaign(
+                        jwt=jwt,
+                        name=per_channel_name,
+                        channel_ids=[asn.channel_id],
+                        template=template_payload,
+                        source_type=body.source_type,
+                        chat_status=body.chat_status,
+                        channel_mode=body.channel_mode,
+                        min_interval_ms=body.min_interval_ms,
+                        max_interval_ms=body.max_interval_ms,
+                        aggression_level=body.aggression_level,
+                        xlsx_bytes=slice_xlsx,
+                        dry_run=False,
+                    )
+                    entry["chipcare_campaign_id"] = result.get("campaign_id")
+                    entry["status"] = "created" if result.get("campaign_id") else "error"
+                    if not result.get("campaign_id"):
+                        entry["error"] = "Chipcare não retornou campaign_id"
+                except Exception as e:
+                    log.exception("chipcare create_campaign per-channel error channel=%s: %s", asn.channel_id, e)
+                    entry["status"] = "error"
+                    entry["error"] = str(e)[:200]
+                per_assignment.append(entry)
+
+            created_ids = [e["chipcare_campaign_id"] for e in per_assignment if e.get("chipcare_campaign_id")]
+            if not created_ids:
+                db.table("chipcare_dispatches").update({
+                    "status": "error",
+                    "assignments_json": per_assignment,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+                return
+
+            # Activate created campaigns if requested
+            activated_count = 0
+            if body.activate_immediately:
+                for entry in per_assignment:
+                    cid = entry.get("chipcare_campaign_id")
+                    if not cid:
+                        continue
+                    try:
+                        await client.activate_campaign(jwt, cid)
+                        entry["status"] = "activated"
+                        activated_count += 1
+                    except Exception as e:
+                        log.warning("chipcare activate per-channel error campaign=%s: %s", cid, e)
+                        entry["activation_error"] = str(e)[:200]
+
+            # Determine final status
+            target_attempts = len([a for a in body.assignments if a.planned_count > 0])
+            if len(created_ids) < target_attempts:
+                final_status = "partial_error"
+            elif activated_count > 0:
+                final_status = "running"
+            else:
+                final_status = "paused"
+
+            now = datetime.now(timezone.utc).isoformat()
+            db.table("chipcare_dispatches").update({
+                "status": final_status,
+                "chipcare_campaign_id": created_ids[0] if created_ids else None,  # back-compat: first campaign
+                "campaign_name": campaign_name,
+                "channel_ids": channel_ids_all,
+                "template_name": body.template.template_name,
+                "template_id": body.template.template_id,
+                "aggression_level": body.aggression_level,
+                "source_type": body.source_type,
+                "assignments_json": per_assignment,
+                "updated_at": now,
+            }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+        except Exception as run_exc:
+            log.exception("chipcare dispatch background falhou dispatch=%s: %s", body.dispatch_id, run_exc)
             try:
-                await client.activate_campaign(jwt, cid)
-                entry["status"] = "activated"
-                activated_count += 1
-            except Exception as e:
-                log.warning("chipcare activate per-channel error campaign=%s: %s", cid, e)
-                entry["activation_error"] = str(e)[:200]
+                db.table("chipcare_dispatches").update({"status": "error", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+            except Exception:
+                pass
 
-    # Determine final status
-    target_attempts = len([a for a in body.assignments if a.planned_count > 0])
-    if len(created_ids) < target_attempts:
-        final_status = "partial_error"
-    elif activated_count > 0:
-        final_status = "running"
-    else:
-        final_status = "paused"
-
-    now = datetime.now(timezone.utc).isoformat()
-    db.table("chipcare_dispatches").update({
-        "status": final_status,
-        "chipcare_campaign_id": created_ids[0] if created_ids else None,  # back-compat: first campaign
-        "campaign_name": campaign_name,
-        "channel_ids": channel_ids_all,
-        "template_name": body.template.template_name,
-        "template_id": body.template.template_id,
-        "aggression_level": body.aggression_level,
-        "source_type": body.source_type,
-        "assignments_json": per_assignment,
-        "updated_at": now,
-    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
-
+    # Marca dispatching + roda em BACKGROUND (mesmo motivo do broadcast: o loop
+    # create_campaign por canal passa do timeout do Cloudflare -> 502).
+    db.table("chipcare_dispatches").update({"status": "dispatching", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+    import asyncio as _asyncio
+    _task = _asyncio.create_task(_run())
+    _BG_CHIPCARE_TASKS.add(_task)
+    _task.add_done_callback(_BG_CHIPCARE_TASKS.discard)
     return {
         "dispatch_id": body.dispatch_id,
-        "chipcare_campaign_id": created_ids[0] if created_ids else None,
-        "chipcare_campaign_ids": created_ids,
-        "status": final_status,
-        "activated_count": activated_count,
+        "status": "dispatching",
         "assigned_count": assigned_count,
         "unassigned_count": unassigned_count,
-        "campaigns": per_assignment,
     }
 
 
