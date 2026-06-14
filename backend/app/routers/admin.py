@@ -8,6 +8,9 @@ Usa a Service Role Key do Supabase para chamar a Admin API:
 """
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime, timedelta, timezone
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -118,6 +121,120 @@ async def list_all_runs(limit: int = 50, _: AuthUser = Depends(require_admin)):
         reverse=True,
     )[:limit]
     return {"runs": merged}
+
+
+@router.get("/overview")
+async def overview(_: AuthUser = Depends(require_admin)):
+    """Dashboard cross-banco: usuários ativos, bots rodando, disparos e runs recentes."""
+    db = get_db()
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    last_24h = (now - timedelta(hours=24)).isoformat()
+
+    # ── 1. Usuários (via Supabase Admin API) ──────────────────────────────────
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.get(_admin_url() + "?per_page=200", headers=_admin_headers())
+    all_users = (r.json().get("users") or []) if r.is_success else []
+    active_today = [
+        {"id": u["id"], "email": u["email"], "last_sign_in_at": u.get("last_sign_in_at")}
+        for u in all_users
+        if u.get("last_sign_in_at") and u["last_sign_in_at"] >= last_24h
+    ]
+
+    # ── 2. Bots rodando agora ─────────────────────────────────────────────────
+    bot_tables = [
+        ("v8", "v8_bot_runs"),
+        ("vctex", "vctex_bot_runs"),
+        ("mercantil", "mercantil_bot_runs"),
+        ("presenca", "presenca_bot_runs"),
+        ("powerhub", "powerhub_bot_runs"),
+    ]
+
+    def _query_bots():
+        rows = []
+        for bank, table in bot_tables:
+            try:
+                data = (
+                    db.table(table)
+                    .select("id,owner_id,started_at,num_workers")
+                    .eq("status", "running")
+                    .execute().data or []
+                )
+                for r in data:
+                    rows.append({**r, "bank": bank})
+            except Exception:
+                pass
+        return rows
+
+    # ── 3. Disparos hoje ──────────────────────────────────────────────────────
+    dispatch_tables = [
+        ("vendeai", "broadcast_dispatches"),
+        ("chipcare", "chipcare_dispatches"),
+        ("aesir", "aesir_dispatches"),
+    ]
+
+    def _query_dispatches():
+        rows = []
+        for source, table in dispatch_tables:
+            try:
+                data = (
+                    db.table(table)
+                    .select("id,owner_id,status,total_leads,created_at")
+                    .gte("created_at", today_start)
+                    .execute().data or []
+                )
+                for r in data:
+                    rows.append({**r, "source": source})
+            except Exception:
+                pass
+        return rows
+
+    # ── 4. Runs recentes (todos os bancos) ────────────────────────────────────
+    def _query_recent_runs():
+        all_runs = []
+        for bank, table in bot_tables:
+            try:
+                data = (
+                    db.table(table)
+                    .select("id,owner_id,started_at,finished_at,status,num_workers,total_processed,total_elegiveis,total_inelegiveis")
+                    .order("started_at", desc=True)
+                    .limit(15)
+                    .execute().data or []
+                )
+                for r in data:
+                    all_runs.append({**r, "bank": bank})
+            except Exception:
+                pass
+        all_runs.sort(key=lambda x: x.get("started_at") or "", reverse=True)
+        return all_runs[:40]
+
+    bots_running, dispatches_today, recent_runs = await asyncio.gather(
+        asyncio.to_thread(_query_bots),
+        asyncio.to_thread(_query_dispatches),
+        asyncio.to_thread(_query_recent_runs),
+    )
+
+    total_leads_today = sum(d.get("total_leads") or 0 for d in dispatches_today)
+    active_dispatches = sum(1 for d in dispatches_today if d["status"] in ("dispatching", "running"))
+
+    return {
+        "users": {
+            "total": len(all_users),
+            "active_today": len(active_today),
+            "active_list": active_today,
+        },
+        "bots": {
+            "running": len(bots_running),
+            "list": bots_running,
+        },
+        "dispatches": {
+            "today_total": len(dispatches_today),
+            "today_active": active_dispatches,
+            "today_leads": total_leads_today,
+            "list": dispatches_today,
+        },
+        "recent_runs": recent_runs,
+    }
 
 
 @router.delete("/users/{user_id}")

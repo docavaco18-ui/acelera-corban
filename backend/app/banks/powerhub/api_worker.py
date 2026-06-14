@@ -2,7 +2,10 @@
 import asyncio
 import logging
 import random
+import time
 from typing import Any, Callable
+
+import httpx
 
 from .api_client import PowerHubApiClient
 from .config import PowerHubConfig
@@ -10,6 +13,22 @@ from ...db_scoped import scoped
 from ...credentials.service import BankCredentials
 
 log = logging.getLogger("powerhub.worker")
+
+_DB_RETRIES = 3
+_DB_RETRY_ERRORS = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError)
+
+
+def _db_retry(fn):
+    """Retry síncrono para chamadas ao Supabase que podem dar Server disconnected."""
+    for attempt in range(_DB_RETRIES):
+        try:
+            return fn()
+        except _DB_RETRY_ERRORS as exc:
+            if attempt == _DB_RETRIES - 1:
+                raise
+            wait = 2.0 ** attempt + random.uniform(0, 0.5)
+            log.warning(f"Supabase disconnect (tentativa {attempt+1}/{_DB_RETRIES}): {exc} — retry em {wait:.1f}s")
+            time.sleep(wait)
 
 
 class PowerHubApiWorker:
@@ -66,7 +85,7 @@ class PowerHubApiWorker:
             "nome": result.get("nome"),
             "phones": json.dumps(result.get("phones") or []),
         }
-        scoped(self.db, "powerhub_leads", self.user_id).update(update).eq("id", lead_id).execute()
+        _db_retry(lambda: scoped(self.db, "powerhub_leads", self.user_id).update(update).eq("id", lead_id).execute())
 
     async def run(self) -> None:
         if self.startup_delay:
@@ -89,8 +108,8 @@ class PowerHubApiWorker:
                     cpf = record["cpf"]
 
                     await asyncio.to_thread(
-                        lambda: scoped(self.db, "powerhub_leads", self.user_id)
-                        .update({"status": "processing"}).eq("id", lead_id).execute()
+                        lambda: _db_retry(lambda: scoped(self.db, "powerhub_leads", self.user_id)
+                        .update({"status": "processing"}).eq("id", lead_id).execute())
                     )
                     self._emit("lead_processing", cpf=cpf, fase="buscando")
 
@@ -121,11 +140,11 @@ class PowerHubApiWorker:
         q = scoped(self.db, "powerhub_leads", self.user_id).update({"status": "pending"}).eq("status", "processing")
         if self.batch_id:
             q = q.eq("batch_id", self.batch_id)
-        q.execute()
+        _db_retry(q.execute)
 
     def _fetch_pending(self, limit: int = 10) -> list[dict]:
         q = scoped(self.db, "powerhub_leads", self.user_id).select("id,cpf,nome")
         q = q.eq("status", "pending")
         if self.batch_id:
             q = q.eq("batch_id", self.batch_id)
-        return (q.limit(limit).execute().data or [])
+        return (_db_retry(lambda: q.limit(limit).execute()).data or [])

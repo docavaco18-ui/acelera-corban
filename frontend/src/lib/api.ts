@@ -44,6 +44,7 @@ export const adminApi = {
   deleteUser: (id: string) => api.delete(`/api/admin/users/${id}`).then((r) => r.data),
   runs: (limit = 50) =>
     api.get<{ runs: any[] }>("/api/admin/runs", { params: { limit } }).then((r) => r.data.runs),
+  overview: () => api.get<any>("/api/admin/overview").then((r) => r.data),
 };
 
 interface LeadListResponse {

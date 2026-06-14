@@ -2,3 +2,10 @@ aceleracorban.com.br, www.aceleracorban.com.br {
 	encode gzip
 	reverse_proxy frontend:80
 }
+
+openclaw.aceleracorban.com.br {
+	encode gzip
+	# OpenClaw Gateway publicado na porta 18789 do host.
+	# 172.19.0.1 é o host visto de dentro da rede acelera-corban_default.
+	reverse_proxy 172.19.0.1:18789
+}
