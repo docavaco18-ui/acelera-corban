@@ -29,17 +29,38 @@ RESTRICTION_LABELS: dict[int, str] = {
 _FALLBACK_RAW = os.getenv("META_WABA_FALLBACK_IDS", "")
 META_WABA_FALLBACK_IDS: list[str] = [w.strip() for w in _FALLBACK_RAW.split(",") if w.strip()]
 
-THROUGHPUT_MAP = {
-    "STANDARD":       ("250/dia",   250),
-    "HIGH":           ("1K/dia",    1000),
-    "VERY_HIGH":      ("10K/dia",   10000),
-    "NOT_APPLICABLE": ("—",         0),
+# throughput.level = VELOCIDADE de envio (msg/s), NAO o limite diario de conversas.
+THROUGHPUT_LABEL = {
+    "STANDARD":       "padrao (~80 msg/s)",
+    "HIGH":           "alto",
+    "VERY_HIGH":      "muito alto",
+    "NOT_APPLICABLE": "—",
 }
+
+
+def _tier_capacity(raw_tier) -> tuple[str, int]:
+    """Capacidade diaria REAL = messaging_limit_tier da Meta (conversas business-initiated/24h).
+    TIER_250/1K/2K/10K/100K/UNLIMITED. Retorna ("", 0) quando a Meta NAO reporta
+    (ex.: Marketing Messages Lite API) — nunca fabrica numero a partir da velocidade."""
+    t = str(raw_tier or "").upper().strip()
+    if not t:
+        return ("", 0)
+    if t in ("TIER_UNLIMITED", "UNLIMITED"):
+        return ("ilimitado", 999_999_999)
+    m = re.match(r"^(?:C?TIER_)?(\d+)\s*([KM])?/?D?I?A?$", t)
+    if m:
+        n = int(m.group(1))
+        mult = {"K": 1000, "M": 1_000_000, None: 1}[m.group(2)]
+        val = n * mult
+        label = f"{n}{m.group(2)}/dia" if m.group(2) else f"{val}/dia"
+        return (label, val)
+    return (t, 0)
 
 
 def _parse_phone(data: dict, waba_id: str = "") -> dict:
     throughput_level = (data.get("throughput") or {}).get("level", "NOT_APPLICABLE")
-    tier_label, daily_limit = THROUGHPUT_MAP.get(throughput_level, ("—", 0))
+    # Capacidade diaria vem do messaging_limit_tier REAL (nao do throughput/velocidade).
+    tier_label, daily_limit = _tier_capacity(data.get("messaging_limit_tier"))
 
     hs = data.get("health_status") or {}
     can_send = hs.get("can_send_message", "UNKNOWN")
@@ -73,8 +94,10 @@ def _parse_phone(data: dict, waba_id: str = "") -> dict:
         "verified_name": data.get("verified_name", ""),
         "quality_rating": data.get("quality_rating", "UNKNOWN"),
         "throughput_level": throughput_level,
-        "messaging_tier": data.get("messaging_limit_tier") or tier_label,
+        "throughput_label": THROUGHPUT_LABEL.get(throughput_level, "—"),
+        "messaging_tier": tier_label,
         "daily_limit": daily_limit,
+        "tier_reported": daily_limit > 0,
         "can_send": can_send,
         "name_status": name_status,
         "display_name_pending": display_name_pending,

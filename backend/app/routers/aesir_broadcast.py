@@ -257,6 +257,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     now = datetime.now(timezone.utc).isoformat()
 
     # ── Step 3: Upsert Aesir instances (cross-referenced with Meta) ─────────
+    _prev_rows = db.table("aesir_instances").select("phone_id,daily_limit,messaging_tier").eq("owner_id", user_id).execute().data or []
+    _prev_limit = {r.get("phone_id"): r.get("daily_limit") for r in _prev_rows if r.get("phone_id")}
+    _prev_tier = {r.get("phone_id"): r.get("messaging_tier") for r in _prev_rows if r.get("phone_id")}
     matched_keys: set[str] = set()
     for inst in aesir_instances:
         iid = str(inst.get("id") or inst.get("instance_id") or "")
@@ -280,9 +283,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             upsert_payload.update({
                 "display_phone": quality.get("display_phone"),
                 "quality_rating": quality.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": quality.get("messaging_tier"),
+                "messaging_tier": quality.get("messaging_tier") or _prev_tier.get(quality.get("phone_id")) or "nao reportado",
                 "can_send": quality.get("can_send", "UNKNOWN"),
-                "daily_limit": quality.get("daily_limit") or 500,
+                "daily_limit": quality.get("daily_limit") or _prev_limit.get(quality.get("phone_id")) or 500,
                 "waba_id": quality.get("waba_id"),
                 "phone_id": quality.get("phone_id"),
                 "verified_name": quality.get("verified_name"),
@@ -318,9 +321,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "status": "meta-only",
             "display_phone": p.get("display_phone"),
             "quality_rating": p.get("quality_rating", "UNKNOWN"),
-            "messaging_tier": p.get("messaging_tier"),
+            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
             "can_send": p.get("can_send", "UNKNOWN"),
-            "daily_limit": p.get("daily_limit") or 500,
+            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
             "waba_id": p.get("waba_id"),
             "phone_id": p.get("phone_id"),
             "verified_name": p.get("verified_name"),

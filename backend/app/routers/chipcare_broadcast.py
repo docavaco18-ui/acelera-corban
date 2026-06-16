@@ -332,6 +332,9 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
 
     # ── Step 3: Upsert Chipcare channels cruzados com Meta ──────────────────
     now = datetime.now(timezone.utc).isoformat()
+    _prev_rows = db.table("chipcare_channels").select("phone_id,daily_limit,messaging_tier").eq("owner_id", user_id).execute().data or []
+    _prev_limit = {r.get("phone_id"): r.get("daily_limit") for r in _prev_rows if r.get("phone_id")}
+    _prev_tier = {r.get("phone_id"): r.get("messaging_tier") for r in _prev_rows if r.get("phone_id")}
     matched_keys: set[str] = set()
     for ch in channels:
         cid = ch.get("id")
@@ -359,7 +362,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "phone_id": meta_q.get("phone_id"),
                 "display_phone": meta_q.get("display_phone"),
                 "quality_rating": meta_q.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": meta_q.get("messaging_tier"),
+                "messaging_tier": meta_q.get("messaging_tier") or _prev_tier.get(meta_q.get("phone_id")) or "nao reportado",
                 "can_send": meta_q.get("can_send", "UNKNOWN"),
                 "verified_name": meta_q.get("verified_name"),
                 "name_status": meta_q.get("name_status"),
@@ -373,7 +376,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "business_verification_status": meta_q.get("business_verification_status"),
                 "waba_currency": meta_q.get("waba_currency"),
                 "waba_country": meta_q.get("waba_country"),
-                "daily_limit": meta_q.get("daily_limit") or 500,
+                "daily_limit": meta_q.get("daily_limit") or _prev_limit.get(meta_q.get("phone_id")) or 500,
                 "quality_updated_at": now,
             })
         try:
@@ -408,7 +411,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "phone_id": p.get("phone_id"),
                 "display_phone": p.get("display_phone"),
                 "quality_rating": p.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": p.get("messaging_tier"),
+                "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
                 "can_send": p.get("can_send", "UNKNOWN"),
                 "verified_name": p.get("verified_name"),
                 "name_status": p.get("name_status"),
@@ -422,7 +425,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "business_verification_status": p.get("business_verification_status"),
                 "waba_currency": p.get("waba_currency"),
                 "waba_country": p.get("waba_country"),
-                "daily_limit": p.get("daily_limit") or 500,
+                "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
                 "quality_updated_at": now,
                 "updated_at": now,
             }, on_conflict="owner_id,channel_id").execute()

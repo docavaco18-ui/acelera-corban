@@ -417,6 +417,11 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     now_iso = datetime.now(timezone.utc).isoformat()
     updated: list[str] = []
 
+    # Override manual: quando a Meta nao reporta tier (daily_limit=0), preserva o valor ja salvo.
+    _prev_rows = db.table("broadcast_numbers").select("phone_id,daily_limit,messaging_tier").eq("owner_id", user_id).execute().data or []
+    _prev_limit = {r["phone_id"]: r.get("daily_limit") for r in _prev_rows}
+    _prev_tier = {r["phone_id"]: r.get("messaging_tier") for r in _prev_rows}
+
     for token_id, bm_name, p in collected:
         digits = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
         suffix = digits[-10:] if len(digits) >= 10 else digits
@@ -430,8 +435,8 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "display_phone": p.get("display_phone") or "",
             "quality_rating": p.get("quality_rating", "UNKNOWN"),
             "throughput_level": p.get("throughput_level"),
-            "messaging_tier": p.get("messaging_tier"),
-            "daily_limit": p.get("daily_limit") or 500,
+            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
+            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
             "can_send": p.get("can_send", "UNKNOWN"),
             "name_status": p.get("name_status"),
             "phone_status": p.get("phone_status"),
