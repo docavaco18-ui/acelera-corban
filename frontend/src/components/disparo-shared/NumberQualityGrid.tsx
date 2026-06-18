@@ -99,9 +99,10 @@ export function NumberQualityGrid({
                     <span style={{ color: '#f59e0b', fontSize: 10, background: '#f59e0b18', border: '1px solid #f59e0b44', borderRadius: 4, padding: '2px 8px', fontWeight: 800, letterSpacing: '0.06em' }}>PAUSADA</span>
                   )}
                 </div>
-                {(inst.waba_name || inst.waba_country) && (
+                {(inst.bm_name || inst.waba_name || inst.waba_country) && (
                   <div style={{ color: C.muted, fontSize: 11, marginTop: 4 }}>
-                    {inst.waba_name && <>BM <strong style={{ color: C.sec }}>{inst.waba_name}</strong></>}
+                    {inst.bm_name && <>BM <strong style={{ color: C.sec }}>{inst.bm_name}</strong></>}
+                    {inst.waba_name && <span style={{ marginLeft: inst.bm_name ? 8 : 0 }}>{inst.bm_name ? '· ' : ''}WABA <strong style={{ color: C.sec }}>{inst.waba_name}</strong></span>}
                     {inst.waba_country && <span style={{ marginLeft: 8 }}>· {inst.waba_country}</span>}
                   </div>
                 )}

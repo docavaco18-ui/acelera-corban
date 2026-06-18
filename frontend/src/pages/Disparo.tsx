@@ -179,6 +179,7 @@ type MetaTokenRow = {
   label?: string;
   bm_id?: string | null;
   bm_name?: string | null;
+  bm_daily_limit?: number | null;
   waba_count?: number;
   connection_status?: 'estavel' | 'erro' | 'unknown';
   connection_detail?: string | null;
@@ -281,6 +282,22 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
     finally { setBusyId(null); }
   };
 
+  // Limite diário manual da BM (Meta não expõe o tier via API p/ número novo).
+  // Aplicado a TODOS os números da porta; quando a Meta reportar o tier real, o
+  // refresh sobrescreve. Salva só se o valor mudou.
+  const saveLimit = async (t: MetaTokenRow, raw: string) => {
+    const v = parseInt(raw, 10);
+    const norm = Number.isFinite(v) && v > 0 ? v : 0;
+    if (norm === (t.bm_daily_limit ?? 0)) return;
+    setBusyId(t.id); setMsg('');
+    try {
+      await broadcastApi.updateMetaToken(t.id, { bm_daily_limit: norm });
+      await load(); onSaved();
+      setMsg(norm > 0 ? `Limite ${norm.toLocaleString('pt-BR')}/dia salvo na BM.` : 'Limite da BM removido (volta a aguardar Meta).');
+    } catch (e: any) { setMsg('Erro ao salvar limite: ' + (e?.response?.data?.detail || e?.message)); }
+    finally { setBusyId(null); }
+  };
+
   if (!loaded) return null;
 
   return (
@@ -329,6 +346,19 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <label title="Limite diário da BM aplicado a TODOS os números. A Meta não expõe o tier via API p/ número novo — quando ela liberar, o refresh sobrescreve."
+                style={{ display: 'flex', alignItems: 'center', gap: 6, color: C.muted, fontSize: 11, fontWeight: 700 }}>
+                Limite/dia
+                <input type="number" min={0} placeholder="—"
+                  defaultValue={t.bm_daily_limit ?? ''} key={`lim-${t.id}-${t.bm_daily_limit ?? ''}`}
+                  disabled={busyId !== null}
+                  onKeyDown={e => { if (e.key === 'Enter') saveLimit(t, (e.target as HTMLInputElement).value); }}
+                  onBlur={e => saveLimit(t, e.target.value)}
+                  style={{
+                    width: 84, background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.15)',
+                    color: C.text, borderRadius: 8, padding: '6px 10px', fontSize: 12, fontWeight: 700,
+                  }} />
+              </label>
               <StatusBadge status={t.connection_status} detail={t.connection_detail} />
               <button onClick={() => testPort(t.id)} disabled={busyId !== null} aria-label="Testar conexão da porta"
                 style={{

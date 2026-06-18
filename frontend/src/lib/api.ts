@@ -651,7 +651,7 @@ export const broadcastApi = {
   addMetaToken: (data: { label?: string; meta_token: string; bm_id?: string; waba_ids?: string[] }) =>
     broadcastAxios.post("/api/broadcast/meta-tokens", data),
   testMetaToken: (id: string) => broadcastAxios.post(`/api/broadcast/meta-tokens/${id}/test`),
-  updateMetaToken: (id: string, data: { label?: string; waba_ids?: string[] }) =>
+  updateMetaToken: (id: string, data: { label?: string; waba_ids?: string[]; bm_daily_limit?: number }) =>
     broadcastAxios.patch(`/api/broadcast/meta-tokens/${id}`, data),
   deleteMetaToken: (id: string) => broadcastAxios.delete(`/api/broadcast/meta-tokens/${id}`),
   listNumbers: () => broadcastAxios.get<any[]>("/api/broadcast/numbers"),

@@ -36,9 +36,12 @@ export function statusCards(inst: any): StatusCard[] {
   const cs = (inst.can_send || 'UNKNOWN').toUpperCase();
   const ns = (inst.name_status || '').toUpperCase();
 
-  // Capacidade
-  const tier = inst.messaging_tier || inst.daily_limit || '—';
-  const tierNum = typeof tier === 'string' ? tier.replace(/\D/g, '') : tier;
+  // Capacidade: prioriza o número real (daily_limit); messaging_tier textual
+  // ("aguardando Meta") NÃO vira "—" — só usa dígitos do tier se daily_limit=0.
+  const dl = Number(inst.daily_limit) || 0;
+  const tierDigits = typeof inst.messaging_tier === 'string'
+    ? parseInt(inst.messaging_tier.replace(/\D/g, ''), 10) || 0 : 0;
+  const tierNum = dl > 0 ? dl : tierDigits;
   const sentToday = inst.sent_today || 0;
   let capLevel: AlertLevel = 'green';
   if (cs === 'BLOCKED') capLevel = 'red';
@@ -64,7 +67,7 @@ export function statusCards(inst: any): StatusCard[] {
   else if (ns === 'EXPIRED') { nText = 'Expirado'; nLevel = 'red'; nSub = 'renove'; }
 
   return [
-    { label: 'Capacidade', value: `${tierNum || '—'}/dia`, level: capLevel, sub: `${sentToday} enviadas hoje` },
+    { label: 'Capacidade', value: tierNum > 0 ? `${tierNum.toLocaleString('pt-BR')}/dia` : 'aguardando Meta', level: capLevel, sub: tierNum > 0 ? `${sentToday} enviadas hoje` : 'Meta ainda não liberou o tier' },
     { label: 'Qualidade', value: qText, level: qLevel, sub: r === 'UNKNOWN' ? '' : `nível ${r.toLowerCase()}` },
     { label: 'Pagamento', value: pText, level: pLevel, sub: pSub },
     { label: 'Nome exibição', value: nText, level: nLevel, sub: nSub },

@@ -130,6 +130,7 @@ def _token_public(r: dict) -> dict:
         "label": r.get("label"),
         "bm_id": r.get("bm_id"),
         "bm_name": r.get("bm_name"),
+        "bm_daily_limit": r.get("bm_daily_limit"),
         "waba_count": r.get("waba_count", 0),
         "connection_status": r.get("connection_status", "unknown"),
         "connection_detail": r.get("connection_detail"),
@@ -152,7 +153,7 @@ def _load_meta_tokens(db, user_id: str) -> list[dict]:
             out.append({
                 "id": r.get("id"), "label": r.get("label"), "token": tok,
                 "waba_ids": r.get("waba_ids") or [], "bm_name": r.get("bm_name"),
-                "bm_id": r.get("bm_id"),
+                "bm_id": r.get("bm_id"), "bm_daily_limit": r.get("bm_daily_limit"),
             })
     if not out:
         legacy = db.table("vendeai_settings").select("meta_token_enc,waba_ids").eq("owner_id", user_id).execute().data
@@ -178,6 +179,7 @@ class MetaTokenPatch(BaseModel):
     label: Optional[str] = None
     bm_id: Optional[str] = None
     waba_ids: Optional[list[str]] = None
+    bm_daily_limit: Optional[int] = None   # limite diário manual da BM (Meta não expõe tier via API)
 
 
 @router.get("/meta-tokens")
@@ -262,7 +264,28 @@ def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depend
         patch["bm_id"] = body.bm_id.strip() or None
     if body.waba_ids is not None:
         patch["waba_ids"] = [w.strip() for w in body.waba_ids if w and w.strip()]
+    bm_limit_changed = False
+    if body.bm_daily_limit is not None:
+        # <=0 limpa o override (volta a "aguardando Meta")
+        patch["bm_daily_limit"] = body.bm_daily_limit if body.bm_daily_limit > 0 else None
+        bm_limit_changed = True
     db.table("vendeai_meta_tokens").update(patch).eq("owner_id", user_id).eq("id", token_id).execute()
+
+    # Propaga o limite da BM aos números dela imediatamente (sem esperar refresh).
+    # Só toca em quem NÃO tem tier real da Meta (messaging_tier sem dígito) — quando
+    # a Meta reportar o tier verdadeiro, o refresh sobrescreve e o override não atrapalha.
+    if bm_limit_changed:
+        val = patch["bm_daily_limit"]
+        nums = db.table("broadcast_numbers").select("phone_id,messaging_tier").eq(
+            "owner_id", user_id).eq("meta_token_id", token_id).execute().data or []
+        for n in nums:
+            tier = str(n.get("messaging_tier") or "")
+            if any(c.isdigit() for c in tier):
+                continue  # tem tier real da Meta → não sobrescreve
+            db.table("broadcast_numbers").update({
+                "daily_limit": val or 0,
+                "messaging_tier": f"{val}/dia (BM)" if val else "aguardando Meta",
+            }).eq("owner_id", user_id).eq("phone_id", n["phone_id"]).execute()
     return {"ok": True}
 
 
@@ -423,10 +446,12 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     kept_phone_ids: list[str] = []
     skipped_no_crm = 0
 
-    # Override manual: quando a Meta nao reporta tier (daily_limit=0), preserva o valor ja salvo.
-    _prev_rows = db.table("broadcast_numbers").select("phone_id,daily_limit,messaging_tier").eq("owner_id", user_id).execute().data or []
-    _prev_limit = {r["phone_id"]: r.get("daily_limit") for r in _prev_rows}
-    _prev_tier = {r["phone_id"]: r.get("messaging_tier") for r in _prev_rows}
+    # _prev_rows só p/ limpeza de órfãos (Step 4). NÃO preservamos mais daily_limit/
+    # messaging_tier antigos — isso carregava lixo fabricado (250/500/"nao reportado").
+    _prev_rows = db.table("broadcast_numbers").select("phone_id").eq("owner_id", user_id).execute().data or []
+
+    # Limite manual da BM por porta (Meta não expõe tier via API p/ número novo).
+    _tok_limit = {t.get("id"): t.get("bm_daily_limit") for t in tokens}
 
     for token_id, bm_name, p in collected:
         digits = "".join(c for c in (p.get("display_phone") or "") if c.isdigit())
@@ -438,6 +463,17 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             skipped_no_crm += 1
             continue
 
+        # Capacidade: tier REAL da Meta se reportado; senão limite manual da BM
+        # (porta); senão "aguardando Meta"/0. NUNCA fabrica 250/500.
+        meta_limit = p.get("daily_limit") or 0
+        bm_limit = _tok_limit.get(token_id) or 0
+        if meta_limit > 0:
+            r_tier, r_limit = (p.get("messaging_tier") or f"{meta_limit}/dia"), meta_limit
+        elif bm_limit > 0:
+            r_tier, r_limit = f"{bm_limit}/dia (BM)", bm_limit
+        else:
+            r_tier, r_limit = "aguardando Meta", 0
+
         record = {
             "owner_id": user_id,
             "meta_token_id": token_id,
@@ -446,11 +482,8 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "display_phone": p.get("display_phone") or "",
             "quality_rating": p.get("quality_rating", "UNKNOWN"),
             "throughput_level": p.get("throughput_level"),
-            # Capacidade = tier REAL da Meta. Null = Meta ainda não populou (número
-            # novo) → preserva override manual se houver, senão "aguardando Meta"/0.
-            # NUNCA fabrica 250/500 default.
-            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "aguardando Meta",
-            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 0,
+            "messaging_tier": r_tier,
+            "daily_limit": r_limit,
             "can_send": p.get("can_send", "UNKNOWN"),
             "name_status": p.get("name_status"),
             "phone_status": p.get("phone_status"),
@@ -462,6 +495,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "has_payment_issue": p.get("has_payment_issue", False),
             "display_name_pending": p.get("display_name_pending", False),
             "waba_name": p.get("waba_name") or bm_name,
+            "bm_name": bm_name,
             "account_review_status": p.get("account_review_status"),
             "business_verification_status": p.get("business_verification_status"),
             "waba_currency": p.get("waba_currency"),
