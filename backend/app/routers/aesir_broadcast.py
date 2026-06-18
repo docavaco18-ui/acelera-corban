@@ -182,6 +182,47 @@ def list_instances(user_id: str = Depends(_get_user_id)):
     return stored.data or []
 
 
+def _get_meta_settings(user_id: str) -> tuple[str, list[str]]:
+    """Returns (meta_token, waba_ids) for official template sends."""
+    db = get_db()
+    resp = db.table("aesir_settings").select("meta_token_enc,waba_ids").eq("owner_id", user_id).execute()
+    if not resp.data:
+        raise HTTPException(400, "Credenciais Aesir não configuradas")
+    row = resp.data[0]
+    token = safe_decrypt(row.get("meta_token_enc") or "")
+    if not token:
+        raise HTTPException(400, "Token Meta não configurado — salve no painel Meta")
+    return token, row.get("waba_ids") or []
+
+
+@router.get("/templates")
+async def list_templates(user_id: str = Depends(_get_user_id)):
+    """Approved Meta templates for the user's WABA(s) — used for official sends."""
+    meta_token, waba_ids = _get_meta_settings(user_id)
+    if not waba_ids:
+        raise HTTPException(400, "Nenhuma WABA configurada — rode Atualizar Status primeiro")
+    client = MetaClient(access_token=meta_token)
+    out: list[dict] = []
+    seen: set[str] = set()
+    for waba in waba_ids:
+        try:
+            for t in await client.get_templates(waba):
+                key = f"{t.get('name')}:{t.get('language')}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({
+                    "name": t.get("name"),
+                    "language": t.get("language"),
+                    "category": t.get("category"),
+                    "body": t.get("body"),
+                    "variables": t.get("variables") or [],
+                })
+        except Exception as e:
+            log.warning("aesir list_templates waba=%s falhou: %s", waba, str(e)[:120])
+    return out
+
+
 @router.post("/instances/{instance_id}/pause")
 def pause_instance(instance_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
@@ -417,15 +458,87 @@ class AssignmentIn(BaseModel):
     planned_count: int
 
 
+class TemplateParamIn(BaseModel):
+    source: str = "column"  # "column" → valor é nome de coluna CSV; "text" → literal
+    value: str = ""
+
+
 class DispatchIn(BaseModel):
     dispatch_id: str
     assignments: list[AssignmentIn]
-    message_tpl: str
+    message_tpl: str = ""
     phone_column: str = "telefone"
     campaign_name: str = ""
     cooldown_seconds: int = 5
     # Bloqueia disparo se sum(planned_count) != total_leads (default false)
     allow_partial: bool = False
+    # Disparo oficial via template Meta (Aesir V1 não suporta template — envia direto pela Cloud API)
+    send_mode: str = "text"  # "text" (Aesir texto livre) | "template" (Meta oficial)
+    template_name: str = ""
+    template_lang: str = ""
+    template_params: list[TemplateParamIn] = []
+
+
+def _resolve_template_params(row: dict, params: list[TemplateParamIn]) -> list[str]:
+    """Build ordered {{1}}..{{N}} body values for one CSV row."""
+    out: list[str] = []
+    for p in params:
+        if p.source == "column":
+            out.append(str(row.get(p.value, "") or ""))
+        else:
+            out.append(str(p.value or ""))
+    return out
+
+
+async def _dispatch_template_slice(
+    aesir_client: AesirClient,
+    instance_id: str,
+    instance_type: str,
+    csv_bytes: bytes,
+    body: "DispatchIn",
+    stop_event: asyncio.Event,
+) -> dict[str, Any]:
+    """Send an approved template to each CSV row THROUGH Aesir (official WABA queue).
+
+    Routes via Aesir /whatsapp/send-template so o envio fica registrado dentro do
+    Aesir — Acelera funciona como capa do Aesir.
+    """
+    text = csv_bytes.lstrip(b"\xef\xbb\xbf").decode("utf-8", errors="replace")
+    rows = list(csv.DictReader(io.StringIO(text)))
+    sent = 0
+    errors = 0
+    for i, row in enumerate(rows):
+        if stop_event.is_set():
+            break
+        phone_raw = ""
+        for col in [body.phone_column, "telefone", "phone", "celular", "numero", "whatsapp"]:
+            if col in row and row[col]:
+                phone_raw = row[col]
+                break
+        phone = "".join(c for c in phone_raw if c.isdigit())
+        if not phone or not (10 <= len(phone) <= 13):
+            errors += 1
+            log.debug("aesir_tpl_skip invalid_phone raw=%r digits=%r", phone_raw, phone)
+            continue
+        variables = _resolve_template_params(row, body.template_params)
+        try:
+            await aesir_client.send_template(
+                instance_id=instance_id,
+                number=phone,
+                template_name=body.template_name,
+                variables=variables,
+                instance_type=instance_type,
+                language=body.template_lang or None,
+                campaign_name=body.campaign_name or None,
+            )
+            sent += 1
+            log.info("aesir_tpl_sent phone=%s template=%s instance=%s", phone, body.template_name, instance_id)
+        except Exception as exc:
+            errors += 1
+            log.warning("aesir_tpl_send_error phone=%s error=%s: %s", phone, type(exc).__name__, str(exc)[:160])
+        if i < len(rows) - 1:
+            await asyncio.sleep(body.cooldown_seconds)
+    return {"sent": sent, "errors": errors, "total": sent + errors}
 
 
 @router.post("/dispatch")
@@ -437,6 +550,12 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
         raise HTTPException(404, "Dispatch não encontrado")
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
+
+    if body.send_mode == "template":
+        if not body.template_name or not body.template_lang:
+            raise HTTPException(400, "Selecione um template e idioma para disparo oficial")
+    elif not body.message_tpl.strip():
+        raise HTTPException(400, "Mensagem vazia")
 
     # ── Server-side validation (no tampering, no partial by default) ───────────
     total_leads_for_dispatch = int(dispatch.data[0].get("total_leads") or 0)
@@ -474,7 +593,8 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
         "status": "running",
         "campaign_name": body.campaign_name or body.dispatch_id[:8],
         "phone_column": body.phone_column,
-        "message_tpl": body.message_tpl,
+        "message_tpl": (f"[template] {body.template_name} ({body.template_lang})"
+                        if body.send_mode == "template" else body.message_tpl),
         "cooldown_seconds": body.cooldown_seconds,
         "assignments_json": assignments_json,
         "updated_at": now,
@@ -483,12 +603,25 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
     stop_event = asyncio.Event()
     _stop_events[body.dispatch_id] = stop_event
 
+    # Texto livre E template oficial passam PELO Aesir (Acelera = capa do Aesir).
+    is_template = body.send_mode == "template"
     client = _get_client(user_id)
 
     async def _run():
         row_offset = 0
         _success_count = 0
         _error_count = 0
+        _total_sent = 0    # mensagens enviadas (agregado p/ coluna top-level)
+        _total_errors = 0  # mensagens com erro (agregado p/ coluna top-level)
+        # Aesir send-message/send-template exige instance_type — mapeia id→type uma vez.
+        type_map: dict[str, str] = {}
+        try:
+            for _inst in await client.list_instances():
+                _iid = str(_inst.get("id") or _inst.get("instance_id") or "")
+                if _iid:
+                    type_map[_iid] = _inst.get("type") or "waba"
+        except Exception:
+            log.warning("aesir dispatch: list_instances falhou, usando instance_type=waba default")
         try:
             for asn_model in body.assignments:
                 if stop_event.is_set():
@@ -501,19 +634,28 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                 _update_assignment(body.dispatch_id, iid, {"status": "running"}, db, user_id)
 
                 try:
-                    result = await client.dispatch_csv(
-                        csv_bytes=slice_bytes,
-                        instance_id=iid,
-                        message_tpl=body.message_tpl,
-                        phone_column=body.phone_column,
-                        cooldown_seconds=body.cooldown_seconds,
-                        stop_event=stop_event,
-                    )
+                    if is_template:
+                        result = await _dispatch_template_slice(
+                            client, str(iid), type_map.get(str(iid), "waba"),
+                            slice_bytes, body, stop_event,
+                        )
+                    else:
+                        result = await client.dispatch_csv(
+                            csv_bytes=slice_bytes,
+                            instance_id=iid,
+                            message_tpl=body.message_tpl,
+                            phone_column=body.phone_column,
+                            cooldown_seconds=body.cooldown_seconds,
+                            stop_event=stop_event,
+                            instance_type=type_map.get(str(iid), "waba"),
+                        )
                     _update_assignment(body.dispatch_id, iid, {
                         "sent": result["sent"],
                         "errors": result["errors"],
                         "status": "done" if not stop_event.is_set() else "paused",
                     }, db, user_id)
+                    _total_sent += result["sent"]
+                    _total_errors += result["errors"]
                     _success_count += 1
                 except asyncio.CancelledError:
                     _update_assignment(body.dispatch_id, iid, {"status": "paused"}, db, user_id)
@@ -543,6 +685,8 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
             if current_status not in ("cancelled",):
                 db.table("aesir_dispatches").update({
                     "status": final,
+                    "sent": _total_sent,
+                    "errors": _total_errors,
                     "finished_at": datetime.now(timezone.utc).isoformat(),
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()

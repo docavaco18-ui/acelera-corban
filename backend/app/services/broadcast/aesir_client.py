@@ -25,6 +25,42 @@ class AesirClient:
             "Content-Type": "application/json",
         }
 
+    async def send_template(
+        self,
+        instance_id: str,
+        number: str,
+        template_name: str,
+        variables: list[str] | None = None,
+        instance_type: str = "waba",
+        language: str | None = None,
+        campaign_name: str | None = None,
+    ) -> dict:
+        """POST /whatsapp/send-template — envia template oficial PELO Aesir.
+
+        Aesir registra no Chat do contato e agrupa em campanha (Gerenciador de
+        Campanhas) quando `campaign_name` é informado. Raises em non-2xx.
+        """
+        payload: dict[str, Any] = {
+            "instance_id": instance_id,
+            "instance_type": instance_type,
+            "number": number,
+            "template_name": template_name,
+        }
+        if variables:
+            payload["variables"] = variables
+        if language:
+            payload["language"] = language
+        if campaign_name:
+            payload["campaign_name"] = campaign_name
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                f"{BASE_URL}/whatsapp/send-template",
+                headers=self._headers(),
+                json=payload,
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def list_instances(self) -> list[dict]:
         """GET /whatsapp/instances — lista instâncias WA do tenant."""
         async with httpx.AsyncClient() as client:
@@ -47,6 +83,7 @@ class AesirClient:
         phone_column: str = "telefone",
         cooldown_seconds: int = 5,
         stop_event: asyncio.Event | None = None,
+        instance_type: str = "waba",
     ) -> dict[str, Any]:
         """Loop through CSV rows, send one message per contact.
 
@@ -83,7 +120,12 @@ class AesirClient:
                     r = await client.post(
                         f"{BASE_URL}/whatsapp/send-message",
                         headers=self._headers(),
-                        json={"instance_id": instance_id, "phone": phone, "message": message},
+                        json={
+                            "instance_id": instance_id,
+                            "instance_type": instance_type,
+                            "number": phone,
+                            "message": message,
+                        },
                     )
                     r.raise_for_status()
                     sent += 1

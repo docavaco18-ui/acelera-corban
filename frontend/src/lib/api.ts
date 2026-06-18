@@ -531,14 +531,20 @@ export const aesirApi = {
     form.append("file", file);
     return aesirAxios.post<{ dispatch_id: string; total_leads: number; split: any; csv_columns: string[] }>("/api/aesir-broadcast/analyze", form).then((r) => r.data);
   },
+  getTemplates: () =>
+    aesirAxios.get<{ name: string; language: string; category: string; body: string; variables: string[] }[]>("/api/aesir-broadcast/templates").then((r) => r.data),
   confirmDispatch: (body: {
     dispatch_id: string;
     assignments: { instance_id: string; planned_count: number }[];
-    message_tpl: string;
+    message_tpl?: string;
     phone_column: string;
     campaign_name: string;
     cooldown_seconds: number;
     allow_partial?: boolean;
+    send_mode?: string;
+    template_name?: string;
+    template_lang?: string;
+    template_params?: { source: string; value: string }[];
   }) => aesirAxios.post<{ dispatch_id: string; status: string; assigned_count?: number; unassigned_count?: number }>("/api/aesir-broadcast/dispatch", body).then((r) => r.data),
 
   // dispatch control

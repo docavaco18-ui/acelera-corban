@@ -434,3 +434,38 @@ class MetaClient:
             body = next((c.get("text", "") for c in components if c.get("type") == "BODY"), "")
             results.append({**t, "variables": variables, "body": body})
         return results
+
+    async def send_template(
+        self,
+        phone_id: str,
+        to: str,
+        template_name: str,
+        language: str,
+        body_params: list[str] | None = None,
+    ) -> dict:
+        """Send an approved template via Cloud API POST /{phone_id}/messages.
+
+        body_params fill the {{1}}..{{N}} BODY variables in order. Raises
+        httpx.HTTPStatusError on non-2xx; returns the parsed Graph response.
+        """
+        template: dict = {"name": template_name, "language": {"code": language}}
+        if body_params:
+            template["components"] = [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in body_params],
+            }]
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": to,
+            "type": "template",
+            "template": template,
+        }
+        async with httpx.AsyncClient(timeout=20) as client:
+            r = await client.post(
+                f"{META_BASE}/{phone_id}/messages",
+                headers={**self._auth, "Content-Type": "application/json"},
+                json=payload,
+            )
+            r.raise_for_status()
+            return r.json()

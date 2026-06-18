@@ -9,7 +9,6 @@ import {
 import { CollapsedChip as SharedChip } from '../components/disparo-shared/CollapsedChip';
 import { BMSummary } from '../components/disparo-shared/BMSummary';
 import { AIMonitorPanel as SharedAIMonitor } from '../components/disparo-shared/AICore';
-import { CampaignHistoryList } from '../components/disparo/CampaignHistoryList';
 
 // ── Aesir-specific CSS (focus/hover classes + scan animation) ────────────────
 const CSS = SHARED_CSS + `
@@ -468,10 +467,19 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [phoneCol, setPhoneCol] = useState('telefone');
 
-  const [msgTpl, setMsgTpl] = useState('');
   const [campaignName, setCampaignName] = useState('');
   const [cooldown, setCooldown] = useState(5);
   const [previewRow, setPreviewRow] = useState<Record<string, string>>({});
+
+  // Disparo oficial via template Meta (Aesir V1 não suporta texto livre fora da janela 24h)
+  const [templates, setTemplates] = useState<{ name: string; language: string; category: string; body: string; variables: string[] }[]>([]);
+  const [tplName, setTplName] = useState('');
+  const [tplVars, setTplVars] = useState<{ source: 'column' | 'text'; value: string }[]>([]);
+  const [loadingTpls, setLoadingTpls] = useState(false);
+  const [tplErr, setTplErr] = useState('');
+  const tplObj = templates.find(t => t.name === tplName);
+
+  const labelStyle = { color: C.sec, fontSize: 13, fontWeight: 600, display: 'block' as const, marginBottom: 8, textTransform: 'uppercase' as const, letterSpacing: '0.06em' };
 
   const [sending, setSending] = useState(false);
   const [allowPartial, setAllowPartial] = useState(false);
@@ -512,16 +520,34 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
     setAssignments(prev => prev.map(a => a.instance_id === iid ? { ...a, planned_count: Math.max(0, val) } : a));
   };
 
-  const previewMessage = () => {
-    let msg = msgTpl;
-    for (const [k, v] of Object.entries(previewRow)) {
-      msg = msg.split(`{{${k}}}`).join(v);
+  useEffect(() => {
+    if (step === 'template' && templates.length === 0 && !loadingTpls) {
+      setLoadingTpls(true); setTplErr('');
+      aesirApi.getTemplates()
+        .then(setTemplates)
+        .catch(e => setTplErr(e?.response?.data?.detail || 'Erro ao carregar templates'))
+        .finally(() => setLoadingTpls(false));
     }
-    return msg;
+  }, [step]);
+
+  const selectTemplate = (name: string) => {
+    setTplName(name);
+    const t = templates.find(x => x.name === name);
+    const n = t?.variables.length || 0;
+    setTplVars(Array.from({ length: n }, () => ({ source: 'column' as const, value: csvColumns[0] || '' })));
+  };
+
+  const previewTemplate = () => {
+    let body = tplObj?.body || '';
+    tplVars.forEach((v, i) => {
+      const disp = v.source === 'column' ? (previewRow[v.value] || `[${v.value}]`) : (v.value || `{{${i + 1}}}`);
+      body = body.split(`{{${i + 1}}}`).join(disp);
+    });
+    return body;
   };
 
   const confirm = async () => {
-    if (!msgTpl.trim()) { setErr('Mensagem obrigatória'); return; }
+    if (!tplName) { setErr('Selecione um template'); return; }
     const validAsns = assignments.filter(a => a.planned_count > 0);
     if (!validAsns.length) { setErr('Nenhum lead atribuído'); return; }
     setSending(true); setErr('');
@@ -529,15 +555,18 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
       await aesirApi.confirmDispatch({
         dispatch_id: dispatchId,
         assignments: validAsns.map(a => ({ instance_id: a.instance_id, planned_count: a.planned_count })),
-        message_tpl: msgTpl,
         phone_column: phoneCol,
         campaign_name: campaignName || file?.name?.replace('.csv', '') || '',
         cooldown_seconds: cooldown,
         allow_partial: allowPartial,
+        send_mode: 'template',
+        template_name: tplName,
+        template_lang: tplObj?.language || '',
+        template_params: tplVars.map(v => ({ source: v.source, value: v.value })),
       });
       onDispatched();
       setStep('upload'); setFile(null); setDispatchId(''); setTotalLeads(0);
-      setCsvColumns([]); setAssignments([]); setMsgTpl(''); setCampaignName('');
+      setCsvColumns([]); setAssignments([]); setTplName(''); setTplVars([]); setCampaignName('');
       if (fileRef.current) fileRef.current.value = '';
     } catch (e: any) { setErr(e?.response?.data?.detail || e?.message || 'Erro ao confirmar'); }
     finally { setSending(false); }
@@ -648,56 +677,79 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
         </div>
       )}
 
-      {/* Step 3 — Template */}
+      {/* Step 3 — Template oficial da Meta */}
       {step === 'template' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <p style={{ color: C.sec, fontSize: 13, margin: 0, lineHeight: 1.6 }}>
-            Escreva a mensagem. Use <code style={{ color: '#00ff88', background: 'rgba(0,255,136,.08)', padding: '1px 6px', borderRadius: 4, fontSize: 12 }}>{'{{coluna}}'}</code> para inserir variáveis do CSV.
+            Disparo oficial via API da Meta — selecione um <strong style={{ color: C.text }}>template aprovado</strong>. Texto livre não é permitido fora da janela de 24h.
           </p>
 
-          {csvColumns.length > 0 && (
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {csvColumns.map(c => (
-                <button key={c} className="aesir-chip" style={{
-                  background: 'rgba(0,255,136,.06)', border: '1px solid rgba(0,255,136,.2)',
-                  color: '#00ff88', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 600,
-                  cursor: 'pointer',
-                }} onClick={() => setMsgTpl(prev => prev + `{{${c}}}`)}>{`{{${c}}}`}</button>
+          {loadingTpls && <div style={{ color: C.muted, fontSize: 13 }}>⟳ Carregando templates...</div>}
+          {tplErr && <div style={{ color: C.red, fontSize: 13 }}>⚠ {tplErr}</div>}
+          {!loadingTpls && !tplErr && templates.length === 0 && (
+            <div style={{ color: '#f59e0b', fontSize: 13 }}>Nenhum template aprovado encontrado. Crie/aprove um template na Meta.</div>
+          )}
+
+          {templates.length > 0 && (
+            <div>
+              <label style={labelStyle}>Template da Meta</label>
+              <select className="aesir-select" style={{ ...INPUT_STYLE, appearance: 'none' as const }} value={tplName} onChange={e => selectTemplate(e.target.value)}>
+                <option value="" style={{ background: '#0d0d20' }}>Selecione um template...</option>
+                {templates.map(t => (
+                  <option key={`${t.name}:${t.language}`} value={t.name} style={{ background: '#0d0d20' }}>
+                    {t.name} · {t.language} · {t.category}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {tplObj && tplObj.variables.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label style={labelStyle}>Variáveis do template</label>
+              {tplVars.map((v, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '54px 130px 1fr', gap: 8, alignItems: 'center' }}>
+                  <span style={{ color: '#00ff88', fontSize: 12, fontWeight: 700 }}>{`{{${i + 1}}}`}</span>
+                  <select className="aesir-select" style={{ ...INPUT_STYLE, appearance: 'none' as const }} value={v.source}
+                    onChange={e => setTplVars(prev => prev.map((p, j) => j === i ? { ...p, source: e.target.value as 'column' | 'text', value: e.target.value === 'column' ? (csvColumns[0] || '') : '' } : p))}>
+                    <option value="column" style={{ background: '#0d0d20' }}>Coluna CSV</option>
+                    <option value="text" style={{ background: '#0d0d20' }}>Texto fixo</option>
+                  </select>
+                  {v.source === 'column' ? (
+                    <select className="aesir-select" style={{ ...INPUT_STYLE, appearance: 'none' as const }} value={v.value}
+                      onChange={e => setTplVars(prev => prev.map((p, j) => j === i ? { ...p, value: e.target.value } : p))}>
+                      {csvColumns.map(c => <option key={c} value={c} style={{ background: '#0d0d20' }}>{c}</option>)}
+                    </select>
+                  ) : (
+                    <input className="aesir-input" style={INPUT_STYLE} value={v.value} placeholder="texto fixo"
+                      onChange={e => setTplVars(prev => prev.map((p, j) => j === i ? { ...p, value: e.target.value } : p))} />
+                  )}
+                </div>
               ))}
             </div>
           )}
 
-          <div>
-            <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, textTransform: 'uppercase' as const, letterSpacing: '0.06em' }}>Mensagem</label>
-            <textarea className="aesir-input"
-              style={{ ...INPUT_STYLE, height: 120, resize: 'vertical', fontFamily: 'inherit', lineHeight: 1.6 }}
-              placeholder={'Olá {{nome}}, temos uma proposta para você!\nValor disponível: R$ {{valor}}'}
-              value={msgTpl}
-              onChange={e => setMsgTpl(e.target.value)}
-            />
-          </div>
-
-          {msgTpl && (
+          {tplObj && (
             <div style={{ background: 'rgba(124,58,237,.06)', border: '1px solid rgba(124,58,237,.2)', borderRadius: 10, padding: 16 }}>
               <div style={{ color: '#7c3aed', fontSize: 10, marginBottom: 8, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>📱 Prévia da Mensagem</div>
-              <div style={{ color: C.text, fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{previewMessage()}</div>
+              <div style={{ color: C.text, fontSize: 13, whiteSpace: 'pre-wrap', lineHeight: 1.7 }}>{previewTemplate()}</div>
             </div>
           )}
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             <div>
-              <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, textTransform: 'uppercase' as const, letterSpacing: '0.06em' }}>Nome da Campanha</label>
+              <label style={labelStyle}>Nome da Campanha</label>
               <input className="aesir-input" style={INPUT_STYLE} placeholder={file?.name?.replace('.csv', '') || 'Campanha Junho'} value={campaignName} onChange={e => setCampaignName(e.target.value)} />
             </div>
             <div>
-              <label style={{ color: C.sec, fontSize: 13, fontWeight: 600, display: 'block', marginBottom: 8, textTransform: 'uppercase' as const, letterSpacing: '0.06em' }}>Cooldown entre envios (seg)</label>
+              <label style={labelStyle}>Cooldown entre envios (seg)</label>
               <input className="aesir-input" style={INPUT_STYLE} type="number" min={1} max={60} value={cooldown} onChange={e => setCooldown(Number(e.target.value))} />
             </div>
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="aesir-btn" style={btnStyle('rgba(255,255,255,.06)')} onClick={() => setStep('assign')}>← Voltar</button>
-            <button className="aesir-btn" style={btnStyle(G.primary, !msgTpl.trim())} disabled={!msgTpl.trim()} onClick={() => setStep('confirm')}>Próximo →</button>
+            <button className="aesir-btn" style={btnStyle(G.primary, !tplName)} disabled={!tplName} onClick={() => setStep('confirm')}>Próximo →</button>
           </div>
         </div>
       )}
@@ -741,8 +793,9 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
             </div>
 
             <div>
-              <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', marginBottom: 8 }}>MENSAGEM</div>
-              <div style={{ color: C.sec, fontSize: 12, whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, background: 'rgba(255,255,255,.02)', padding: 10, borderRadius: 8 }}>{msgTpl}</div>
+              <div style={{ color: C.muted, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', marginBottom: 8 }}>TEMPLATE OFICIAL</div>
+              <div style={{ color: '#00ff88', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>{tplName} {tplObj && <span style={{ color: C.muted }}>· {tplObj.language}</span>}</div>
+              <div style={{ color: C.sec, fontSize: 12, whiteSpace: 'pre-wrap', fontFamily: 'inherit', lineHeight: 1.6, background: 'rgba(255,255,255,.02)', padding: 10, borderRadius: 8 }}>{previewTemplate()}</div>
             </div>
           </div>
 
@@ -841,11 +894,93 @@ function Section({ title, gradient, icon, children }: { title: string; gradient:
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+// ── Histórico de disparos Aesir (schema próprio: assignments_json) ───────────
+const AESIR_DISPATCH_STATUS: Record<string, { label: string; color: string }> = {
+  running:       { label: 'Rodando',   color: '#00ff88' },
+  paused:        { label: 'Pausado',   color: '#ffd700' },
+  done:          { label: 'Concluído', color: '#94a3b8' },
+  error:         { label: 'Erro',      color: '#ff2d78' },
+  partial_error: { label: 'Parcial',   color: '#f59e0b' },
+  cancelled:     { label: 'Cancelado', color: '#ff2d78' },
+};
+
+function AesirCampaignHistory({ refreshKey }: { refreshKey: number }) {
+  const [rows, setRows] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [acting, setActing] = useState<string | null>(null);
+
+  const load = async () => {
+    try { setRows(await aesirApi.listDispatches()); } catch { /* ignore */ } finally { setLoading(false); }
+  };
+  useEffect(() => { load(); }, [refreshKey]);
+  useEffect(() => {
+    if (!rows.some(r => r.status === 'running' || r.status === 'paused')) return;
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [rows]);
+
+  const act = async (id: string, action: 'pause' | 'cancel') => {
+    setActing(id + action);
+    try {
+      if (action === 'pause') await aesirApi.pauseDispatch(id);
+      else await aesirApi.cancelDispatch(id);
+      await load();
+    } catch { /* ignore */ } finally { setActing(null); }
+  };
+
+  const fmt = (iso?: string) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
+
+  if (loading) return <div style={{ color: C.muted, fontSize: 13, padding: 8 }}>Carregando histórico...</div>;
+  if (!rows.length) return <div style={{ color: C.muted, fontSize: 13, padding: 8 }}>Nenhum disparo realizado ainda.</div>;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {rows.map((d, idx) => {
+        const asns = d.assignments_json || [];
+        const sent = (typeof d.sent === 'number' && d.sent) || asns.reduce((s: number, a: any) => s + (a.sent || 0), 0);
+        const errors = (typeof d.errors === 'number' && d.errors) || asns.reduce((s: number, a: any) => s + (a.errors || 0), 0);
+        const planned = asns.reduce((s: number, a: any) => s + (a.planned || 0), 0) || d.total_leads || 0;
+        const pct = planned > 0 ? Math.min(100, Math.round(sent / planned * 100)) : 0;
+        const st = AESIR_DISPATCH_STATUS[d.status] ?? { label: d.status, color: C.muted };
+        const isActive = d.status === 'running' || d.status === 'paused';
+        return (
+          <div key={d.id} style={{ background: 'rgba(255,255,255,.03)', border: '1px solid rgba(255,255,255,.06)', borderRadius: 10, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <span style={{ color: C.text, fontWeight: 600, fontSize: 14 }}>{d.campaign_name || d.csv_filename || 'Disparo'}</span>
+                <span style={{ background: st.color + '22', color: st.color, border: `1px solid ${st.color}44`, borderRadius: 5, padding: '2px 8px', fontSize: 11, fontWeight: 700 }}>{st.label}</span>
+                {idx === 0 && <span style={{ color: '#7c3aed', fontSize: 10, fontWeight: 700 }}>● MAIS RECENTE</span>}
+              </div>
+              <div style={{ color: C.muted, fontSize: 11, marginTop: 3 }}>
+                {fmt(d.created_at)} · {planned.toLocaleString('pt-BR')} leads · {sent.toLocaleString('pt-BR')} enviados{errors ? ` · ${errors} erro(s)` : ''}{d.message_tpl ? ` · ${d.message_tpl}` : ''}
+              </div>
+              <div style={{ height: 4, background: 'rgba(255,255,255,.08)', borderRadius: 2, marginTop: 6 }}>
+                <div style={{ height: '100%', width: `${pct}%`, background: d.status === 'paused' ? '#ffd700' : '#00ff88', borderRadius: 2, transition: 'width .3s' }} />
+              </div>
+            </div>
+            {isActive && (
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                {d.status === 'running' && (
+                  <button className="aesir-btn" disabled={acting === d.id + 'pause'} onClick={() => act(d.id, 'pause')}
+                    style={{ background: '#ffd70022', border: '1px solid #ffd70044', color: '#ffd700', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>⏸ Pausar</button>
+                )}
+                <button className="aesir-btn" disabled={acting === d.id + 'cancel'} onClick={() => act(d.id, 'cancel')}
+                  style={{ background: '#ff2d7811', border: '1px solid #ff2d7833', color: '#ff2d78', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer' }}>✕ Cancelar</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function DisparoAesir() {
   const [instances, setInstances] = useState<any[]>([]);
   const [refreshingInst, setRefreshingInst] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState('');
   const [loadErr, setLoadErr] = useState('');
+  const [histKey, setHistKey] = useState(0);
 
   const loadInstances = async () => {
     try { const d = await aesirApi.listInstances(); setInstances(d || []); setLoadErr(''); }
@@ -962,7 +1097,7 @@ export default function DisparoAesir() {
 
       {/* Wizard */}
       <Section title="Novo Disparo" gradient={G.primary} icon="🚀">
-        <CsvUploadWizard onDispatched={loadInstances} />
+        <CsvUploadWizard onDispatched={() => { loadInstances(); setHistKey(k => k + 1); }} />
       </Section>
 
       {/* Quality grid */}
@@ -972,7 +1107,7 @@ export default function DisparoAesir() {
 
       {/* History — sempre por último */}
       <Section title="Histórico de Disparos" gradient={G.purple} icon="📋">
-        <CampaignHistoryList onRefresh={loadInstances} />
+        <AesirCampaignHistory refreshKey={histKey} />
       </Section>
     </div>
   );
