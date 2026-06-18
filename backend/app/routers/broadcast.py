@@ -413,9 +413,15 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             except Exception as e:
                 chatwoot_error = str(e)
 
-    # ── Step 3: Upsert cada número Meta (marca a porta/BM de origem) ──────────
+    # ── Step 3: Cruza CRM × BM e faz upsert ──────────────────────────────────
+    # Só entrega número que está na BM (Meta) E conectado no CRM (VendeAI inbox).
+    # Se o CRM falhou no fetch (erro ou 0 inboxes), NÃO aplica o filtro — evita
+    # zerar a tela por erro transitório; salva tudo e surfaca o erro no JSON.
+    crm_ok = chatwoot_error is None and len(chatwoot_map) > 0
     now_iso = datetime.now(timezone.utc).isoformat()
     updated: list[str] = []
+    kept_phone_ids: list[str] = []
+    skipped_no_crm = 0
 
     # Override manual: quando a Meta nao reporta tier (daily_limit=0), preserva o valor ja salvo.
     _prev_rows = db.table("broadcast_numbers").select("phone_id,daily_limit,messaging_tier").eq("owner_id", user_id).execute().data or []
@@ -427,6 +433,11 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         suffix = digits[-10:] if len(digits) >= 10 else digits
         inbox_id = chatwoot_map.get(suffix)
 
+        # Cross CRM × BM: sem inbox no CRM = não entrega (quando o cruzamento é confiável).
+        if crm_ok and inbox_id is None:
+            skipped_no_crm += 1
+            continue
+
         record = {
             "owner_id": user_id,
             "meta_token_id": token_id,
@@ -435,8 +446,11 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "display_phone": p.get("display_phone") or "",
             "quality_rating": p.get("quality_rating", "UNKNOWN"),
             "throughput_level": p.get("throughput_level"),
-            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
-            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
+            # Capacidade = tier REAL da Meta. Null = Meta ainda não populou (número
+            # novo) → preserva override manual se houver, senão "aguardando Meta"/0.
+            # NUNCA fabrica 250/500 default.
+            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "aguardando Meta",
+            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 0,
             "can_send": p.get("can_send", "UNKNOWN"),
             "name_status": p.get("name_status"),
             "phone_status": p.get("phone_status"),
@@ -460,8 +474,23 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         try:
             db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
             updated.append(p.get("phone_id") or "")
+            if p.get("phone_id"):
+                kept_phone_ids.append(p["phone_id"])
         except Exception as e:
             log.warning(f"broadcast_numbers upsert falhou owner={user_id} phone={p.get('phone_id')}: {e}")
+
+    # ── Step 4: Limpa órfãos ─────────────────────────────────────────────────
+    # Remove números que não estão mais em BM∩CRM (BM trocada, número saiu do CRM,
+    # WABA removida). Só roda quando o cruzamento é confiável (CRM ok) E a busca
+    # Meta veio limpa (sem meta_error) — senão evita apagar número que só falhou
+    # de buscar nesta rodada.
+    removed = 0
+    if crm_ok and collected and meta_error is None:
+        kept = set(kept_phone_ids)
+        stale = [r["phone_id"] for r in _prev_rows if r.get("phone_id") and r["phone_id"] not in kept]
+        if stale:
+            db.table("broadcast_numbers").delete().eq("owner_id", user_id).in_("phone_id", stale).execute()
+            removed = len(stale)
 
     return {
         "ok": True,
@@ -469,6 +498,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         "total": len(updated),
         "meta_total": len(collected),
         "tokens": len(tokens),
+        "crm_cross_applied": crm_ok,
+        "skipped_no_crm": skipped_no_crm,
+        "removed_stale": removed,
         "chatwoot_matched": sum(1 for _, _, p in collected
                                 if chatwoot_map.get(("".join(c for c in (p.get("display_phone") or "") if c.isdigit()))[-10:])),
         "chatwoot_inboxes_found": len(chatwoot_map),
