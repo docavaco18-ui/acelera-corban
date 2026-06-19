@@ -172,11 +172,15 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
                     quality_data = await meta.get_phone_quality(num["phone_id"])
                     update_fields = {
                         "quality_rating": quality_data["quality_rating"],
-                        "messaging_tier": quality_data["messaging_tier"],
-                        "daily_limit": quality_data["daily_limit"],
                         "can_send": quality_data["can_send"],
                         "last_meta_check_at": _utcnow(),
                     }
+                    # Só sobrescreve daily_limit/messaging_tier quando a Meta realmente
+                    # reporta um tier — daily_limit==0 significa que a Meta não retornou
+                    # messaging_limit_tier, então preserva o valor manual (bm_daily_limit).
+                    if quality_data["daily_limit"] > 0:
+                        update_fields["daily_limit"] = quality_data["daily_limit"]
+                        update_fields["messaging_tier"] = quality_data["messaging_tier"]
                     # Track previous quality for change detection
                     if num.get("quality_rating") and num["quality_rating"] != quality_data["quality_rating"]:
                         update_fields["quality_previous"] = num["quality_rating"]
