@@ -1,17 +1,18 @@
 """Nossa Fintech CLT — REST API client para higienização (sem browser).
 
-Fluxo por CPF (sem SMS — só consulta quem JÁ está autorizado):
+Fluxo por CPF:
   login()                          → JWT (Bearer, reusado até 401)
   banking_institutions()           → service_type (ex: "UY3"), cacheado por client
   check_authorization(cpf)         → "AUTHORIZED" | "PENDING" | "NOT_AUTHORIZED"
+  request_authorization(cpf, nome, phone) → AUTHORIZED|PENDING (envia SMS ao cliente
+                                     se primeira vez; idempotente se já autorizado)
   check_enrollment(cpf)            → [EnrollmentInfo] (vínculo: employer_cnpj)
   get_margin(cpf, employer_cnpj)   → MarginInfo (saldo/margem + margin_key)
   list_rebates(margin_key)         → tabelas (cod_tabela, prazo)
   simulate_loan(...)               → SimulationInfo (valor liberado, parcela, prazo)
 
-IMPORTANTE: NÃO dispara request-authorization (SMS). CPF sem autorização ativa
-volta como NOT_AUTHORIZED e o worker marca inelegível — nunca força consulta de
-margem em quem não consentiu.
+get_margin só é chamado após status AUTHORIZED — nunca consulta margem de quem
+não consentiu (LGPD).
 
 Doc: https://nossa-fintech-doc.spixiiservices.com.br/docs/nossa-fintech-clt/*
 """

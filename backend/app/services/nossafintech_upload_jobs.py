@@ -71,11 +71,13 @@ def _parse_csv(content: bytes, owner_id: str, batch_id: str | None = None) -> li
         return []
     normalized_row = {_norm_key(f): f for f in reader.fieldnames}
     leads: list[dict] = []
+    seen_cpfs: set[str] = set()
     for row in reader:
         cpf_raw = _pick(row, normalized_row, CPF_KEYS)
         cpf = re.sub(r"\D", "", cpf_raw).zfill(11)
-        if not cpf or len(cpf) > 11:
+        if not cpf or len(cpf) > 11 or cpf in seen_cpfs:
             continue
+        seen_cpfs.add(cpf)
         lead = {
             "cpf": cpf,
             "telefone": _pick(row, normalized_row, TEL_KEYS),

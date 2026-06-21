@@ -79,6 +79,11 @@ class NossaFintechApiWorker:
 
                 nome = record.get("nome") or ""
                 telefone = record.get("telefone") or ""
+                # Sem telefone válido: não dispara SMS pra número fallback
+                if sum(c.isdigit() for c in telefone) < 10:
+                    return {"status": "pendente", "valor_liberado": None,
+                            "erro": "sem_telefone_para_autorizacao",
+                            "tentativas": tentativas + 1}
                 req_status = self._client.request_authorization(cpf, nome, telefone)
                 log.info("nossafintech %d | CPF %s request_authorization → %s",
                          self.worker_id, cpf, req_status)
