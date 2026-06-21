@@ -5,6 +5,7 @@ Roda a engine command_center.compute_overview por usuário e agrega.
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import httpx
 from fastapi import APIRouter, Depends
@@ -20,6 +21,8 @@ from .users_monitor_summary import (
     summarize_overview,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/admin/users-monitor", tags=["users-monitor"])
 
 _LIVE_CONCURRENCY = 5
@@ -29,6 +32,7 @@ async def _list_auth_users() -> list[dict]:
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.get(_admin_url() + "?per_page=200", headers=_admin_headers())
     if not r.is_success:
+        logger.warning("Falha ao listar usuários (Supabase Admin API): %s %s", r.status_code, r.text[:200])
         return []
     data = r.json()
     users = data.get("users") if isinstance(data, dict) else data
@@ -75,7 +79,7 @@ async def _build_all(live_meta: bool) -> dict:
 
     summaries = await asyncio.gather(*(_bounded(u) for u in users))
     rank = {"critical": 0, "warning": 1, "ok": 2}
-    summaries.sort(key=lambda s: (rank.get(s["score"]["status"], 9), -s["capacity_today"]))
+    summaries.sort(key=lambda s: (rank.get(s.get("score", {}).get("status"), 9), -int(s.get("capacity_today", 0) or 0)))
     return {"aggregate": build_aggregate(summaries), "users": summaries}
 
 
