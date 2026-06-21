@@ -1071,3 +1071,6 @@ npx tsc --noEmit → 0 errors
 ### Pendências pós-review
 - ⏳ Deploy VPS: `git pull && docker compose -f docker-compose.prod.yml build --no-cache backend frontend && up -d`
 - ⏳ Aplicar `migrations/034_broadcast_recipients.sql` no Supabase `gfyharrnkcncpngbvhpj`
+
+## Central de Usuários (em progresso 2026-06-21)
+Painel admin multi-tenant. Branch `feat/central-usuarios`. Estado + retomada: `HANDOFF_CENTRAL_USUARIOS.md`. Tasks 1-4 ✅, Task 5 implementada (review pendente), Task 6-7 pendentes.
