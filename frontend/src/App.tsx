@@ -21,6 +21,7 @@ const Presenca = lazy(() => import("./pages/Presenca"));
 const PowerHub = lazy(() => import("./pages/PowerHub"));
 const ModoDeUso = lazy(() => import("./pages/ModoDeUso"));
 const CentralControle = lazy(() => import("./pages/CentralControle"));
+const CentralUsuarios = lazy(() => import("./pages/CentralUsuarios"));
 
 function NavDropdown({ label, items, activePaths }: {
   label: string;
@@ -91,7 +92,7 @@ function TopBar() {
     ["/configuracoes", "Configurações"],
     ["/central-controle", "Central de Controle"],
     ["/modo-de-uso", "Modo de Uso"],
-    ...(isAdmin ? [["/admin", "Admin"]] : []),
+    ...(isAdmin ? [["/central-usuarios", "Central de Usuários"], ["/admin", "Admin"]] : []),
   ] as [string, string][];
 
   return (
@@ -234,6 +235,7 @@ export default function App() {
                   <Route path="/registros" element={<Records />} />
                   <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
                   <Route path="/central-controle" element={<CentralControle />} />
+                  <Route path="/central-usuarios" element={<Protected adminOnly><CentralUsuarios /></Protected>} />
                 </Routes>
               </Protected>
             }
