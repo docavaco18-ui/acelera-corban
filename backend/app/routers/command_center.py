@@ -191,7 +191,9 @@ def _build_health(db, owner_id: str, settings: dict[str, dict], numbers: dict[st
         credential_rows = []
     by_bank = {str(r.get("bank_code")): r for r in credential_rows}
     for bank, label in BANKS.items():
-        row = by_bank.get(bank) or {}
+        row = by_bank.get(bank)
+        if not row:
+            continue  # banco não configurado → não penaliza score
         ok = _decrypt_ok(row.get("login_enc")) and _decrypt_ok(row.get("password_enc"))
         checks.append({
             "id": f"bank-{bank}",
@@ -212,9 +214,11 @@ def _build_health(db, owner_id: str, settings: dict[str, dict], numbers: dict[st
 
     for key, cfg in DISPATCHERS.items():
         row = settings.get(key) or {}
+        nums = numbers.get(key) or []
+        if not row and not nums:
+            continue  # CRM nunca configurado → não penaliza score
         meta_ok = _decrypt_ok(row.get(cfg["meta_token_col"]))
         crm_ok = all(_decrypt_ok(row.get(f)) if f.endswith("_enc") else _has_value(row, f) for f in cfg["crm_required"])
-        nums = numbers.get(key) or []
         healthy = [n for n in nums if _is_number_healthy(n)]
         checks.extend([
             {
