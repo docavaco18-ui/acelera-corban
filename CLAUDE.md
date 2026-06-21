@@ -464,6 +464,57 @@ Feature pra agendar disparo automático de bot. Implementado em **Presença**. P
 ⚠️ `/api/credentials` ainda 500 mesmo após fix — outro banco com Fernet antigo. Não bloqueia scheduler. Endpoint usa `decrypt()` simples; trocar pra `safe_decrypt()` em `credentials/service.py:get()` resolve.
 
 
+## Nossa Fintech (6º banco — 2026-06-20)
+
+### Decisão de arquitetura: API REST (sem browser, sem SMS)
+Higienização CLT consignado. **Reusa a tela `Higienizacao.tsx` (mesma do V8/VCTex)** — `nossafintech` é só mais um banco no `useBank`+`bankPrefix`+dropdown "Higienização CLT". Router `/api/nossafintech/*` espelha o contrato VCTex. Fluxo REST gêmeo do Presença + simulação.
+
+### Credenciais (Configurações → Nossa Fintech)
+- Login = **CPF** do usuário Nossa Fintech
+- **promot_id** = ID da promotora (número) — guardado em `creds.extra.promot_id` (campo novo na UI; backend `CredentialPayload.extra` + merge não-destrutivo no router)
+- Senha
+- Creds removidas deste arquivo por segurança. CPF teste `002.881.385-54` / senha `Banco@2026` / **promot_id: FALTA (user nunca passou)**.
+
+### Fluxo API (base `https://nossa-fintech-api.spixiiservices.com.br`)
+```
+POST /auth/login {cpf, promot_id, password}             → access_token (Bearer)
+GET  /clt-loan/v1/banking-institutions                  → service_type (UY3), cacheado
+POST /clt-loan/v1/check-authorization {document_number, service_type}
+       → AUTHORIZED | PENDING | NOT_AUTHORIZED
+POST /clt-loan/v1/check-employee-enrollment             → employer_cnpj (vínculo)
+POST /clt-loan/v1/get-margin {document_number, employer_document, service_type}
+       → margin_key, available_balance, utilizable_balance, base_margin_value, +dados
+GET  /clt-loan/v1/list-rebates?service_type=&margin_key= → tabelas (cod_tabela, number_of_installments)
+POST /clt-loan/v1/simulate-loan {margin_key, simulation_type:"Payment", employer_document, requested_amount, service_type, cod_tabela}
+       → disbursement_amount (valor liberado), num_periods (prazo), schedule[].payment (parcela)
+```
+Respostas embrulhadas `{success, message, data}`.
+
+### REGRA DE NEGÓCIO (consentimento — NÃO burlar)
+Bot **NÃO dispara request-authorization (SMS)**. CPF != AUTHORIZED → status `inelegivel`, erro `nao_autorizado`, **nunca** chama get-margin. Puxar margem de quem não consentiu = LGPD + acesso não-autorizado ao sistema do banco. User pediu pra burlar; **recusado**. Só consulta quem já tem autorização ativa (V8 funciona sem SMS porque já tem consentimento resolvido no fluxo dele).
+
+### Output (export CSV `/api/nossafintech/leads/export`)
+status, saldo_utilizavel, saldo_disponivel, margem_base, valor_liberado, valor_parcela, prazo, cnpj_empregador, nome_empregador, erro. `valor_liberado` = disbursement (ou saldo utilizável se simulação falhar). Extras em `payload` jsonb.
+
+### Arquivos
+- Backend: `banks/nossafintech/{config,api_client,api_worker,bot_pool,credentials_helper}.py`, `services/nossafintech_{upload_jobs,bot_service}.py`, `routers/nossafintech.py`
+- main.py: `app.state.nossafintech_pool = NossaFintechBotPool()` + `include_router(nossafintech_router.router)`
+- **`db_scoped.py`: `nossafintech_*` em TENANT_TABLES** (CRÍTICO — sem isso `ValueError: não é tabela tenant` em toda query)
+- `credentials/router.py`: `nossafintech` em ALLOWED_BANKS + campo `extra` no payload + `promot_id` no BankSummary
+- Frontend: `useBank.ts`, `App.tsx` (dropdown), `lib/api.ts`, `Configuracoes.tsx` (campo promot_id), `Dashboard.tsx` (label + `exec` mostra erro)
+- DB: `migrations/039_nossafintech.sql` — **APLICADA no Supabase prod** (3 tabelas + RLS + bank_code CHECK + nossafintech)
+
+### Bugs corrigidos (sessão 2026-06-20)
+1. 🔴 `db_scoped` faltava `nossafintech_*` → ValueError em batches/upload/leads/stats ("Erro ao carregar base atual" + erro upload). **FIX.**
+2. 🔴 `Dashboard.exec()` engolia erro de bot/start (`.catch(()=>botStatus)`) → botão Iniciar silencioso. **FIX:** mostra `detail` via uploadMsg.
+3. Ultra review (6 agentes): guard test `test_no_unscoped_tenant_access` agora importa TENANT_TABLES do db_scoped (fonte única, não diverge). `database.py` documenta que service-role bypassa RLS → `scoped()` é o único isolamento.
+
+### Status (2026-06-20)
+- ✅ Local rodando (docker compose: back 8002 / front 3002 / redis 6381). 128 testes passando.
+- ✅ Upload CSV OK (27 leads pendentes na base do user diamond.credioficial bc72f4c3).
+- ❌ Bot/start bloqueado: **credencial nossafintech não cadastrada (0 rows) + promot_id desconhecido**.
+- ⏳ Pendente: obter **promot_id** → cadastrar creds em Configurações → testar E2E 1 CPF → deploy VPS.
+
 ## gstack (REQUIRED — global install)
 
 **Before doing ANY work, verify gstack is installed:**

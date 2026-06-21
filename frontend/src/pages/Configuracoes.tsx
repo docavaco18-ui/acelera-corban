@@ -9,14 +9,16 @@ interface BankSummary {
   login: string | null;
   has_password: boolean;
   proxies: string[];
+  promot_id?: string | null;
 }
 
 const BANK_META: Record<string, { label: string; icon: string; grad: string }> = {
-  v8:       { label: "V8",        icon: "🏦", grad: G.primary },
-  vctex:    { label: "VCTex",     icon: "🌐", grad: G.cyan },
-  mercantil:{ label: "Mercantil", icon: "🏛️", grad: G.purple },
-  presenca: { label: "Presença",  icon: "🏦", grad: G.green },
-  powerhub: { label: "PowerHub",  icon: "📞", grad: G.pink },
+  v8:          { label: "V8",            icon: "🏦", grad: G.primary },
+  vctex:       { label: "VCTex",         icon: "🌐", grad: G.cyan },
+  mercantil:   { label: "Mercantil",     icon: "🏛️", grad: G.purple },
+  presenca:    { label: "Presença",      icon: "🏦", grad: G.green },
+  powerhub:    { label: "PowerHub",      icon: "📞", grad: G.pink },
+  nossafintech:{ label: "Nossa Fintech", icon: "🪙", grad: G.cyan },
 };
 
 export default function Configuracoes() {
@@ -28,12 +30,14 @@ export default function Configuracoes() {
     : bank === "mercantil" ? "Login (usuário do portal Mercantil)"
     : bank === "presenca"  ? "Login (usuário do portal Presença Bank)"
     : bank === "powerhub"  ? "Usuário PowerHub (ex: 1243)"
+    : bank === "nossafintech" ? "Login (CPF do usuário Nossa Fintech)"
     : "Login (e-mail V8)";
 
   const [current, setCurrent]       = useState<BankSummary | null | undefined>(undefined);
   const [loadErr, setLoadErr]        = useState<string | null>(null);
   const [login, setLogin]            = useState("");
   const [password, setPassword]      = useState("");
+  const [promotId, setPromotId]      = useState("");
   const [proxies, setProxies]        = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy]              = useState(false);
@@ -54,8 +58,9 @@ export default function Configuracoes() {
       if (c) {
         setLogin(c.login || "");
         setProxies((c.proxies || []).join("\n"));
+        setPromotId(c.promot_id || "");
       } else {
-        setLogin(""); setProxies("");
+        setLogin(""); setProxies(""); setPromotId("");
       }
       setPassword(""); setMsg(null);
     } catch (e: any) {
@@ -80,9 +85,13 @@ export default function Configuracoes() {
       if (!password.trim() && !current?.has_password) {
         setMsg({ kind: "err", text: "Senha obrigatória no primeiro cadastro" }); setBusy(false); return;
       }
+      if (bank === "nossafintech" && !promotId.trim()) {
+        setMsg({ kind: "err", text: "ID da promotora (promot_id) é obrigatório" }); setBusy(false); return;
+      }
       await credentialsApi.upsert(bank, {
         login: login.trim(),
         ...(password.trim() ? { password } : {}),
+        ...(bank === "nossafintech" ? { extra: { promot_id: promotId.trim() } } : {}),
         proxies: proxyList,
       });
       setMsg({ kind: "ok", text: `✓ Salvo. ${proxyList.length} proxy(ies).` });
@@ -172,6 +181,18 @@ export default function Configuracoes() {
             style={INPUT_STYLE}
           />
         </Field>
+
+        {bank === "nossafintech" && (
+          <Field label="ID da Promotora (promot_id) *">
+            <input
+              value={promotId}
+              onChange={e => setPromotId(e.target.value)}
+              placeholder="ex: 123456"
+              className="ds-input"
+              style={INPUT_STYLE}
+            />
+          </Field>
+        )}
 
         <Field label={current?.has_password ? "Senha (opcional — só pra trocar)" : "Senha *"}>
           <div style={{ display: "flex", gap: 8 }}>

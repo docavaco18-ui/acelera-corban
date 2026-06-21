@@ -11,6 +11,7 @@ from .routers import presenca as presenca_router
 from .routers import v8_proposals
 from .routers import broadcast as broadcast_router
 from .routers import powerhub as powerhub_router
+from .routers import nossafintech as nossafintech_router
 from .routers import aesir_broadcast as aesir_broadcast_router
 from .routers import chipcare_broadcast as chipcare_broadcast_router
 from .credentials.router import router as credentials_router
@@ -19,6 +20,7 @@ from .banks.vctex.bot_pool import VCTexBotPool
 from .banks.mercantil.bot_pool import MercantilBotPool
 from .banks.presenca.bot_pool import PresencaBotPool
 from .banks.powerhub.bot_pool import PowerHubBotPool
+from .banks.nossafintech.bot_pool import NossaFintechBotPool
 
 setup_logging(json_logs=True)
 
@@ -45,6 +47,7 @@ app.state.vctex_pool = VCTexBotPool()
 app.state.mercantil_pool = MercantilBotPool()
 app.state.presenca_pool = PresencaBotPool()
 app.state.powerhub_pool = PowerHubBotPool()
+app.state.nossafintech_pool = NossaFintechBotPool()
 
 
 # NOTE: Admin credential seed removido em 2026-06-05.
@@ -109,6 +112,7 @@ app.include_router(v8_proposals.router)
 app.include_router(chatwoot.router)
 app.include_router(broadcast_router.router)
 app.include_router(powerhub_router.router)
+app.include_router(nossafintech_router.router)
 app.include_router(aesir_broadcast_router.router)
 app.include_router(chipcare_broadcast_router.router)
 app.include_router(command_center.router)

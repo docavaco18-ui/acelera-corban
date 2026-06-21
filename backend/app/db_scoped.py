@@ -7,6 +7,7 @@ TENANT_TABLES: set[str] = {
     "mercantil_leads", "mercantil_bot_runs", "mercantil_batches",
     "presenca_leads", "presenca_bot_runs", "presenca_batches",
     "powerhub_leads", "powerhub_bot_runs", "powerhub_batches",
+    "nossafintech_leads", "nossafintech_bot_runs", "nossafintech_batches",
     # CRM
     "crm_propostas", "crm_settings",
     # Disparo WhatsApp (VendeAI / Aesir / Chipcare)

@@ -108,7 +108,7 @@ interface DashboardProps {
 
 export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: DashboardProps = {}) {
   const { bank } = useBank();
-  const bankLabel = bank === "vctex" ? "VCTex Bot" : bank === "mercantil" ? "Mercantil Bot" : "V8 Bot";
+  const bankLabel = bank === "vctex" ? "VCTex Bot" : bank === "mercantil" ? "Mercantil Bot" : bank === "nossafintech" ? "Nossa Fintech Bot" : "V8 Bot";
   const [tab, setTab]   = useState<Tab>("geral");
   const [batchesList, setBatchesList] = useState<Batch[]>([]);
   const [batchDownloading, setBatchDownloading] = useState<string | null>(null);
@@ -199,9 +199,16 @@ export function Dashboard({ batchId, batchName, hideUpload, onSessionChanged }: 
 
   const exec = async (fn: () => Promise<BotStatus>) => {
     setLoading(true);
-    const s = await fn().catch(() => botStatus);
-    setBotStatus(s);
-    setLoading(false);
+    try {
+      const s = await fn();
+      setBotStatus(s);
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail || err?.message || "Erro ao executar ação do bot";
+      setUploadMsg(`⚠️ ${detail}`);
+      setTimeout(() => setUploadMsg(null), 8000);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

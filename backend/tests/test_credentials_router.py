@@ -34,7 +34,7 @@ def test_get_returns_empty_when_no_creds(client):
     resp = client.get("/api/credentials")
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"v8": None, "vctex": None, "mercantil": None, "presenca": None, "powerhub": None}
+    assert body == {"v8": None, "vctex": None, "mercantil": None, "presenca": None, "powerhub": None, "nossafintech": None}
 
 
 def test_get_returns_safe_summary(client):
@@ -46,7 +46,7 @@ def test_get_returns_safe_summary(client):
     resp = client.get("/api/credentials")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["v8"] == {"configured": True, "login": "alice", "has_password": True, "proxies": ["http://p1", "http://p2"]}
+    assert body["v8"] == {"configured": True, "login": "alice", "has_password": True, "proxies": ["http://p1", "http://p2"], "promot_id": None}
     assert body["vctex"] is None
     assert "s3cret" not in resp.text
 

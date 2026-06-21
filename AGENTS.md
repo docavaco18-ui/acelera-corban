@@ -1071,3 +1071,28 @@ npx tsc --noEmit → 0 errors
 ### Pendências pós-review
 - ⏳ Deploy VPS: `git pull && docker compose -f docker-compose.prod.yml build --no-cache backend frontend && up -d`
 - ⏳ Aplicar `migrations/034_broadcast_recipients.sql` no Supabase `gfyharrnkcncpngbvhpj`
+
+## Nossa Fintech (6º banco — 2026-06-20)
+
+### Arquitetura: API REST (sem browser, sem SMS). Reusa tela `Higienizacao.tsx` (igual V8/VCTex)
+`nossafintech` = mais um banco no `useBank`+`bankPrefix`+dropdown "Higienização CLT". Router `/api/nossafintech/*` espelha contrato VCTex. Fluxo REST gêmeo do Presença + simulação.
+
+### Credenciais (Configurações → Nossa Fintech)
+Login = CPF; **promot_id** = ID promotora (número) em `creds.extra.promot_id`; Senha. CPF teste `002.881.385-54` / senha `Banco@2026` / **promot_id FALTA (user nunca passou)**.
+
+### Fluxo API (base `https://nossa-fintech-api.spixiiservices.com.br`)
+`POST /auth/login {cpf,promot_id,password}`→access_token Bearer → `GET /clt-loan/v1/banking-institutions`(service_type UY3) → `POST /clt-loan/v1/check-authorization`(AUTHORIZED|PENDING|NOT_AUTHORIZED) → `POST /clt-loan/v1/check-employee-enrollment`(employer_cnpj) → `POST /clt-loan/v1/get-margin`(saldo/margem+margin_key) → `GET /clt-loan/v1/list-rebates` → `POST /clt-loan/v1/simulate-loan`(disbursement_amount/num_periods/schedule.payment).
+
+### REGRA (consentimento — NÃO burlar)
+Bot NÃO dispara SMS (request-authorization). CPF != AUTHORIZED → inelegível `nao_autorizado`, nunca chama get-margin. Puxar margem sem consentimento = LGPD + acesso não-autorizado. User pediu burlar; recusado.
+
+### Arquivos / DB
+`banks/nossafintech/*`, `services/nossafintech_{upload_jobs,bot_service}.py`, `routers/nossafintech.py`, registro main.py, **`db_scoped.py` (nossafintech_* em TENANT_TABLES — crítico)**, `credentials/router.py` (extra+promot_id). Migration `039_nossafintech.sql` APLICADA no Supabase.
+
+### Bugs corrigidos 2026-06-20
+1. db_scoped faltava nossafintech → ValueError toda query (erro base atual + upload). FIX.
+2. Dashboard `exec()` engolia erro bot/start → Iniciar silencioso. FIX (mostra detail).
+3. Ultra review (6 agentes): guard test importa TENANT_TABLES do db_scoped (fonte única); database.py documenta RLS inerte sob service-role.
+
+### Status
+Local OK (128 testes, back 8002/front 3002). Upload OK (27 leads, user diamond.credioficial bc72f4c3). Bot bloqueado: sem credencial cadastrada + promot_id desconhecido. Pendente: promot_id → cadastrar creds → E2E 1 CPF → deploy VPS.

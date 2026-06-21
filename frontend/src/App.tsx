@@ -77,7 +77,7 @@ function TopBar() {
   const { setBank } = useBank();
   const navigate = useNavigate();
 
-  const goBank = (b: "v8" | "vctex" | "mercantil" | "presenca") => {
+  const goBank = (b: "v8" | "vctex" | "mercantil" | "presenca" | "nossafintech") => {
     setBank(b as any);
     if (b === "mercantil") navigate("/mercantil");
     else if (b === "presenca") navigate("/presenca");
@@ -143,6 +143,7 @@ function TopBar() {
         items={[
           { to: "/higienizacao", label: "V8", onClick: () => goBank("v8") },
           { to: "/higienizacao", label: "VCTex", onClick: () => goBank("vctex") },
+          { to: "/higienizacao", label: "Nossa Fintech", onClick: () => goBank("nossafintech") },
           { to: "/mercantil", label: "Mercantil", onClick: () => goBank("mercantil") },
           { to: "/presenca", label: "Presença", onClick: () => goBank("presenca") },
         ]}

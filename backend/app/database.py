@@ -31,6 +31,11 @@ def _harden_postgrest(client: Client) -> None:
 
 
 def get_db() -> Client:
+    # ATENÇÃO ISOLAMENTO MULTI-TENANT: este client usa a SERVICE_KEY (service-role),
+    # que é BYPASSRLS — as policies RLS (migrations 021/039/etc) NÃO são avaliadas e
+    # auth.uid() é NULL. O ÚNICO isolamento real por tenant é o wrapper scoped()
+    # (db_scoped.py), que injeta .eq("owner_id", user_id). NUNCA chame db.table()
+    # direto numa tabela de TENANT_TABLES fora do allowlist — use scoped().
     global _client
     if _client is None:
         _client = create_client(settings.supabase_url, settings.supabase_service_key)

@@ -139,14 +139,17 @@ interface BankSummary {
   login: string | null;
   has_password: boolean;
   proxies: string[];
+  promot_id?: string | null;
 }
+
+type BankCode = "v8" | "vctex" | "mercantil" | "presenca" | "powerhub" | "nossafintech";
 
 export const credentialsApi = {
   list: () =>
     api
-      .get<Record<"v8" | "vctex" | "mercantil" | "presenca" | "powerhub", BankSummary | null>>("/api/credentials")
+      .get<Record<BankCode, BankSummary | null>>("/api/credentials")
       .then((r) => r.data),
-  upsert: (bank: "v8" | "vctex" | "mercantil" | "presenca" | "powerhub", body: { login: string; password?: string; proxies: string[] }) =>
+  upsert: (bank: BankCode, body: { login: string; password?: string; proxies: string[]; extra?: Record<string, unknown> }) =>
     api.put(`/api/credentials/${bank}`, body).then((r) => r.data),
 };
 
