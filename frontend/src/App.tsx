@@ -21,6 +21,8 @@ const Presenca = lazy(() => import("./pages/Presenca"));
 const PowerHub = lazy(() => import("./pages/PowerHub"));
 const ModoDeUso = lazy(() => import("./pages/ModoDeUso"));
 const CentralControle = lazy(() => import("./pages/CentralControle"));
+const CentralUsuarios = lazy(() => import("./pages/CentralUsuarios"));
+const TrafegoPago = lazy(() => import("./pages/TrafegoPago"));
 
 function NavDropdown({ label, items, activePaths }: {
   label: string;
@@ -91,7 +93,8 @@ function TopBar() {
     ["/configuracoes", "Configurações"],
     ["/central-controle", "Central de Controle"],
     ["/modo-de-uso", "Modo de Uso"],
-    ...(isAdmin ? [["/admin", "Admin"]] : []),
+    ["/trafego-pago", "Tráfego Pago"],
+    ...(isAdmin ? [["/central-usuarios", "Central de Usuários"], ["/admin", "Admin"]] : []),
   ] as [string, string][];
 
   return (
@@ -163,8 +166,12 @@ function TopBar() {
       {singleLinks.map(([to, label]) => (
         <NavLink key={to} to={to}
           className={({ isActive }) => `nav-link-item${isActive ? " active" : ""}`}
+          style={{ display: "flex", alignItems: "center", gap: 5 }}
         >
           {label}
+          {to === "/trafego-pago" && (
+            <span className="nav-badge" style={{ background: "rgba(6,182,212,.18)", color: "#06b6d4", border: "1px solid rgba(6,182,212,.35)" }}>NOVO</span>
+          )}
         </NavLink>
       ))}
 
@@ -234,6 +241,8 @@ export default function App() {
                   <Route path="/registros" element={<Records />} />
                   <Route path="/admin" element={<Protected adminOnly><Admin /></Protected>} />
                   <Route path="/central-controle" element={<CentralControle />} />
+                  <Route path="/central-usuarios" element={<Protected adminOnly><CentralUsuarios /></Protected>} />
+                  <Route path="/trafego-pago" element={<TrafegoPago />} />
                 </Routes>
               </Protected>
             }

@@ -1,0 +1,402 @@
+{
+  "meta": {
+    "objetivo": "Inserir mockups visuais REAIS de 3 telas do sistema Acelera Corban (Disparo, Central de Controle, CRM) na landing page de vendas. Cliente clica num CTA tipo 'Veja o sistema' e abre carousel/seções showcasing como o sistema funciona de verdade.",
+    "por_que": "A landing atual mostra benefícios mas não mostra o sistema em si. Cliente compra cego. Mockups das telas reais matam objeção 'mas como é por dentro?' e aumentam conversão.",
+    "modo_de_uso": "Você (Claude Design) NÃO consegue acessar o sistema rodando. Use este JSON como única fonte de verdade. Recrie os 3 mockups visualmente (HTML+CSS+React inline styles) a partir das descrições + design tokens abaixo. Pode usar dados mock (fake data realista) — o importante é o VISUAL.",
+    "tom_visual": "Dark mode profissional + glassmorphism + gradient borders + IA gamificada (cérebro animado). NÃO é dashboard genérico do bootstrap. É premium SaaS 2026 com cara de Linear/Vercel/Stripe + toque gamificado tipo Riot/Discord.",
+    "fonte": "Sistema rodando em produção: aceleracorban.com.br. Repo: ACELERA CORBAN CODEX. Stack: React + Vite + TypeScript. Sem Tailwind — tudo inline styles + design tokens."
+  },
+
+  "design_tokens_globais": {
+    "_explicacao": "Cores e gradientes EXATOS do sistema. Use estes valores literais — não substitua por aproximações Tailwind.",
+    "cores": {
+      "bg": "#060612",
+      "surface": "rgba(15,15,35,.9)",
+      "surface_deep": "rgba(8,8,20,.95)",
+      "border": "rgba(255,255,255,.07)",
+      "text": "#f1f5f9",
+      "text_secundario": "#94a3b8",
+      "text_muted": "#475569",
+      "verde": "#10b981",
+      "amarelo": "#f59e0b",
+      "vermelho": "#ef4444",
+      "ciano": "#06b6d4",
+      "roxo": "#7c3aed",
+      "rosa": "#ec4899",
+      "neon": "#00ff88"
+    },
+    "gradientes": {
+      "primary": "linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%)",
+      "green": "linear-gradient(135deg,#10b981 0%,#06b6d4 100%)",
+      "purple": "linear-gradient(135deg,#6d28d9 0%,#7c3aed 100%)",
+      "pink": "linear-gradient(135deg,#ec4899 0%,#7c3aed 100%)",
+      "red": "linear-gradient(135deg,#ef4444 0%,#ec4899 100%)",
+      "yellow": "linear-gradient(135deg,#f59e0b 0%,#ef8c3b 100%)",
+      "cyan": "linear-gradient(135deg,#06b6d4 0%,#0891b2 100%)",
+      "neon": "linear-gradient(135deg,#00ff88 0%,#06b6d4 100%)"
+    },
+    "glass_card": {
+      "_uso": "Wrapper PADRÃO de toda card. Border com gradiente, fundo escuro semi-transparente, blur, sombra grande.",
+      "background_recipe": "linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, {GRADIENT_ESCOLHIDO} border-box",
+      "border": "1px solid transparent",
+      "border_radius": 16,
+      "padding": 24,
+      "box_shadow": "0 8px 40px rgba(0,0,0,.55)",
+      "backdrop_filter": "blur(12px)",
+      "exemplo_completo_inline": "background: linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, linear-gradient(135deg,#7c3aed,#06b6d4) border-box; border: 1px solid transparent; border-radius: 16px; padding: 24px; box-shadow: 0 8px 40px rgba(0,0,0,.55); backdrop-filter: blur(12px)"
+    },
+    "section_title": {
+      "_uso": "Título de cada seção. Texto em gradiente (background-clip: text).",
+      "fonte_size": 16,
+      "font_weight": 800,
+      "text_transform": "uppercase",
+      "letter_spacing": "0.12em",
+      "background_clip": "text",
+      "exemplo_html": "<h2 style='background: linear-gradient(135deg,#7c3aed,#06b6d4); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 800; text-transform: uppercase; letter-spacing: 0.12em; font-size: 16px;'>TÍTULO</h2>"
+    },
+    "input_style": {
+      "background": "rgba(255,255,255,.04)",
+      "border": "1px solid rgba(255,255,255,.1)",
+      "color": "#f1f5f9",
+      "border_radius": 10,
+      "padding": "12px 16px",
+      "font_size": 15,
+      "focus_border": "rgba(124,58,237,.65)",
+      "focus_glow": "0 0 0 3px rgba(124,58,237,.12)"
+    },
+    "botao_style": {
+      "background_ativo": "{gradiente escolhido}",
+      "background_disabled": "rgba(255,255,255,.04)",
+      "color_ativo": "#fff",
+      "color_disabled": "#475569",
+      "border_radius": 10,
+      "padding": "12px 24px",
+      "font_size": 15,
+      "font_weight": 600,
+      "box_shadow": "0 4px 14px rgba(0,0,0,.35)"
+    },
+    "tipografia": {
+      "font_family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      "titulo_grande": { "size": 34, "weight": 800, "line_height": 1.05 },
+      "subtitulo": { "size": 16, "weight": 800, "transform": "uppercase", "letter_spacing": "0.12em" },
+      "corpo": { "size": 14, "weight": 400, "line_height": 1.6 },
+      "label": { "size": 13, "weight": 600, "transform": "uppercase", "letter_spacing": "0.06em" },
+      "small": { "size": 11, "weight": 700, "transform": "uppercase", "letter_spacing": "0.12em" }
+    },
+    "animacoes_critical": {
+      "_explicacao": "Estas animações são a IDENTIDADE do sistema. NÃO podem ficar de fora dos mockups.",
+      "pulse_dot": "@keyframes pulse-dot { 0%,100% { opacity:1; transform: scale(1); } 50% { opacity:.5; transform: scale(.85); } }",
+      "fade_up": "@keyframes fade-up { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: none; } }",
+      "ai_spin": "@keyframes ai-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }",
+      "ai_spin_rev": "@keyframes ai-spin-rev { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }",
+      "ai_orb_pulse": "@keyframes ai-orb-pulse { 0%,100% { transform: translate(-50%,-50%) scale(1); box-shadow: 0 0 60px rgba(124,58,237,.6), inset 0 0 30px rgba(6,182,212,.4); } 50% { transform: translate(-50%,-50%) scale(1.08); box-shadow: 0 0 90px rgba(6,182,212,.8), inset 0 0 40px rgba(124,58,237,.5); } }",
+      "ai_float": "@keyframes ai-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }",
+      "ai_twinkle": "@keyframes ai-twinkle { 0%,100% { opacity:1; } 50% { opacity:.35; } }",
+      "spot_rotate": "@keyframes spot-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }"
+    }
+  },
+
+  "componente_assinatura_critica": {
+    "nome": "Cérebro IA Animado (AICore / BrainBadge)",
+    "obrigatorio": "SIM — é a marca registrada visual do sistema. Sem ele, mockup parece genérico.",
+    "descricao_visual": "Círculo de 92px (versão pequena no header) ou 260px (versão hero). Camadas concêntricas: anel externo tracejado roxo (#7c3aed) girando devagar (14-22s), anel intermediário pontilhado ciano (#06b6d4) girando ao contrário (10-16s), anel interno linha sólida verde-neon translúcido (10s), orb central de 110px com radial-gradient roxo→ciano fazendo pulse (2.5s) E flutuando (3.5s), emoji 🧠 grande (28-52px) no centro com drop-shadow neon, partículas coloridas orbitando (8 partículas em raios e velocidades diferentes), linhas de sinapse SVG curvadas atravessando o cérebro (dasharray animado).",
+    "html_estrutura_simplificada": "<div style='position: relative; width: 92px; height: 92px;'>\n  <svg style='position: absolute; inset: 0;'>\n    {/* 5 paths de sinapse curvados com stroke gradiente roxo→ciano */}\n  </svg>\n  <div style='position: absolute; inset: 0; border-radius: 50%; border: 2px dashed rgba(124,58,237,.55); animation: ai-spin 14s linear infinite;' />\n  <div style='position: absolute; inset: 12px; border-radius: 50%; border: 1.5px dotted rgba(6,182,212,.55); animation: ai-spin-rev 10s linear infinite;' />\n  <div style='position: absolute; top: 50%; left: 50%; width: 44px; height: 44px; border-radius: 50%; background: radial-gradient(circle at 35% 35%, #7c3aed 0%, transparent 100%); transform: translate(-50%,-50%); animation: ai-orb-pulse 2.4s infinite;' />\n  <div style='position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 28px; animation: ai-float 3.6s infinite; filter: drop-shadow(0 0 8px rgba(124,58,237,.7));'>🧠</div>\n</div>",
+    "onde_aparece": "No header de Central de Controle (versão pequena 92px). No painel de Monitor de Disparo (versão hero 260px). No CRM como BrainBadge."
+  },
+
+  "secao_1_disparo_whatsapp": {
+    "nome_da_tela": "Disparo VendeAI / Disparo Aesir / Disparo Chipcare (3 disparadores com layout idêntico)",
+    "arquivo_real_referencia": "frontend/src/pages/Disparo.tsx (494 linhas), DisparoAesir.tsx (979 linhas), DisparoChipcare.tsx (859 linhas)",
+    "rota_url_simulada": "/disparo, /disparo-aesir, /disparo-chipcare",
+    "proposito_negocio": "Disparar mensagens WhatsApp em massa via API oficial Meta. Upload de CSV → distribuição automática entre números → confirmação → monitoramento em tempo real.",
+    "fluxo_4_etapas": [
+      {
+        "etapa": 1,
+        "nome": "Upload CSV",
+        "visual": "Drop zone grande no centro da tela com gradient border ciano. Ícone de upload 48px. Texto 'Arraste seu CSV aqui ou clique pra selecionar'. Card glassmorphism."
+      },
+      {
+        "etapa": 2,
+        "nome": "Análise + Distribuição",
+        "visual": "Card com banner verde 'DISTRIBUIÇÃO' mostrando justification da IA. Total de leads em fonte grande (ex: '5.234 leads'). Lista de colunas detectadas como chips coloridos.",
+        "texto_exemplo": "Distribuição proporcional entre 8 número(s) ativo(s). Risco: 1 número(s) com qualidade YELLOW excluído(s)"
+      },
+      {
+        "etapa": 3,
+        "nome": "Configuração + Edição por número",
+        "visual": "Grid de cards (um por número WhatsApp). Cada card mostra: 5511 9XXXX (display_phone) em fonte grande, status colorido (GREEN/YELLOW/RED) com PulseDot animado, daily_limit (ex: '1.000/dia'), planned_count editável (input number), select de Template, mapeamento de variáveis ({{1}}, {{2}}). Botão 'Aplicar template a todos' no topo.",
+        "elementos_obrigatorios": [
+          "PulseDot animado verde/amarelo/vermelho indicando qualidade do número Meta",
+          "Barra de progresso fina mostrando planned vs daily_limit",
+          "Tag colorida com tier (TIER_1K, TIER_10K, TIER_100K)",
+          "Ícone de WhatsApp verde junto do número"
+        ]
+      },
+      {
+        "etapa": 4,
+        "nome": "Confirmação com banner partial",
+        "visual_critico": "ESTE É O DIFERENCIAL DO SISTEMA — banner amarelo OU vermelho calculando assignedSum vs totalLeads ANTES de disparar. Não deixa cliente disparar parcial sem confirmar checkbox 'Eu entendo: disparar X leads, descartar Y'.",
+        "banner_amarelo_partial": "background: rgba(234,179,8,.08); border: 1px solid rgba(234,179,8,.3); border-radius: 10px; padding: 14px; texto: '⚠ DISTRIBUIÇÃO PARCIAL — 4.500 de 5.000 leads atribuídos (500 sobrando)' + checkbox 'Eu entendo: disparar 4.500 leads, descartar 500'",
+        "banner_vermelho_excesso": "background: rgba(239,68,68,.08); border: 1px solid rgba(239,68,68,.3); texto: '❌ EXCESSO DE LEADS — soma 5.500 maior que total 5.000. Reduza distribuição.'",
+        "botao_confirmar": "Verde (#00ff88) quando OK, cinza desabilitado quando partial sem checkbox. Texto: 'Confirmar e Disparar'"
+      }
+    ],
+    "painel_monitor_em_tempo_real": {
+      "_critico": "ESTE PAINEL É O HERÓI VISUAL DA TELA — usa Cérebro IA 260px hero",
+      "descricao": "Após disparo iniciado, abre um painel grande com o Cérebro IA animado de 260px no centro, contadores enormes ao redor (mensagens enviadas em tempo real, campanhas ativas, taxa de entrega %, leads pendentes). Tudo atualiza via polling 30s.",
+      "kpis_em_volta_do_cerebro": [
+        { "label": "MENSAGENS ENVIADAS", "valor": "12.847", "cor": "#00ff88", "subtitle": "em tempo real" },
+        { "label": "CAMPANHAS ATIVAS", "valor": "3", "cor": "#06b6d4", "subtitle": "em monitoramento" },
+        { "label": "TAXA DE ENTREGA", "valor": "98.4%", "cor": "#10b981", "subtitle": "delivered/sent" },
+        { "label": "PRÓXIMO BATCH", "valor": "00:47", "cor": "#f59e0b", "subtitle": "min até reload" }
+      ],
+      "click_no_cerebro": "Aciona Refresh manual. Tooltip: 'Clique pra atualizar todos os status'"
+    },
+    "grid_qualidade_dos_numeros": {
+      "descricao": "Abaixo do monitor, grid com card por número WhatsApp. Cada card: display_phone grande, badge de qualidade colorida (GREEN/YELLOW/RED com animação pulse), daily_limit usado/total como barra de progresso gradient, ícone de WABA, restrições (se houver) em chips vermelhos.",
+      "estados_visuais": {
+        "GREEN_saudavel": "border gradient verde→ciano, glow sutil verde, ícone ✅",
+        "YELLOW_atencao": "border gradient amarelo→laranja, ícone ⚠",
+        "RED_critico": "border gradient vermelho→rosa, animação shake leve, ícone 🚨, banner 'AUTO-PAUSED'"
+      }
+    },
+    "credenciais_recolhidas": {
+      "_explicacao": "Quando credenciais já estão salvas, viram um chip discreto (CollapsedChip) ao invés de form gigante. Cliente clica pra editar.",
+      "visual": "Chip horizontal de ~60px de altura. Ícone 🔐 grande + texto 'Credenciais VendeAI OK' + detalhe 'usuario@email · Account 123 · CRM token OK' + botão ✎ Editar no canto direito. Border com gradient neon."
+    },
+    "elementos_obrigatorios_no_mockup": [
+      "Cérebro IA animado 260px no centro do monitor (com partículas orbitando, sinapses, anéis girando)",
+      "4 KPI cards em volta com valores enormes em tabular-nums",
+      "Grid com 4-6 cards de números mostrando qualidade colorida",
+      "Banner partial amarelo OU vermelho na confirmação (mostre o amarelo — mais comum)",
+      "Botão verde gradiente '🚀 Confirmar e Disparar'",
+      "CollapsedChip de credenciais salvas no topo",
+      "Histórico de campanhas como lista lateral com mini-bars de progresso"
+    ]
+  },
+
+  "secao_2_central_de_controle": {
+    "nome_da_tela": "Central de Controle (Command Center)",
+    "arquivo_real_referencia": "frontend/src/pages/CentralControle.tsx (839 linhas)",
+    "rota_url_simulada": "/central-controle",
+    "proposito_negocio": "Diagnóstico operacional em tempo real. Score 0-100 da saúde geral, checklist pré-disparo, alertas de risco de bloqueio Meta, simulador de capacidade, health checks das integrações, central de incidentes.",
+    "header_principal": {
+      "elemento_central": "Score Operacional em formato HUGE — número (ex: '87') em fonte 34px bold, cor dinâmica (verde se >= 80, amarelo 60-79, vermelho < 60), com '/100' menor ao lado.",
+      "ao_lado": "BrainBadge 92px animado (cérebro pequeno girando).",
+      "abaixo_do_score": "PulseDot colorido + label ('Operação saudável' / 'Atenção: degradação' / 'Bloqueio iminente') + timestamp 'Atualizado em DD/MM/YYYY HH:MM'",
+      "botoes_direita": [
+        { "texto": "↻ Atualizar diagnóstico", "gradient": "primary roxo→ciano" },
+        { "texto": "⚡ Auditar Meta ao vivo", "gradient": "purple" }
+      ],
+      "barra_progresso_score": "GradientBar horizontal de 8px embaixo do score, fill na cor do status"
+    },
+    "linha_de_4_kpis_topo": {
+      "_estilo": "spot-card com efeito hover: outros cards escurecem, o focado brilha + lift",
+      "cards": [
+        { "label": "CANAIS SAUDÁVEIS", "icon": "✅", "valor_exemplo": "14", "cor": "#10b981", "sub": "16 canais mapeados" },
+        { "label": "EM RISCO CRÍTICO", "icon": "🚨", "valor_exemplo": "2", "cor": "#ef4444", "sub": "bloqueio, RED ou pagamento" },
+        { "label": "CAPACIDADE HOJE", "icon": "🚀", "valor_exemplo": "84.500", "cor": "#f59e0b", "sub": "envios seguros estimados" },
+        { "label": "TEMPLATES APROVADOS", "icon": "📑", "valor_exemplo": "47", "cor": "#7c3aed", "sub": "23 marketing · 24 utility" }
+      ]
+    },
+    "linha_de_3_cards_intermediaria": {
+      "card_1_checklist": {
+        "titulo": "CHECKLIST PRÉ-DISPARO",
+        "gradient": "green",
+        "icon": "✓",
+        "estrutura": "Lista de RowItem. Cada linha: label esquerda + StatusPill (OK/Atenção/Bloqueia) direita + detail abaixo.",
+        "items_exemplo": [
+          { "label": "Credenciais Meta", "status": "OK", "detail": "Token System User válido (expira em 87 dias)" },
+          { "label": "WABAs descobertas", "status": "OK", "detail": "16 WABA IDs mapeadas, 0 falhas" },
+          { "label": "Templates aprovados", "status": "Atenção", "detail": "2 templates em REJECTED — corrigir antes de disparar" },
+          { "label": "Pagamento BM", "status": "Bloqueia", "detail": "1 BM com método de pagamento expirado" },
+          { "label": "Qualidade dos números", "status": "OK", "detail": "14 GREEN, 2 YELLOW, 0 RED" }
+        ]
+      },
+      "card_2_simulador_capacidade": {
+        "titulo": "SIMULADOR DE CAPACIDADE",
+        "gradient": "cyan",
+        "icon": "🎯",
+        "estrutura": "Input number 'Tamanho da campanha' (default 10000). 3 mini-metrics em grid: HOJE / DIAS EST. / SEGURO/H. Texto de recomendação embaixo.",
+        "metricas_exemplo": [
+          { "label": "Hoje", "valor": "84.500", "cor": "#10b981" },
+          { "label": "Dias est.", "valor": "1", "cor": "#f59e0b" },
+          { "label": "Seguro/h", "valor": "10.562", "cor": "#7c3aed" }
+        ],
+        "recomendacao_exemplo": "Capacidade suficiente. Recomenda-se ritmo de 10k/hora distribuído entre os 14 canais GREEN pra evitar gatilho de fraude."
+      },
+      "card_3_risco_de_bloqueio": {
+        "titulo": "ALERTA DE RISCO DE BLOQUEIO",
+        "gradient": "dinamico_baseado_no_nivel",
+        "icon": "⚠",
+        "valor_grande": "Alto / Médio / Baixo",
+        "summary_exemplo": "Atenção: sinais de degradação. Reduza ritmo e monitore.",
+        "grid_2x2_mini_metrics": [
+          { "label": "RED", "valor": "0", "cor": "#ef4444" },
+          { "label": "YELLOW", "valor": "2", "cor": "#f59e0b" },
+          { "label": "Pagamento", "valor": "1", "cor": "#ef4444" },
+          { "label": "Nome pend.", "valor": "0", "cor": "#f59e0b" }
+        ]
+      }
+    },
+    "linha_de_2_cards_grandes": {
+      "card_health_checks": {
+        "titulo": "HEALTH CHECK DAS INTEGRAÇÕES",
+        "gradient": "purple",
+        "icon": "🩺",
+        "estrutura": "Lista scrollable de checks. Cada linha: GROUP (chip cinza) + LABEL + detail + StatusPill direita. spot-list hover effect.",
+        "checks_exemplo": [
+          { "group": "Meta", "label": "Token System User", "status": "OK", "detail": "Válido — 87 dias restantes" },
+          { "group": "Meta", "label": "WABA discovery", "status": "OK", "detail": "16 WABAs descobertas via 4-strategy" },
+          { "group": "Chatwoot", "label": "Account ID", "status": "OK", "detail": "Account 448 (Edvan Fenix)" },
+          { "group": "Chatwoot", "label": "CRM Token", "status": "OK", "detail": "Bearer válido" },
+          { "group": "Supabase", "label": "Row Level Security", "status": "OK", "detail": "RLS ativo em 23 tabelas tenant" },
+          { "group": "VendeAI", "label": "BFF JWT", "status": "Atenção", "detail": "Expira em 4h — renove proativamente" }
+        ]
+      },
+      "card_central_incidentes": {
+        "titulo": "CENTRAL DE INCIDENTES",
+        "gradient": "red",
+        "icon": "🛟",
+        "header_direita": "3 ativos",
+        "estado_vazio": "Card verde 'Nenhum incidente crítico detectado' com PulseDot verde",
+        "lista_incidentes_exemplo": [
+          {
+            "severity": "critical",
+            "title": "Número 5511987654321 — quality RED",
+            "detail": "Recebeu 47 reports de spam nas últimas 24h. Auto-pausado.",
+            "acao": "Pause campanhas neste número por 72h e renove warm-up gradual"
+          },
+          {
+            "severity": "warning",
+            "title": "Template 'oferta_clt_v3' — REJECTED pela Meta",
+            "detail": "Conteúdo não conforme política de promoções",
+            "acao": "Edite o copy e submeta novamente. Use templates utility quando possível."
+          },
+          {
+            "severity": "warning",
+            "title": "Capacidade BM Edvan = 78% usado",
+            "detail": "Restam 22% da quota mensal. Reset em 12 dias.",
+            "acao": "Considere mover campanhas low-priority pra outra BM"
+          }
+        ]
+      }
+    },
+    "linha_entregabilidade_radar": {
+      "card_entregabilidade_bm": {
+        "titulo": "ENTREGABILIDADE POR BUSINESS MANAGER",
+        "estrutura": "Lista de canais com display_phone, quality_rating colorido, daily_limit/used como barra de progresso, remaining_today em destaque, issues como chips vermelhos"
+      },
+      "card_radar_de_erros": {
+        "titulo": "RADAR DE ERROS",
+        "estrutura": "Top 5 reasons de falha agrupados, com count e exemplos. Tipo: '47x — Number not registered on WhatsApp', '23x — Template not found', '12x — Rate limit'"
+      }
+    },
+    "elementos_obrigatorios_no_mockup": [
+      "Score Operacional gigante (34px+) com BrainBadge 92px ao lado",
+      "4 KPI cards com efeito spot-card hover (outros escurecem, o focado brilha)",
+      "3 cards intermediários: Checklist, Simulador, Risco",
+      "StatusPills coloridas (verde/amarelo/vermelho) com PulseDot",
+      "GradientBar fina embaixo do score",
+      "Pelo menos 3 incidentes mockados com severidade visual diferente",
+      "Botões '↻ Atualizar' e '⚡ Auditar ao vivo' com gradientes"
+    ]
+  },
+
+  "secao_3_crm_kanban": {
+    "nome_da_tela": "CRM Kanban — Propostas + Pipeline Comercial",
+    "arquivo_real_referencia": "frontend/src/pages/CRM.tsx (1315 linhas)",
+    "rota_url_simulada": "/crm",
+    "proposito_negocio": "Pipeline de vendas estilo Trello/Pipefy mas dark mode premium. 8 colunas (Pagos, Karol, Giovanna, Gabriel/I.A, Importante, Pendentes, Leilão, FGTS) representando o funil de vendas de crédito CLT. Cards são propostas com CPF, valor, banco origem.",
+    "header_topo": {
+      "esquerda": "BrainBadge 92px animado + título 'CRM Comercial' em gradient text",
+      "centro": "3 stats principais: TOTAL DE PROPOSTAS / VALOR TOTAL R$ / TICKET MÉDIO R$",
+      "direita": "Botão '+ Nova proposta' verde gradient + filtros (banco, vendedor, período)"
+    },
+    "colunas_kanban_8": {
+      "_estilo": "Cada coluna tem header colorido com gradient próprio + ícone + count de propostas. Cards dentro são glassmorphism pequenos.",
+      "colunas": [
+        { "key": "propostas", "label": "PAGOS", "cor": "#06b6d4", "gradient": "cyan", "icon": "💰", "descricao": "Propostas finalizadas e pagas pelo banco" },
+        { "key": "karol", "label": "KAROL", "cor": "#ec4899", "gradient": "pink", "icon": "👤", "descricao": "Carteira da vendedora Karol Dias" },
+        { "key": "giovanna", "label": "GIOVANNA", "cor": "#a855f7", "gradient": "purple", "icon": "👤", "descricao": "Carteira da vendedora Giovanna" },
+        { "key": "gabriel", "label": "GABRIEL/I.A", "cor": "#10b981", "gradient": "green", "icon": "🤖", "descricao": "Atendidos pela IA antes do humano" },
+        { "key": "importante", "label": "IMPORTANTE", "cor": "#f59e0b", "gradient": "yellow", "icon": "⭐", "descricao": "Marcadas como prioridade alta" },
+        { "key": "pendentes", "label": "PENDENTES", "cor": "#fb923c", "gradient": "yellow", "icon": "⏳", "descricao": "Aguardando ação ou retorno" },
+        { "key": "leilao", "label": "LEILÃO", "cor": "#7c3aed", "gradient": "purple", "icon": "🔨", "descricao": "Em disputa entre bancos" },
+        { "key": "fgts", "label": "FGTS", "cor": "#00c896", "gradient": "green", "icon": "💚", "descricao": "Antecipação FGTS" }
+      ]
+    },
+    "card_proposta_individual": {
+      "tamanho": "Largura 100% da coluna (~280px), altura ~140px",
+      "elementos": [
+        "Avatar circular com inicial do cliente (gradient colorido baseado em hash)",
+        "Nome do cliente em fonte 14px bold (ex: 'MARIA SILVA SANTOS')",
+        "CPF formatado abaixo em fonte mono pequena (ex: '123.456.789-00')",
+        "Valor R$ em verde grande (ex: 'R$ 2.847,50')",
+        "Banco origem como chip (V8 / Zilli / Novo Saque / VCTex / Pan / Facta / C6 / Mercantil / 2S / Soma)",
+        "Data com 'h' ou 'd' atrás (ex: '2h' ou '3d')",
+        "Cantos arredondados 12px, glassmorphism sutil, border gradient na cor da coluna",
+        "Status icon no canto direito (✓ pago, ⏳ pendente, ⚠ erro)"
+      ]
+    },
+    "stats_no_topo": {
+      "total_propostas": { "label": "TOTAL DE PROPOSTAS", "valor_exemplo": "1.247", "cor": "#06b6d4" },
+      "valor_total": { "label": "VALOR TOTAL", "valor_exemplo": "R$ 3.2M", "cor": "#10b981" },
+      "ticket_medio": { "label": "TICKET MÉDIO", "valor_exemplo": "R$ 2.567", "cor": "#7c3aed" }
+    },
+    "ranking_vendedores": {
+      "descricao": "Card lateral OU em baixo do kanban — top 10 vendedores com nome + total acumulado em R$. Cores diferenciadas pro top 3 (ouro/prata/bronze)."
+    },
+    "grafico_de_barras_por_banco": {
+      "descricao": "Recharts BarChart embaixo mostrando volume por banco. Barras com gradient da cor de cada coluna correspondente. Tooltip dark customizado.",
+      "dados_exemplo": [
+        { "banco": "V8", "valor": 980000 },
+        { "banco": "Zilli", "valor": 450000 },
+        { "banco": "Novo Saque", "valor": 320000 },
+        { "banco": "VCTex", "valor": 280000 },
+        { "banco": "Mercantil", "valor": 220000 }
+      ]
+    },
+    "elementos_obrigatorios_no_mockup": [
+      "Header com BrainBadge + 3 stats grandes (Total / Valor / Ticket médio)",
+      "8 colunas kanban com header colorido (cada uma com cor própria do COLUNAS array)",
+      "Pelo menos 3-4 cards de proposta em cada uma das 3 primeiras colunas (PAGOS, KAROL, GIOVANNA) — outras podem ficar menos densas",
+      "Cards com CPF mock + valores R$ realistas (entre R$ 800 e R$ 8.000) + banco origem",
+      "Ranking de vendedores (lateral OU embaixo) com top 5",
+      "Gráfico de barras por banco no rodapé com gradientes"
+    ]
+  },
+
+  "instrucoes_de_renderizacao_para_voce_claude_design": {
+    "1_estrutura_html": "Crie um único arquivo HTML ou componente React standalone com os 3 mockups dentro de tabs ou carousel. Não precisa de routing real.",
+    "2_dados_mock": "Use dados realistas BR (CPFs ofuscados tipo 123.456.789-00, nomes 'MARIA SILVA SANTOS' / 'JOÃO PEREIRA', valores em R$ entre R$ 800 e R$ 8.000, telefones +55 11 9XXXX-XXXX). NÃO use lorem ipsum — quebra a credibilidade.",
+    "3_animacoes_inline": "Coloque o bloco @keyframes inline no <style> do mockup. As animações DEVEM rodar — sem elas o sistema perde identidade.",
+    "4_responsividade": "Desktop first. Mockups são pra preview no PC do cliente (ele tá pensando em comprar). Mobile pode quebrar OK.",
+    "5_proibido": [
+      "Usar Tailwind CSS — sistema real usa inline styles",
+      "Substituir gradientes por cores sólidas",
+      "Tirar o cérebro animado (é a marca registrada)",
+      "Mostrar dados em inglês — sistema é BR (R$, datas DD/MM/YYYY, CPF)",
+      "Bootstrap, Material UI ou qualquer framework de componente — recria do zero",
+      "Lorem ipsum ou dados claramente fake (data scientist 'John Doe' em pipeline BR)"
+    ],
+    "6_obrigatorio": [
+      "Dark mode com bg #060612 base",
+      "Glassmorphism cards com border gradient",
+      "Cérebro IA animado nas 3 telas",
+      "Cores e gradientes EXATAMENTE como no design_tokens_globais",
+      "Animações (pulse-dot, fade-up, ai-spin) ativas",
+      "Spot-card hover effect (outros escurecem, focado brilha)",
+      "Dados em PT-BR realistas"
+    ],
+    "7_layout_final_na_landing": "Sugiro mostrar como tabs grandes: [Disparo] [Central de Controle] [CRM]. Cliente clica em cada tab e vê o mockup full-screen abaixo. Pode adicionar setas '< Anterior | Próximo >' embaixo. Não precisa de funcionalidade real — é DEMO visual."
+  },
+
+  "perguntas_para_o_user_antes_de_comecar": [
+    "Quer que eu monte os 3 mockups em um único arquivo standalone ou separe em componentes React?",
+    "A landing onde eu vou colar isso já está em React/Vite ou é HTML puro? (afeta como exporto)",
+    "Posso usar SVG inline pra cérebro animado ou prefere um GIF/MP4 pré-renderizado pra performance?",
+    "Quer fallback estático (PNG screenshot) caso o cliente esteja em browser velho que não suporta backdrop-filter?",
+    "Tem alguma proposta REAL que posso usar pra captar nomes/valores 100% verdadeiros ou prefere dados mock claramente fictícios?"
+  ]
+}

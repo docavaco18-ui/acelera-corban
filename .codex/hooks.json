@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/macbookdegabriel/projetos/ACELERA CORBAN PRODUÇÃO/.codex/hooks/check-gstack.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}
