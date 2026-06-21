@@ -172,9 +172,11 @@ function Mini({ label, value }: { label: string; value: string }) {
 function DetailDrawer({ ownerId, onClose }: { ownerId: string; onClose: () => void }) {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
+  const [drawerError, setDrawerError] = useState("");
   const load = async (liveMeta = false) => {
-    setLoading(true);
+    setLoading(true); setDrawerError("");
     try { setData(await adminUsersMonitorApi.detail(ownerId, liveMeta)); }
+    catch (e: any) { setDrawerError(e?.response?.data?.detail || e?.message || "Falha ao carregar detalhe"); }
     finally { setLoading(false); }
   };
   useEffect(() => { load(false); }, [ownerId]);
@@ -184,6 +186,11 @@ function DetailDrawer({ ownerId, onClose }: { ownerId: string; onClose: () => vo
         <button onClick={onClose} className="ds-btn" style={{ ...btnStyle(G.red), position: 'sticky', top: 12, left: 12, zIndex: 2, margin: 12 }}>✕ Fechar</button>
         {loading && !data
           ? <div style={{ color: C.muted, padding: 40 }}>Carregando detalhe…</div>
+          : drawerError && !data
+          ? <div style={{ border: `1px solid ${C.red}55`, color: C.red, background: `${C.red}10`, borderRadius: 12, padding: 16, margin: 12, fontSize: 13 }}>
+              {drawerError}{' '}
+              <button onClick={() => load(false)} className="ds-btn" style={{ ...btnStyle(G.red), marginLeft: 8 }}>Tentar novamente</button>
+            </div>
           : data && <OverviewDashboard data={data} loading={loading} onRefresh={() => load(false)} onLiveAudit={() => load(true)} title="Central de Usuários · detalhe" />}
       </div>
     </div>
