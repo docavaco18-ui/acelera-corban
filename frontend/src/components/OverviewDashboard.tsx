@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import {
   C, G, glassCard, sectionTitle, btnStyle, INPUT_STYLE, SHARED_CSS,
   PulseDot, GradientBar,
-} from "../components/disparo-shared";
+} from "./disparo-shared";
 
 // ── Tipos ────────────────────────────────────────────────────────────────────
 
