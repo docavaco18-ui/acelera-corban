@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from ..credentials.crypto import safe_decrypt
+
 _CRM_FROM_HEALTH_ID = {"vendeai": "VendeAI", "aesir": "Aesir", "chipcare": "Chipcare"}
 
 
@@ -100,7 +102,6 @@ def count_bms(db, owner_id: str, settings: dict) -> dict:
                 error += 1
     except Exception:
         pass
-    from ..credentials.crypto import safe_decrypt
     for key in ("aesir", "chipcare"):
         row = settings.get(key) or {}
         if safe_decrypt(row.get("meta_token_enc")):

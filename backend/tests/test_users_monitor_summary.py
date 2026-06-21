@@ -58,6 +58,16 @@ def test_summarize_overview_shape():
     assert s["error"] is False
 
 
+def test_summarize_overview_templates_null_in_cache():
+    from app.routers.users_monitor_summary import summarize_overview
+    ov = _overview()
+    ov["meta_audits"] = []
+    ov["templates"] = {"by_status": {}, "by_category": {}, "templates": []}
+    s = summarize_overview(ov, owner_id="o", email=None, client_label="C",
+                           bms={"connected": 0, "error": 0, "total": 0})
+    assert s["templates"] is None
+
+
 def test_build_aggregate_sums():
     from app.routers.users_monitor_summary import build_aggregate, summarize_overview
     a = summarize_overview(_overview("ok"), owner_id="a", email=None, client_label="A", bms={"connected": 1, "error": 0, "total": 1})
