@@ -61,6 +61,43 @@ class AesirClient:
             r.raise_for_status()
             return r.json()
 
+    async def create_campaign(
+        self,
+        campaign_name: str,
+        instance_id: str,
+        instance_type: str,
+        template_name: str,
+        interval_seconds: int,
+        recipients: list[dict],
+    ) -> dict:
+        """POST /campaigns — cria campanha em lote; registra no Gerenciador de Campanhas."""
+        payload: dict[str, Any] = {
+            "campaign_name": campaign_name,
+            "instance_id": int(instance_id),
+            "instance_type": instance_type,
+            "template_name": template_name,
+            "interval_seconds": max(1, interval_seconds),
+            "recipients": recipients,
+        }
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                f"{BASE_URL}/campaigns",
+                headers=self._headers(),
+                json=payload,
+            )
+            r.raise_for_status()
+            return r.json()
+
+    async def get_campaign(self, campaign_id: int | str) -> dict:
+        """GET /campaigns/{id} — métricas da campanha (total, sent, errors, ignored)."""
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(
+                f"{BASE_URL}/campaigns/{campaign_id}",
+                headers=self._headers(),
+            )
+            r.raise_for_status()
+            return r.json()
+
     async def list_instances(self) -> list[dict]:
         """GET /whatsapp/instances — lista instâncias WA do tenant."""
         async with httpx.AsyncClient() as client:

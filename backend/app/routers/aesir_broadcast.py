@@ -490,7 +490,7 @@ def _resolve_template_params(row: dict, params: list[TemplateParamIn]) -> list[s
     return out
 
 
-async def _dispatch_template_slice(
+async def _dispatch_template_campaign(
     aesir_client: AesirClient,
     instance_id: str,
     instance_type: str,
@@ -498,18 +498,17 @@ async def _dispatch_template_slice(
     body: "DispatchIn",
     stop_event: asyncio.Event,
 ) -> dict[str, Any]:
-    """Send an approved template to each CSV row THROUGH Aesir (official WABA queue).
+    """POST /campaigns — envia lote via Aesir; registra no Gerenciador de Campanhas.
 
-    Routes via Aesir /whatsapp/send-template so o envio fica registrado dentro do
-    Aesir — Acelera funciona como capa do Aesir.
+    Monta lista de recipients a partir do CSV e delega o loop de envio ao Aesir.
+    Após criação, faz polling em GET /campaigns/{id} para rastrear progresso.
     """
     text = csv_bytes.lstrip(b"\xef\xbb\xbf").decode("utf-8", errors="replace")
     rows = list(csv.DictReader(io.StringIO(text)))
-    sent = 0
-    errors = 0
-    for i, row in enumerate(rows):
-        if stop_event.is_set():
-            break
+
+    recipients: list[dict] = []
+    skipped = 0
+    for row in rows:
         phone_raw = ""
         for col in [body.phone_column, "telefone", "phone", "celular", "numero", "whatsapp"]:
             if col in row and row[col]:
@@ -517,28 +516,64 @@ async def _dispatch_template_slice(
                 break
         phone = "".join(c for c in phone_raw if c.isdigit())
         if not phone or not (10 <= len(phone) <= 13):
-            errors += 1
+            skipped += 1
             log.debug("aesir_tpl_skip invalid_phone raw=%r digits=%r", phone_raw, phone)
             continue
         variables = _resolve_template_params(row, body.template_params)
+        recipients.append({"number": phone, "variables": variables})
+
+    if not recipients:
+        return {"sent": 0, "errors": skipped, "total": skipped}
+
+    campaign_name = body.campaign_name or f"Disparo {body.dispatch_id[:8]}"
+    campaign = await aesir_client.create_campaign(
+        campaign_name=campaign_name,
+        instance_id=instance_id,
+        instance_type=instance_type,
+        template_name=body.template_name,
+        interval_seconds=max(1, int(body.cooldown_seconds)),
+        recipients=recipients,
+    )
+    log.info(
+        "aesir_campaign_created name=%r instance=%s recipients=%d resp_keys=%s",
+        campaign_name, instance_id, len(recipients), list(campaign.keys()),
+    )
+
+    # Extrai campaign_id da resposta (tentativa de vários formatos possíveis)
+    data = campaign.get("data") or {}
+    campaign_id = (
+        campaign.get("id")
+        or campaign.get("campaign_id")
+        or data.get("id")
+        or data.get("campaign_id")
+    )
+
+    if not campaign_id:
+        log.warning("aesir_campaign: sem campaign_id na resposta — retorno otimista")
+        return {"sent": len(recipients), "errors": skipped, "total": len(recipients) + skipped}
+
+    # Polling: GET /campaigns/{id} até terminar ou stop_event
+    TERMINAL = {"completed", "done", "finished", "failed", "error", "cancelled"}
+    sent = 0
+    poll_errors = 0
+    while not stop_event.is_set():
+        await asyncio.sleep(10)
+        if stop_event.is_set():
+            break
         try:
-            await aesir_client.send_template(
-                instance_id=instance_id,
-                number=phone,
-                template_name=body.template_name,
-                variables=variables,
-                instance_type=instance_type,
-                language=body.template_lang or None,
-                campaign_name=body.campaign_name or None,
-            )
-            sent += 1
-            log.info("aesir_tpl_sent phone=%s template=%s instance=%s", phone, body.template_name, instance_id)
+            metrics = await aesir_client.get_campaign(campaign_id)
+            m_data = metrics.get("data") or metrics
+            sent = int(m_data.get("sent") or 0)
+            poll_errors = int(m_data.get("errors") or 0)
+            status = str(m_data.get("status") or "").lower()
+            log.info("aesir_campaign_poll id=%s sent=%d errors=%d status=%s",
+                     campaign_id, sent, poll_errors, status)
+            if status in TERMINAL or (sent + poll_errors) >= len(recipients):
+                break
         except Exception as exc:
-            errors += 1
-            log.warning("aesir_tpl_send_error phone=%s error=%s: %s", phone, type(exc).__name__, str(exc)[:160])
-        if i < len(rows) - 1:
-            await asyncio.sleep(body.cooldown_seconds)
-    return {"sent": sent, "errors": errors, "total": sent + errors}
+            log.warning("aesir_campaign_poll error id=%s: %s", campaign_id, str(exc)[:120])
+
+    return {"sent": sent, "errors": skipped + poll_errors, "total": len(recipients) + skipped}
 
 
 @router.post("/dispatch")
@@ -635,7 +670,7 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
                 try:
                     if is_template:
-                        result = await _dispatch_template_slice(
+                        result = await _dispatch_template_campaign(
                             client, str(iid), type_map.get(str(iid), "waba"),
                             slice_bytes, body, stop_event,
                         )
