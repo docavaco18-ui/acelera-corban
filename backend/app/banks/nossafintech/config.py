@@ -15,7 +15,7 @@ class NossaFintechConfig:
     ))
     # Bancarizadora default — sobrescrita pelo retorno de /banking-institutions.
     default_service_type: str = field(default_factory=lambda: os.getenv(
-        "NOSSAFINTECH_SERVICE_TYPE", "UY3"
+        "NOSSAFINTECH_SERVICE_TYPE", "QITECH"
     ))
 
     # ── Timeouts (s) ─────────────────────────────────────────────────────────

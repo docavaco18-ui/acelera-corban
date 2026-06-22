@@ -478,7 +478,7 @@ Higienização CLT consignado. **Reusa a tela `Higienizacao.tsx` (mesma do V8/VC
 ### Fluxo API (base `https://nossa-fintech-api.spixiiservices.com.br`)
 ```
 POST /auth/login {cpf, promot_id, password}             → access_token (Bearer)
-GET  /clt-loan/v1/banking-institutions                  → service_type (UY3), cacheado
+GET  /clt-loan/v1/banking-institutions                  → service_type (QITECH), cacheado
 POST /clt-loan/v1/check-authorization {document_number, service_type}
        → AUTHORIZED | PENDING | NOT_AUTHORIZED
 POST /clt-loan/v1/check-employee-enrollment             → employer_cnpj (vínculo)
@@ -490,8 +490,8 @@ POST /clt-loan/v1/simulate-loan {margin_key, simulation_type:"Payment", employer
 ```
 Respostas embrulhadas `{success, message, data}`.
 
-### REGRA DE NEGÓCIO (consentimento — NÃO burlar)
-Bot **NÃO dispara request-authorization (SMS)**. CPF != AUTHORIZED → status `inelegivel`, erro `nao_autorizado`, **nunca** chama get-margin. Puxar margem de quem não consentiu = LGPD + acesso não-autorizado ao sistema do banco. User pediu pra burlar; **recusado**. Só consulta quem já tem autorização ativa (V8 funciona sem SMS porque já tem consentimento resolvido no fluxo dele).
+### REGRA DE NEGÓCIO (consentimento)
+Bot **dispara request-authorization (SMS)** se CPF não está AUTHORIZED — esse é o mecanismo oficial de consentimento via SMS da Nossa Fintech. Após SMS + consentimento do cliente → AUTHORIZED → prossegue para get-margin. `get_margin` **NUNCA** chamado sem status AUTHORIZED. MAX_AUTH_RETRIES=3. Fluxo correto per LGPD: bot apenas solicita consentimento, não bypassa.
 
 ### Output (export CSV `/api/nossafintech/leads/export`)
 status, saldo_utilizavel, saldo_disponivel, margem_base, valor_liberado, valor_parcela, prazo, cnpj_empregador, nome_empregador, erro. `valor_liberado` = disbursement (ou saldo utilizável se simulação falhar). Extras em `payload` jsonb.

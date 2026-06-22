@@ -2,7 +2,7 @@
 
 Fluxo por CPF:
   login()                          → JWT (Bearer, reusado até 401)
-  banking_institutions()           → service_type (ex: "UY3"), cacheado por client
+  banking_institutions()           → service_type (ex: "QITECH"), cacheado por client
   check_authorization(cpf)         → "AUTHORIZED" | "PENDING" | "NOT_AUTHORIZED"
   request_authorization(cpf, nome, phone) → AUTHORIZED|PENDING (envia SMS ao cliente
                                      se primeira vez; idempotente se já autorizado)
@@ -166,7 +166,7 @@ class NossaFintechApiClient:
             return self._service_type
         r = self._request("GET", "/clt-loan/v1/banking-institutions")
         data = self._unwrap(r, "banking_institutions") or []
-        # prefere a bancarizadora default (UY3) se disponível, senão a 1ª
+        # prefere a bancarizadora default (QITECH) se disponível, senão a 1ª
         pref = self.cfg.default_service_type
         self._service_type = pref if pref in data else (data[0] if data else pref)
         log.info("nossafintech service_type=%s (disponíveis=%s)", self._service_type, data)
