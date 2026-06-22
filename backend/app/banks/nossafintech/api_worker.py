@@ -84,6 +84,22 @@ class NossaFintechApiWorker:
                     return {"status": "pendente", "valor_liberado": None,
                             "erro": "sem_telefone_para_autorizacao",
                             "tentativas": tentativas + 1}
+
+                # Fix SMS spam: cooldown 5min entre tentativas (refill roda a cada 5s)
+                if tentativas > 0:
+                    updated_at_str = record.get("updated_at") or ""
+                    if updated_at_str:
+                        try:
+                            from datetime import datetime, timezone
+                            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
+                            age = (datetime.now(timezone.utc) - updated_at).total_seconds()
+                            if age < 300:
+                                return {"status": "pendente", "valor_liberado": None,
+                                        "erro": "aguardando_autorizacao_sms",
+                                        "tentativas": tentativas}
+                        except Exception:
+                            pass
+
                 req_status = self._client.request_authorization(cpf, nome, telefone)
                 log.info("nossafintech %d | CPF %s request_authorization → %s",
                          self.worker_id, cpf, req_status)
@@ -239,6 +255,8 @@ class NossaFintechApiWorker:
                         queue.put_nowait(record)
                     except Exception:
                         pass
+                    # Fix inflight leak: emite evento para bot_service descartar CPF do inflight
+                    self._emit("cpf_release", cpf=cpf)
                     continue
 
                 await self._save(cpf, updates)

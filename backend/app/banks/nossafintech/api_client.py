@@ -165,7 +165,13 @@ class NossaFintechApiClient:
         if self._service_type:
             return self._service_type
         r = self._request("GET", "/clt-loan/v1/banking-institutions")
-        data = self._unwrap(r, "banking_institutions") or []
+        raw = self._unwrap(r, "banking_institutions") or []
+        # Extrai string: API pode retornar lista de strings OU lista de dicts
+        data = [
+            str(item.get("service_type") or item.get("code") or "")
+            if isinstance(item, dict) else str(item)
+            for item in raw
+        ]
         # prefere a bancarizadora default (QITECH) se disponível, senão a 1ª
         pref = self.cfg.default_service_type
         self._service_type = pref if pref in data else (data[0] if data else pref)

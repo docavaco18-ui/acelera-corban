@@ -84,11 +84,17 @@ async def start_bot(
     handle = await pool.start(user_id=user_id, num_workers=num_workers, creds=creds, db=db)
     rt = _Runtime()
     _runtimes[user_id] = rt
-    redis = await get_redis()
-    await _broadcast(redis, {
-        "type": "bot_status", "status": "running", "user_id": user_id,
-        "bank": "nossafintech", "full_workers": handle.num_workers, "batch_id": batch_id,
-    })
+    try:
+        redis = await get_redis()
+        await _broadcast(redis, {
+            "type": "bot_status", "status": "running", "user_id": user_id,
+            "bank": "nossafintech", "full_workers": handle.num_workers, "batch_id": batch_id,
+        })
+    except Exception as e:
+        # Fix zombie entry: setup falhou após registry write → limpar para permitir retry
+        _runtimes.pop(user_id, None)
+        await pool.stop(user_id)
+        raise
 
     if batch_id is not None:
         try:
@@ -111,6 +117,11 @@ async def start_bot(
                 processed["eleg"] += 1
             elif fase == "inelegivel":
                 processed["ineleg"] += 1
+            cpf_done = event.get("cpf")
+            if cpf_done:
+                rt.inflight.discard(cpf_done)
+        elif event.get("type") == "cpf_release":
+            # Fix inflight leak: worker crash → CPF liberado para reprocessamento
             cpf_done = event.get("cpf")
             if cpf_done:
                 rt.inflight.discard(cpf_done)
