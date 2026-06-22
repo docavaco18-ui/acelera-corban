@@ -1096,3 +1096,6 @@ Bot NÃO dispara SMS (request-authorization). CPF != AUTHORIZED → inelegível 
 
 ### Status
 Local OK (128 testes, back 8002/front 3002). Upload OK (27 leads, user diamond.credioficial bc72f4c3). Bot bloqueado: sem credencial cadastrada + promot_id desconhecido. Pendente: promot_id → cadastrar creds → E2E 1 CPF → deploy VPS.
+
+## Central de Usuários (em progresso 2026-06-21)
+Painel admin multi-tenant. Branch `feat/central-usuarios`. Estado + retomada: `HANDOFF_CENTRAL_USUARIOS.md`. Tasks 1-4 ✅, Task 5 implementada (review pendente), Task 6-7 pendentes.

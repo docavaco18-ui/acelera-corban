@@ -1,0 +1,527 @@
+{
+  "_LEIA_PRIMEIRO": {
+    "quem_voce_eh": "Você é Claude Design. Vai recriar 3 telas REAIS de um SaaS brasileiro (Acelera Corban) como mockups pra colar numa landing page de vendas.",
+    "regra_de_ouro": "O sistema é DARK MODE GAMIFICADO PREMIUM. Pense Linear + Vercel + Riot Games. NÃO é dashboard corporativo chato. Tem cérebro IA animado, glassmorphism, gradient borders, partículas orbitando. Sem isso vira mockup genérico e o cliente fala 'isso aí é qualquer sistema, não me convenceu'.",
+    "voce_NAO_tem_acesso_ao_codigo_rodando": "Este JSON é TUDO que você sabe. Tem código real embutido pra você copiar. Tem layout ASCII pra você ver a estrutura. Tem texto EXATO do sistema em PT-BR pra você copiar literal.",
+    "tamanho_esperado_do_resultado": "3 telas full-screen (desktop 1440px width). Pode entregar como 1 arquivo HTML standalone OU 3 componentes React TSX. Decisão do user.",
+    "perguntas_obrigatorias_antes_de_codar": [
+      "Vai entregar em HTML standalone (1 arquivo) ou React TSX (3 arquivos)?",
+      "Onde vou colar — landing já existente em React/Vite ou HTML puro?",
+      "Quer 1 tab grande no topo com [Disparo | Central | CRM] OU scroll vertical com 3 seções OU carousel deslizante?",
+      "Pode usar emojis (🧠 📱 🚀) ou tem que ser ícones SVG? (Sistema real usa emojis pesado.)",
+      "Tem screenshot da landing atual pra eu casar a paleta/tipografia?"
+    ]
+  },
+
+  "PROJETO_REAL": {
+    "nome": "Acelera Corban",
+    "url_producao": "aceleracorban.com.br",
+    "dominio_negocio": "Plataforma SaaS multi-tenant pra correspondentes bancários brasileiros (crédito CLT, FGTS, consignado, FGTS antecipação). Vendem propostas de crédito a CLT (trabalhador celetista) via WhatsApp em massa + CRM kanban + diagnóstico operacional.",
+    "publico_alvo_landing": "Donos de correspondente bancário no Brasil que disparam centenas de milhares de mensagens WhatsApp/mês e gerenciam pipeline de vendas em planilha. Querem ferramenta séria, profissional, com cara de SaaS de Silicon Valley.",
+    "stack": "React 18 + Vite + TypeScript. SEM Tailwind, SEM Bootstrap. Tudo inline styles + design tokens em arquivo único (`disparo-shared/tokens.ts`).",
+    "decisao_visual_de_base": "Cliente do ACelera não quer ver tabela Excel. Quer ver IA + visual de NASA + cores que comunicam saúde do sistema (verde/amarelo/vermelho). Por isso o cérebro animado é central — comunica 'tem inteligência rodando aqui'."
+  },
+
+  "DESIGN_TOKENS_COPIE_LITERAL": {
+    "_obs": "ESTES VALORES SÃO LITERAIS. Não substitua por aproximações Tailwind. Cole exato.",
+
+    "paleta_completa": {
+      "bg": "#060612",
+      "surface": "rgba(15,15,35,.9)",
+      "surface_deep": "rgba(8,8,20,.95)",
+      "border_padrao": "rgba(255,255,255,.07)",
+      "text_principal": "#f1f5f9",
+      "text_secundario": "#94a3b8",
+      "text_muted": "#475569",
+      "verde_OK": "#10b981",
+      "amarelo_atencao": "#f59e0b",
+      "vermelho_critico": "#ef4444",
+      "ciano_destaque": "#06b6d4",
+      "roxo_principal": "#7c3aed",
+      "rosa_secundario": "#ec4899",
+      "verde_neon_acerto": "#00ff88",
+      "amarelo_neon_rodando": "#ffd700",
+      "rosa_neon_critico": "#ff2d78"
+    },
+
+    "gradientes_copie_literal": {
+      "primary": "linear-gradient(135deg,#7c3aed 0%,#06b6d4 100%)",
+      "green": "linear-gradient(135deg,#10b981 0%,#06b6d4 100%)",
+      "purple": "linear-gradient(135deg,#6d28d9 0%,#7c3aed 100%)",
+      "pink": "linear-gradient(135deg,#ec4899 0%,#7c3aed 100%)",
+      "red": "linear-gradient(135deg,#ef4444 0%,#ec4899 100%)",
+      "yellow": "linear-gradient(135deg,#f59e0b 0%,#ef8c3b 100%)",
+      "cyan": "linear-gradient(135deg,#06b6d4 0%,#0891b2 100%)",
+      "neon": "linear-gradient(135deg,#00ff88 0%,#06b6d4 100%)"
+    },
+
+    "tipografia_oficial": {
+      "font_family": "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+      "h1_pagina": { "size_px": 34, "weight": 800, "line_height": 1.1, "letter_spacing": 0 },
+      "h2_secao_TITULO_EM_GRADIENTE": { "size_px": 16, "weight": 800, "text_transform": "uppercase", "letter_spacing": "0.12em" },
+      "valor_KPI_gigante": { "size_px": 32, "weight": 800, "line_height": 1, "font_variant_numeric": "tabular-nums" },
+      "valor_score_HERO": { "size_px": 48, "weight": 800 },
+      "corpo": { "size_px": 14, "weight": 400, "line_height": 1.6 },
+      "label_pequena": { "size_px": 11, "weight": 700, "text_transform": "uppercase", "letter_spacing": "0.12em" },
+      "monospace_IDs_Meta": "monospace 10px"
+    },
+
+    "css_animacoes_OBRIGATORIO_inline_no_style_tag": "@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.85)}}\n@keyframes fade-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}\n@keyframes ai-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}\n@keyframes ai-spin-rev{from{transform:rotate(0deg)}to{transform:rotate(-360deg)}}\n@keyframes ai-orb-pulse{0%,100%{transform:translate(-50%,-50%) scale(1);box-shadow:0 0 60px rgba(124,58,237,.6),inset 0 0 30px rgba(6,182,212,.4)}50%{transform:translate(-50%,-50%) scale(1.08);box-shadow:0 0 90px rgba(6,182,212,.8),inset 0 0 40px rgba(124,58,237,.5)}}\n@keyframes ai-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}\n@keyframes ai-twinkle{0%,100%{opacity:1}50%{opacity:.35}}\n@keyframes ai-synapse{0%,100%{stroke-dashoffset:0;opacity:.6}50%{stroke-dashoffset:-20;opacity:1}}\n@keyframes spot-rotate{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}\n.ds-row:hover{background:rgba(255,255,255,.04)!important;transition:background .15s}\n.spot-card{position:relative;overflow:hidden;cursor:pointer;will-change:transform,opacity,filter;transition:transform .3s cubic-bezier(.2,.7,.2,1),opacity .3s ease,box-shadow .3s ease,background .3s ease,filter .3s ease,border-color .3s ease}\n.spot-glow{position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .3s ease;background:radial-gradient(circle at 30% 0%,var(--spot-color,#7c3aed)44 0%,transparent 65%)}\n.spot-grid:hover .spot-card{opacity:.3;filter:saturate(.55) brightness(.85);transform:scale(.97)}\n.spot-grid .spot-card:hover{opacity:1!important;filter:none!important;transform:translateY(-4px) scale(1.04)!important;background:linear-gradient(135deg,rgba(255,255,255,.08),rgba(255,255,255,.02))!important;border-color:rgba(255,255,255,.18)!important;box-shadow:0 12px 40px rgba(0,0,0,.55),0 0 0 1px rgba(255,255,255,.1);z-index:3}\n.spot-grid .spot-card:hover .spot-glow{opacity:1!important}",
+
+    "glass_card_recipe_OBRIGATORIO": {
+      "explicacao": "Todas as cards GRANDES (seções) usam esta receita. Border com gradiente, fundo dark blur.",
+      "codigo_react_inline_style": "{\n  background: 'linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, linear-gradient(135deg,#7c3aed,#06b6d4) border-box',\n  border: '1px solid transparent',\n  borderRadius: 16,\n  padding: 24,\n  boxShadow: '0 8px 40px rgba(0,0,0,.55)',\n  backdropFilter: 'blur(12px)',\n  position: 'relative',\n  overflow: 'hidden',\n  animation: 'fade-up .35s ease-out',\n}",
+      "como_trocar_a_cor_da_borda": "Substitua o segundo gradient (depois da virgula) por qualquer gradient da paleta. Exemplo verde: 'linear-gradient(135deg,#10b981,#06b6d4)'"
+    }
+  },
+
+  "COMPONENTE_ASSINATURA_CEREBRO_IA": {
+    "importancia": "OBRIGATÓRIO. Sem o cérebro, mockup vira dashboard genérico. É a marca registrada.",
+
+    "versao_pequena_92px_para_HEADER": {
+      "uso": "No topo da Central de Controle (ao lado do Score Operacional) e no topo do CRM (ao lado das stats).",
+      "codigo_react_completo_COPIE": "function BrainBadge({ color = '#10b981', loading = false }) {\n  const mult = loading ? 0.4 : 1;\n  return (\n    <div style={{ position: 'relative', width: 92, height: 92, flexShrink: 0 }}>\n      <div style={{\n        position: 'absolute', inset: 0, borderRadius: '50%',\n        border: `2px dashed ${color}55`,\n        animation: `ai-spin ${14 * mult}s linear infinite`,\n      }} />\n      <div style={{\n        position: 'absolute', inset: 12, borderRadius: '50%',\n        border: `1.5px dotted ${color}88`,\n        animation: `ai-spin-rev ${10 * mult}s linear infinite`,\n      }} />\n      <div style={{\n        position: 'absolute', top: '50%', left: '50%',\n        width: 44, height: 44, borderRadius: '50%',\n        background: `radial-gradient(circle at 35% 35%, ${color} 0%, ${color}cc 35%, transparent 100%)`,\n        transform: 'translate(-50%, -50%)',\n        animation: `ai-orb-pulse ${2.4 * mult}s ease-in-out infinite`,\n        filter: 'blur(.4px)',\n      }} />\n      <div style={{\n        position: 'absolute', inset: 0,\n        display: 'flex', alignItems: 'center', justifyContent: 'center',\n        fontSize: 28,\n        animation: `ai-float ${3.6 * mult}s ease-in-out infinite`,\n        filter: `drop-shadow(0 0 8px ${color}aa)`,\n      }}>🧠</div>\n    </div>\n  );\n}"
+    },
+
+    "versao_HERO_260px_para_PAINEL_MONITOR": {
+      "uso": "Centro do painel 'Inteligência Artificial · Monitora Disparo e Qualidade' na tela Disparo.",
+      "elementos_extras_da_versao_grande": "SVG de sinapses curvadas atravessando o cérebro + 8 partículas coloridas orbitando + 3 anéis concêntricos (não 2) + emoji 🧠 maior (52px).",
+      "codigo_react_completo_COPIE": "function AICore({ refreshing = false, onClick }) {\n  const mult = refreshing ? 0.35 : 1;\n  const particles = [\n    { r: 95, sp: 8, c: '#7c3aed', s: 11 },\n    { r: 105, sp: 12, c: '#06b6d4', s: 9 },\n    { r: 85, sp: 10, c: '#00ff88', s: 8 },\n    { r: 100, sp: 14, c: '#ec4899', s: 10 },\n    { r: 90, sp: 9, c: '#06b6d4', s: 7 },\n    { r: 110, sp: 16, c: '#7c3aed', s: 12 },\n    { r: 88, sp: 11, c: '#00ff88', s: 9 },\n    { r: 102, sp: 13, c: '#ec4899', s: 8 },\n  ];\n  return (\n    <div onClick={onClick}\n      title=\"Clique pra atualizar todos os status (mesmo efeito do Refresh)\"\n      style={{ position: 'relative', width: 260, height: 260, flexShrink: 0, margin: '0 auto', cursor: refreshing ? 'wait' : 'pointer' }}>\n      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }} viewBox=\"0 0 260 260\">\n        <defs>\n          <linearGradient id=\"synapse-grad\" x1=\"0%\" y1=\"0%\" x2=\"100%\" y2=\"100%\">\n            <stop offset=\"0%\" stopColor=\"#7c3aed\" stopOpacity=\"0.8\" />\n            <stop offset=\"100%\" stopColor=\"#06b6d4\" stopOpacity=\"0.8\" />\n          </linearGradient>\n        </defs>\n        {[\n          'M 60 80 Q 130 130 200 70',\n          'M 50 150 Q 130 100 210 160',\n          'M 80 200 Q 130 130 180 200',\n          'M 70 60 Q 130 130 190 200',\n          'M 200 80 Q 130 130 60 180',\n        ].map((d, i) => (\n          <path key={i} d={d} stroke=\"url(#synapse-grad)\" strokeWidth=\"1.5\" fill=\"none\"\n            strokeDasharray=\"4 4\"\n            style={{ animation: `ai-synapse ${(3 + i * 0.4) * mult}s linear infinite`, opacity: 0.8 }} />\n        ))}\n      </svg>\n      <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2px dashed rgba(124,58,237,.35)', animation: `ai-spin ${22 * mult}s linear infinite` }} />\n      <div style={{ position: 'absolute', inset: 22, borderRadius: '50%', border: '1.5px dotted rgba(6,182,212,.45)', animation: `ai-spin-rev ${16 * mult}s linear infinite` }} />\n      <div style={{ position: 'absolute', inset: 46, borderRadius: '50%', border: '1px solid rgba(0,255,136,.2)', animation: `ai-spin ${10 * mult}s linear infinite` }} />\n      <div style={{\n        position: 'absolute', top: '50%', left: '50%',\n        width: 110, height: 110, borderRadius: '50%',\n        background: 'radial-gradient(circle at 35% 35%, #a78bfa 0%, #7c3aed 35%, #06b6d4 75%, transparent 100%)',\n        animation: `ai-orb-pulse ${2.5 * mult}s ease-in-out infinite`,\n        filter: 'blur(.5px)',\n      }} />\n      <div style={{\n        position: 'absolute', inset: 0,\n        display: 'flex', alignItems: 'center', justifyContent: 'center',\n        fontSize: 52, animation: `ai-float ${3.5 * mult}s ease-in-out infinite`,\n        pointerEvents: 'none', filter: 'drop-shadow(0 0 12px rgba(0,255,136,.5))',\n      }}>🧠</div>\n      {particles.map((p, i) => (\n        <div key={i} style={{\n          position: 'absolute', inset: 0,\n          animation: `ai-spin ${p.sp * mult}s linear infinite`,\n          animationDelay: `-${(p.sp * mult) * (i / particles.length)}s`,\n        }}>\n          <div style={{\n            position: 'absolute', top: '50%', left: '50%',\n            width: p.s, height: p.s, borderRadius: '50%',\n            background: p.c,\n            boxShadow: `0 0 14px ${p.c}, 0 0 4px ${p.c}`,\n            marginLeft: -p.s / 2, marginTop: -p.s / 2 - p.r,\n            animation: `ai-twinkle ${(1.8 + i * 0.2) * mult}s ease-in-out infinite`,\n          }} />\n        </div>\n      ))}\n      <div style={{\n        position: 'absolute', bottom: -8, left: 0, right: 0, textAlign: 'center',\n        color: '#06b6d4', fontSize: 10, fontWeight: 700,\n        textTransform: 'uppercase', letterSpacing: '0.12em',\n        opacity: 0.7,\n      }}>👆 Clique pra atualizar</div>\n    </div>\n  );\n}"
+    },
+
+    "componentes_pequenos_auxiliares": {
+      "PulseDot": "function PulseDot({ color = '#10b981' }) {\n  return <span style={{\n    width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block',\n    animation: 'pulse-dot 2s ease-in-out infinite',\n    boxShadow: `0 0 6px ${color}99`,\n  }} />;\n}",
+      "GradientBar": "function GradientBar({ pct, gradient = 'linear-gradient(135deg,#7c3aed,#06b6d4)', height = 6 }) {\n  return (\n    <div style={{ background: 'rgba(255,255,255,.06)', borderRadius: height, height, overflow: 'hidden' }}>\n      <div style={{\n        background: gradient, height, borderRadius: height,\n        width: `${Math.min(100, Math.max(0, pct))}%`,\n        transition: 'width .6s ease-out',\n      }} />\n    </div>\n  );\n}",
+      "StatusPill": "function StatusPill({ status, label }) {\n  const colorMap = { ok: '#10b981', warn: '#f59e0b', warning: '#f59e0b', critical: '#ef4444', block: '#ef4444' };\n  const color = colorMap[status] || '#94a3b8';\n  const text = label || (status === 'ok' ? 'OK' : status === 'warning' || status === 'warn' ? 'Atenção' : 'Crítico');\n  return (\n    <span style={{\n      display: 'inline-flex', alignItems: 'center', gap: 6,\n      padding: '4px 10px', borderRadius: 999,\n      color, background: `${color}14`, border: `1px solid ${color}55`,\n      fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap',\n    }}>\n      <PulseDot color={color} /> {text}\n    </span>\n  );\n}"
+    }
+  },
+
+  "TELA_1_DISPARO_WHATSAPP": {
+    "_titulo_exato_do_sistema": "Disparo VendeAI",
+    "subtitulo_exato": "WhatsApp Business API via Chatwoot · disparo em massa",
+
+    "layout_ascii_geral": "┌──────────────────────────────────────────────────────────────────────────────┐\n│ [📨] Disparo VendeAI                                  [⟳ Atualizar Status]   │\n│      WhatsApp Business API via Chatwoot · disparo em massa                   │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ┌────────────────────────────┐ ┌─────────────────────────────────────────┐  │\n│ │ 🔐 Credenciais VendeAI OK  │ │ 🌐 Meta Configurado · 16 WABAs · token  │  │\n│ │ usuario@email.com · ✎      │ │ válido (87 dias restantes) · ✎          │  │\n│ └────────────────────────────┘ └─────────────────────────────────────────┘  │\n│ ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐              │\n│ │ 📤 12.847        │ │ ⚠️ 47            │ │ 📣 23            │              │\n│ │ TOTAL ENVIADAS   │ │ TOTAL ERROS      │ │ CAMPANHAS        │              │\n│ └──────────────────┘ └──────────────────┘ └──────────────────┘              │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ═══ INTELIGÊNCIA ARTIFICIAL · MONITORA DISPARO E QUALIDADE ═══               │\n│                                                                              │\n│     ┌────────────────┐                                                       │\n│     │ 📤 12.847      │              ╭─────────╮                              │\n│     │ MENSAGENS      │             ╱  🧠 ANIMADO ╲                           │\n│     │ ENVIADAS       │            │  partículas    │                         │\n│     │ em tempo real  │            │  anéis girando │                         │\n│     └────────────────┘            ╲  260x260px    ╱                          │\n│                                    ╰─────────────╯                           │\n│     ┌────────────────┐         👆 Clique pra atualizar                       │\n│     │ 📊 98.4%       │                                                       │\n│     │ TAXA ENTREGA   │              ┌────────────────┐                       │\n│     │ delivered/sent │              │ 🚀 3           │                       │\n│     └────────────────┘              │ CAMPANHAS      │                       │\n│                                     │ ATIVAS         │                       │\n│                                     └────────────────┘                       │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ═══ NOVO DISPARO ═══                                                         │\n│                                                                              │\n│   [Wizard 4 etapas — upload CSV → distribuição → config → confirmação]      │\n│                                                                              │\n│   ⚠ DISTRIBUIÇÃO PARCIAL — 4.500 de 5.000 leads atribuídos (500 sobrando)   │\n│   ☐ Eu entendo: disparar 4.500 leads, descartar 500.                        │\n│   [  Confirmar e Disparar  ]                                                 │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ═══ QUALIDADE DOS NÚMEROS DA SUA BM ═══                                      │\n│                                                                              │\n│ ┌────────────────────────────────────────────────────────────────────────┐  │\n│ │ Total: 16 │ Capacidade: 84.500/dia │ OK: 14 │ Graves: 0 │ Leves: 2     │  │\n│ └────────────────────────────────────────────────────────────────────────┘  │\n│ ┌────────────────────────────────────────────────────────────────────────┐  │\n│ │ 🟢 +55 11 99876-5432 · Acelera Corban ✔  │ ✓ CRM VENDEAI │ ⏸ Pausar    │  │\n│ │ 📞 109876543210987 🏢 234567890123456                                   │  │\n│ │ BM Edvan Fenix · Brazil                                                │  │\n│ │ ┌──────────┐┌──────────┐┌──────────┐┌──────────┐                        │  │\n│ │ │ CAPAC.   ││ QUALIDADE││ PAGAMENTO││ NOME     │                        │  │\n│ │ │ 8.450    ││ GREEN    ││ OK       ││ APROVADO │                        │  │\n│ │ │ /10.000  ││ TIER 100K││          ││          │                        │  │\n│ │ │ ▓▓▓▓░░░  ││          ││          ││          │                        │  │\n│ │ └──────────┘└──────────┘└──────────┘└──────────┘                        │  │\n│ └────────────────────────────────────────────────────────────────────────┘  │\n│ [... mais 5-6 cards de números, alguns YELLOW com warnings em chips ...]    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ═══ HISTÓRICO DE DISPAROS ═══                                                │\n│ • Campanha CLT Jan-2026 · 5.000 leads · ▓▓▓▓▓░ 87% (4.350/5.000) · [running]│\n│ • Campanha FGTS Dez-2025 · 3.200 leads · ▓▓▓▓▓▓ 100% (3.198/3.200) · [done] │\n│ • Disparo PowerHub · 1.000 leads · ▓░░░░░ 12% (120/1.000) · [paused]        │\n└──────────────────────────────────────────────────────────────────────────────┘",
+
+    "header_da_pagina": {
+      "icon_box": "Box 56x56px com gradient roxo→ciano + emoji '📨' 28px + box-shadow roxo neon",
+      "h1_codigo_inline": "<h1 style={{\n  margin: 0, fontSize: 34, fontWeight: 800, lineHeight: 1.1,\n  background: 'linear-gradient(135deg,#7c3aed,#06b6d4)',\n  WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',\n}}>Disparo VendeAI</h1>",
+      "subtitulo": "WhatsApp Business API via Chatwoot · disparo em massa",
+      "botao_direita_codigo": "<button style={{\n  background: 'linear-gradient(135deg,#7c3aed,#06b6d4)', border: 'none', color: '#fff',\n  borderRadius: 12, padding: '14px 24px', cursor: 'pointer', fontSize: 15, fontWeight: 700,\n  boxShadow: '0 4px 16px rgba(124,58,237,.4)',\n}}>⟳ Atualizar Status (Refresh)</button>"
+    },
+
+    "chips_credenciais_DUAS_lado_a_lado": {
+      "explicacao_textos_exatos": "Quando credenciais salvas, viram chips compactos. Texto EXATO do sistema:",
+      "chip_1_credenciais_VendeAI": {
+        "icon": "🔐",
+        "gradient_border": "linear-gradient(135deg,#00ff88,#06b6d4)",
+        "dot_color": "#10b981 (PulseDot animado)",
+        "titulo": "Credenciais VendeAI OK",
+        "detail_exemplo": "edvan@fenix.com.br · Account 448 · CRM token OK",
+        "botao": "✎ Editar (roxo, fundo rgba(124,58,237,.12))"
+      },
+      "chip_2_meta": {
+        "icon": "🌐",
+        "gradient_border": "linear-gradient(135deg,#7c3aed,#06b6d4)",
+        "dot_color": "#10b981",
+        "titulo": "Meta Configurado",
+        "detail_exemplo": "Token System User · 16 WABAs · expira em 87 dias",
+        "botao": "✎ Editar"
+      },
+      "codigo_completo_chip_COPIE": "function CollapsedChip({ icon, gradient, title, detail, dotColor = '#10b981' }) {\n  return (\n    <div style={{\n      background: `linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, ${gradient} border-box`,\n      border: '1px solid transparent', borderRadius: 14,\n      padding: '12px 18px',\n      display: 'flex', alignItems: 'center', gap: 14, justifyContent: 'space-between',\n      boxShadow: '0 4px 20px rgba(0,0,0,.4)',\n      animation: 'fade-up .3s ease-out',\n    }}>\n      <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0, flex: 1 }}>\n        <div style={{\n          width: 32, height: 32, borderRadius: 10, background: gradient,\n          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,\n        }}>{icon}</div>\n        <PulseDot color={dotColor} />\n        <span style={{ color: dotColor, fontSize: 13, fontWeight: 800, flexShrink: 0 }}>{title}</span>\n        <span style={{ color: '#475569', fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>· {detail}</span>\n      </div>\n      <button style={{\n        background: 'rgba(124,58,237,.12)', border: '1px solid rgba(124,58,237,.3)',\n        color: '#a78bfa', borderRadius: 8, padding: '6px 14px',\n        cursor: 'pointer', fontSize: 12, fontWeight: 700, flexShrink: 0,\n      }}>✎ Editar</button>\n    </div>\n  );\n}"
+    },
+
+    "linha_3_cards_KPI_de_analytics": {
+      "card_1": { "icon": "📤", "valor_exemplo": "12.847", "label": "TOTAL ENVIADAS", "gradient": "green", "glow": "rgba(16,185,129,.2)" },
+      "card_2": { "icon": "⚠️", "valor_exemplo": "47", "label": "TOTAL ERROS", "gradient": "red", "glow": "rgba(239,68,68,.2)" },
+      "card_3": { "icon": "📣", "valor_exemplo": "23", "label": "CAMPANHAS", "gradient": "primary", "glow": "rgba(124,58,237,.2)" },
+      "codigo_card_COPIE": "<div style={{\n  background: `linear-gradient(rgba(15,15,35,.95),rgba(15,15,35,.95)) padding-box, ${grad} border-box`,\n  border: '1px solid transparent', borderRadius: 16, padding: '28px 32px',\n  boxShadow: `0 4px 24px ${glow}`, textAlign: 'center',\n}}>\n  <div style={{ fontSize: 32, marginBottom: 12 }}>{icon}</div>\n  <div style={{\n    fontSize: 48, fontWeight: 800, lineHeight: 1,\n    background: grad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',\n  }}>{value.toLocaleString('pt-BR')}</div>\n  <div style={{ color: '#94a3b8', fontSize: 13, marginTop: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>\n</div>"
+    },
+
+    "secao_painel_monitor_HERO": {
+      "_titulo_exato": "INTELIGÊNCIA ARTIFICIAL · MONITORA DISPARO E QUALIDADE",
+      "gradient_borda": "neon (verde→ciano)",
+      "icon_box": "🧠",
+      "estrutura": "Card grande glassmorphism. Layout 3-col: KPIs esquerda | Cérebro 260px centro | KPIs direita.",
+      "KPIs_em_volta_cerebro_4_total": [
+        { "label": "MENSAGENS ENVIADAS", "valor": "12.847", "sub": "em tempo real", "cor": "#00ff88" },
+        { "label": "TAXA DE ENTREGA", "valor": "98.4%", "sub": "delivered/sent", "cor": "#10b981" },
+        { "label": "CAMPANHAS ATIVAS", "valor": "3", "sub": "em monitoramento", "cor": "#06b6d4" },
+        { "label": "PRÓXIMO REFRESH", "valor": "00:47", "sub": "polling 30s", "cor": "#f59e0b" }
+      ]
+    },
+
+    "wizard_de_4_etapas_NOVO_DISPARO": {
+      "step_indicator_topo": "[1. UPLOAD] → [2. ANÁLISE] → [3. CONFIG] → [4. CONFIRMAR] com bolinhas conectadas, atual em destaque (gradient roxo→ciano), passadas em verde, futuras em cinza",
+
+      "etapa_1_UPLOAD": {
+        "visual": "Drop zone grande (~400x250px) centralizada. Border dashed roxo. Ícone 📊 48px. Texto principal: 'Arraste seu CSV aqui ou clique pra selecionar'. Texto pequeno: 'Aceito: CSV com colunas telefone + nome + variáveis customizadas'. Hover: brilho neon.",
+        "estado_carregando": "Spinner roxo + texto 'Analisando CSV...'"
+      },
+
+      "etapa_2_ANALISE": {
+        "card_distribuicao": "Banner roxo com fundo rgba(99,102,241,.07). Título 'DISTRIBUIÇÃO' em fonte 12px bold. Texto: 'Distribuição proporcional entre 8 número(s) ativo(s).' + abaixo em amarelo: '⚠ 1 número(s) com qualidade YELLOW excluído(s)'",
+        "info_csv": "Linha: 'Total: 5.234 leads' (negrito branco) + 'Colunas:' + chips dos headers detectados (tipo [telefone] [nome] [valor] [banco])"
+      },
+
+      "etapa_3_CONFIG": {
+        "configs_globais_grid_4_col": "Inputs: 'Coluna Telefone' (default 'telefone'), 'Cooldown (s)' (default 5), 'Dedup Window (h)' (default 24), 'Nome Campanha' + Toggles: ☑ Pular fins de semana ☑ Pular horário noturno",
+        "select_aplicar_template_a_todos": "Background rgba(30,30,58,.27). Select 'escolha template para aplicar em todos' + tag '(só onde disponível)'",
+        "card_por_numero": {
+          "estrutura": "Background #0d0d1f, border #1e1e3a, borderRadius 10, padding 14. Layout: row header + grid de inputs.",
+          "row_header": "Display phone esquerda (fonte 14px bold) + razão em verde/amarelo abaixo + input numérico 'Leads' (planned_count) + select Template + chips de variáveis {{1}} {{2}}",
+          "exemplo_dados": [
+            { "display_phone": "+55 11 99876-5432", "can_send": "AVAILABLE (verde)", "leads": 850, "template": "oferta_clt_v2", "vars": ["{{1}}=nome", "{{2}}=valor"] },
+            { "display_phone": "+55 11 98765-4321", "can_send": "AVAILABLE (verde)", "leads": 800, "template": "oferta_clt_v2", "vars": ["{{1}}=nome", "{{2}}=valor"] },
+            { "display_phone": "+55 11 97654-3210", "can_send": "AVAILABLE (verde)", "leads": 600, "template": "oferta_clt_v2" },
+            { "display_phone": "+55 21 99543-2109", "can_send": "TIER_10K_REACHED (amarelo)", "leads": 0 }
+          ]
+        }
+      },
+
+      "etapa_4_CONFIRMACAO_BANNER_PARTIAL_CRITICO": {
+        "_OBRIGATORIO_no_mockup": "É O DIFERENCIAL VISUAL DA TELA. Cliente vê: 'caraca, esse sistema me protege de erro'",
+        "banner_amarelo_PARCIAL_codigo_COPIE": "<div style={{\n  background: 'rgba(234,179,8,.08)',\n  border: '1px solid rgba(234,179,8,.3)',\n  borderRadius: 10, padding: 14,\n}}>\n  <div style={{ color: '#eab308', fontSize: 13, fontWeight: 700, marginBottom: 6 }}>\n    ⚠ DISTRIBUIÇÃO PARCIAL — 4.500 de 5.234 leads atribuídos (734 sobrando)\n  </div>\n  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>\n    <input type=\"checkbox\" style={{ accentColor: '#eab308', width: 15, height: 15 }} />\n    <span style={{ color: '#e2e8f0', fontSize: 12 }}>\n      Eu entendo: disparar apenas 4.500 leads, descartar 734 restantes.\n    </span>\n  </label>\n</div>",
+        "banner_vermelho_EXCESSO_codigo_COPIE": "<div style={{\n  background: 'rgba(239,68,68,.08)',\n  border: '1px solid rgba(239,68,68,.3)',\n  borderRadius: 10, padding: 14,\n}}>\n  <div style={{ color: '#ef4444', fontSize: 13, fontWeight: 700 }}>\n    ❌ EXCESSO DE LEADS — soma 5.500 maior que total 5.234. Reduza distribuição.\n  </div>\n</div>",
+        "botao_final_codigo_COPIE": "<button disabled={!canConfirm} style={{\n  background: canConfirm ? '#00ff88' : '#1e1e3a',\n  color: canConfirm ? '#080818' : '#475569',\n  border: 'none', borderRadius: 8, padding: '10px 24px',\n  cursor: canConfirm ? 'pointer' : 'not-allowed',\n  fontWeight: 700, fontSize: 14,\n}}>Confirmar e Disparar</button>"
+      }
+    },
+
+    "secao_qualidade_dos_numeros": {
+      "_titulo_exato": "QUALIDADE DOS NÚMEROS DA SUA BM",
+      "gradient": "cyan",
+      "icon": "📱",
+      "bm_summary_5_cards_TOPO": {
+        "_explicacao": "Linha de 5 KPIs resumindo a Business Manager Meta",
+        "cards_dados_exatos": [
+          { "label": "Total de Números", "valor": "16", "icon": "📱", "gradient": "cyan", "sub": "sincronizados c/ a BM" },
+          { "label": "Capacidade / dia", "valor": "84.500", "icon": "⚡", "gradient": "primary", "sub": "soma dos limites dos ativos" },
+          { "label": "OK p/ Disparar", "valor": "14", "icon": "✅", "gradient": "green", "sub": "qualidade verde, sem restrição" },
+          { "label": "Problemas Graves", "valor": "0", "icon": "🚫", "gradient": "red", "sub": "bloqueado, RED ou suspenso" },
+          { "label": "Problemas Leves", "valor": "2", "icon": "⚠️", "gradient": "yellow", "sub": "nome, pagamento ou tier" }
+        ],
+        "codigo_inline_card_COPIE": "<div style={{\n  background: `linear-gradient(rgba(15,15,35,.94),rgba(15,15,35,.94)) padding-box, ${grad} border-box`,\n  border: '1px solid transparent', borderRadius: 14, padding: '16px 18px',\n  boxShadow: `0 4px 20px ${color}22`,\n}}>\n  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>\n    <span style={{ fontSize: 18 }}>{icon}</span>\n    <span style={{ color: '#475569', fontSize: 10, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</span>\n  </div>\n  <div style={{\n    fontSize: 32, fontWeight: 800, lineHeight: 1,\n    background: grad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',\n  }}>{value}</div>\n  <div style={{ color: '#475569', fontSize: 11, marginTop: 6 }}>{sub}</div>\n</div>"
+      },
+      "card_por_numero_DETALHE_VISUAL": {
+        "estrutura_completa": "Card horizontal por número. Header com dot colorido + IDs Meta (phone_id + waba_id em monospace) + display_phone + verified_name + tag '✓ CRM VENDEAI' verde + botão ⏸ Pausar vermelho",
+        "grid_4_cards_status": [
+          { "label": "CAPACIDADE", "valor": "8.450", "sub": "/10.000", "barra_progresso_gradient": "verde→ciano (84%)" },
+          { "label": "QUALIDADE", "valor": "GREEN", "sub": "TIER 100K" },
+          { "label": "PAGAMENTO", "valor": "OK", "sub": "" },
+          { "label": "NOME", "valor": "APROVADO", "sub": "" }
+        ],
+        "exemplos_mock_data_4_numeros": [
+          {
+            "display_phone": "+55 11 99876-5432",
+            "verified_name": "Acelera Corban",
+            "phone_id": "109876543210987",
+            "waba_id": "234567890123456",
+            "waba_name": "BM Edvan Fenix",
+            "waba_country": "Brazil",
+            "quality": "GREEN",
+            "can_send": "AVAILABLE",
+            "daily_limit": 10000,
+            "sent_today": 8450,
+            "is_paused": false,
+            "is_official_business_account": true
+          },
+          {
+            "display_phone": "+55 11 98765-4321",
+            "verified_name": "Acelera CLT",
+            "phone_id": "109876543210988",
+            "waba_id": "234567890123456",
+            "quality": "GREEN",
+            "daily_limit": 10000,
+            "sent_today": 3200,
+            "is_paused": false
+          },
+          {
+            "display_phone": "+55 21 99543-2109",
+            "verified_name": "Acelera Promo",
+            "phone_id": "109876543210989",
+            "quality": "YELLOW",
+            "daily_limit": 1000,
+            "sent_today": 980,
+            "warnings": ["TIER_10K_REACHED — escalar pra 100k", "Quality YELLOW — reduzir ritmo"],
+            "is_paused": false
+          },
+          {
+            "display_phone": "+55 31 98432-1098",
+            "verified_name": "Acelera Suporte",
+            "phone_id": "109876543210990",
+            "quality": "GREEN",
+            "daily_limit": 10000,
+            "sent_today": 6500,
+            "is_paused": true
+          }
+        ]
+      }
+    },
+
+    "secao_historico_de_disparos": {
+      "_titulo_exato": "HISTÓRICO DE DISPAROS",
+      "gradient": "purple",
+      "icon": "📋",
+      "estrutura_lista": "Cada linha: status badge + nome campanha + total leads + barra progresso + porcentagem + ações (▶ ⏸ ✕)",
+      "STATUS_LABEL_TEXTOS_EXATOS": {
+        "running": { "label": "Rodando", "color": "#00ff88" },
+        "paused": { "label": "Pausado", "color": "#ffd700" },
+        "pending_confirm": { "label": "Pendente", "color": "#6366f1" },
+        "revoked": { "label": "Cancelado", "color": "#ff2d78" },
+        "done": { "label": "Concluído", "color": "#94a3b8" },
+        "partial_error": { "label": "Parcial", "color": "#f59e0b" },
+        "error": { "label": "Erro", "color": "#ef4444" }
+      },
+      "mock_data_5_campanhas_exatas": [
+        { "nome": "Campanha CLT Janeiro", "csv": "leads_clt_jan.csv", "total": 5234, "enviados": 4350, "pct": 83, "status": "running", "data": "08/06 14:32" },
+        { "nome": "Promoção FGTS Dezembro", "csv": "fgts_dez.csv", "total": 3200, "enviados": 3198, "pct": 100, "status": "done", "data": "07/06 09:15" },
+        { "nome": "Disparo PowerHub", "csv": "powerhub_leads.csv", "total": 1000, "enviados": 120, "pct": 12, "status": "paused", "data": "07/06 16:42" },
+        { "nome": "Cobrança Consignado", "csv": "cobranca_q4.csv", "total": 850, "enviados": 320, "pct": 38, "status": "partial_error", "data": "06/06 11:20" },
+        { "nome": "Reativação Karol Q2", "csv": "reativacao.csv", "total": 1500, "enviados": 0, "pct": 0, "status": "pending_confirm", "data": "08/06 18:00" }
+      ],
+      "funil_de_campanha_OBRIGATORIO_quando_expandido": {
+        "explicacao": "Quando user clica numa campanha, abre funil com 5 barras + base de destinatários",
+        "barras_exatas_em_ordem": [
+          { "label": "Enviados", "valor_exemplo": 4350, "cor": "#06b6d4", "pct": 83 },
+          { "label": "Entregues", "valor_exemplo": 4180, "cor": "#10b981", "pct": 80 },
+          { "label": "Lidos", "valor_exemplo": 2890, "cor": "#7c3aed", "pct": 55 },
+          { "label": "Responderam", "valor_exemplo": 384, "cor": "#f59e0b", "pct": 7.3 },
+          { "label": "Converteram", "valor_exemplo": 47, "cor": "#ec4899", "pct": 0.9 }
+        ]
+      }
+    }
+  },
+
+  "TELA_2_CENTRAL_DE_CONTROLE": {
+    "_titulo_exato": "Central de Controle",
+    "subtitulo_oculto": "Score Operacional + diagnóstico em tempo real",
+
+    "layout_ascii_geral": "┌──────────────────────────────────────────────────────────────────────────────┐\n│ [🧠]   CENTRAL DE CONTROLE                                                   │\n│        Score Operacional  87/100        [↻ Atualizar] [⚡ Auditar ao vivo]   │\n│        ● Operação saudável · Atualizado em 09/06/2026 12:47                  │\n│        ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░░ (gradient verde)        │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌──────────────┐         │\n│ │ ✅ CANAIS    │ │ 🚨 EM RISCO  │ │ 🚀 CAPACID.  │ │ 📑 TEMPLATES │         │\n│ │ SAUDÁVEIS    │ │ CRÍTICO      │ │ HOJE         │ │ APROVADOS    │         │\n│ │   14         │ │   2          │ │   84.500     │ │   47         │         │\n│ │ 16 mapeados  │ │ RED, paymnt  │ │ envios safe  │ │ 23 mkt 24ut  │         │\n│ └──────────────┘ └──────────────┘ └──────────────┘ └──────────────┘         │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ┌────────────────────────┐ ┌──────────────────┐ ┌─────────────────────┐    │\n│ │ ✓ CHECKLIST PRÉ-       │ │ 🎯 SIMULADOR     │ │ ⚠ ALERTA RISCO     │    │\n│ │   DISPARO              │ │ DE CAPACIDADE    │ │   BLOQUEIO          │    │\n│ │                        │ │                  │ │                     │    │\n│ │ Credenciais Meta  [OK] │ │ Campanha: 10000  │ │   Médio  ● Atenção  │    │\n│ │ WABAs descobertas [OK] │ │                  │ │                     │    │\n│ │ Templates [Atenção]    │ │ HOJE   DIAS  /h  │ │ Atenção: sinais de  │    │\n│ │ Pagamento BM [Bloqueia]│ │ 84500   1   10562│ │ degradação. Reduza  │    │\n│ │ Qualidade números [OK] │ │                  │ │ ritmo.              │    │\n│ │                        │ │ Capacidade suf.  │ │                     │    │\n│ │                        │ │ Recomenda-se     │ │ RED: 0  YELLOW: 2   │    │\n│ │                        │ │ ritmo de 10k/h   │ │ Paymnt: 1  Nome: 0  │    │\n│ └────────────────────────┘ └──────────────────┘ └─────────────────────┘    │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ┌─────────────────────────────────┐ ┌──────────────────────────────────┐   │\n│ │ 🩺 HEALTH CHECK INTEGRAÇÕES     │ │ 🛟 CENTRAL DE INCIDENTES         │   │\n│ │                                  │ │                            3 ativos│ │\n│ │ Meta · Token System User    [OK] │ │ ● Crítico                          │ │\n│ │ Meta · WABA discovery       [OK] │ │ Número 5511987654321 - quality RED │ │\n│ │ Chatwoot · Account ID       [OK] │ │ Recebeu 47 reports de spam em 24h  │ │\n│ │ Chatwoot · CRM Token        [OK] │ │ Ação: Pause 72h e renove warm-up   │ │\n│ │ Supabase · RLS              [OK] │ │                                    │ │\n│ │ VendeAI · BFF JWT      [Atenção] │ │ ● Atenção                          │ │\n│ │ Aesir · API Token           [OK] │ │ Template 'oferta_clt_v3' REJECTED  │ │\n│ │ Chipcare · SA Hashes        [OK] │ │ Edite o copy e submeta novamente   │ │\n│ │ Redis · Conexão             [OK] │ │                                    │ │\n│ │ ...                              │ │ ● Atenção                          │ │\n│ │                                  │ │ Capacidade BM Edvan = 78% usado    │ │\n│ └─────────────────────────────────┘ └──────────────────────────────────┘   │\n├──────────────────────────────────────────────────────────────────────────────┤\n│ ┌─────────────────────────────────┐ ┌──────────────────────────────────┐   │\n│ │ ENTREGABILIDADE POR BM           │ │ RADAR DE ERROS                   │   │\n│ │                                  │ │                                  │   │\n│ │ +55 11 99876 [GREEN] 8450/10000  │ │ 47x  Number not registered on WA │   │\n│ │ +55 11 98765 [GREEN] 3200/10000  │ │ 23x  Template not found          │   │\n│ │ +55 21 99543 [YELLOW] 980/1000   │ │ 12x  Rate limit exceeded         │   │\n│ │   ⚠ TIER_10K_REACHED             │ │  8x  Recipient phone invalid     │   │\n│ │ +55 31 98432 [GREEN] PAUSED      │ │  5x  Token expired               │   │\n│ └─────────────────────────────────┘ └──────────────────────────────────┘   │\n└──────────────────────────────────────────────────────────────────────────────┘",
+
+    "PAGEHEADER_CODIGO_REACT_COMPLETO_COPIE": "function PageHeader({ scoreNum = 87, scoreStatus = 'ok', scoreLabel = 'Operação saudável' }) {\n  const colorMap = { ok: '#10b981', warning: '#f59e0b', critical: '#ef4444' };\n  const gradMap = {\n    ok: 'linear-gradient(135deg,#10b981,#06b6d4)',\n    warning: 'linear-gradient(135deg,#f59e0b,#ef8c3b)',\n    critical: 'linear-gradient(135deg,#ef4444,#ec4899)',\n  };\n  const color = colorMap[scoreStatus];\n  const grad = gradMap[scoreStatus];\n  return (\n    <div style={{\n      background: `linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, ${grad} border-box`,\n      border: '1px solid transparent', borderRadius: 16, padding: 28, marginBottom: 22,\n      boxShadow: '0 8px 40px rgba(0,0,0,.55)', backdropFilter: 'blur(12px)',\n    }}>\n      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 22, alignItems: 'center' }}>\n        <BrainBadge color={color} />\n        <div style={{ minWidth: 0 }}>\n          <div style={{\n            fontSize: 16, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.12em',\n            background: grad, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text',\n            marginBottom: 6,\n          }}>Central de Controle</div>\n          <h1 style={{ margin: 0, color: '#f1f5f9', fontSize: 34, lineHeight: 1.05, fontWeight: 800 }}>\n            Score Operacional <span style={{ color, fontVariantNumeric: 'tabular-nums' }}>{scoreNum}</span>\n            <span style={{ color: '#475569', fontSize: 22, fontWeight: 600 }}>/100</span>\n          </h1>\n          <div style={{ display: 'flex', gap: 14, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>\n            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>\n              <PulseDot color={color} />\n              <span style={{ color: '#f1f5f9', fontSize: 14, fontWeight: 700 }}>{scoreLabel}</span>\n            </span>\n            <span style={{ color: '#94a3b8', fontSize: 12 }}>Atualizado em 09/06/2026 12:47</span>\n          </div>\n        </div>\n        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>\n          <button style={{\n            background: 'linear-gradient(135deg,#7c3aed,#06b6d4)', color: '#fff', border: 'none',\n            borderRadius: 10, padding: '12px 24px', cursor: 'pointer', fontSize: 15, fontWeight: 600,\n            boxShadow: '0 4px 14px rgba(0,0,0,.35)',\n          }}>↻ Atualizar diagnóstico</button>\n          <button style={{\n            background: 'linear-gradient(135deg,#6d28d9,#7c3aed)', color: '#fff', border: 'none',\n            borderRadius: 10, padding: '12px 24px', cursor: 'pointer', fontSize: 15, fontWeight: 600,\n          }}>⚡ Auditar Meta ao vivo</button>\n        </div>\n      </div>\n      <div style={{ marginTop: 18 }}>\n        <GradientBar pct={scoreNum} gradient={grad} height={8} />\n      </div>\n    </div>\n  );\n}",
+
+    "linha_4_KPI_TOPO_dados_exatos": [
+      { "label": "CANAIS SAUDÁVEIS", "icon": "✅", "valor": "14", "cor": "#10b981", "sub": "16 canais mapeados" },
+      { "label": "EM RISCO CRÍTICO", "icon": "🚨", "valor": "2", "cor": "#ef4444", "sub": "bloqueio, RED ou pagamento" },
+      { "label": "CAPACIDADE HOJE", "icon": "🚀", "valor": "84.500", "cor": "#f59e0b", "sub": "envios seguros estimados" },
+      { "label": "TEMPLATES APROVADOS", "icon": "📑", "valor": "47", "cor": "#7c3aed", "sub": "23 marketing · 24 utility" }
+    ],
+
+    "kpicard_codigo_completo_COPIE": "function KpiCard({ label, value, color, sub, icon }) {\n  return (\n    <div className=\"spot-card\" style={{\n      background: 'rgba(255,255,255,.02)',\n      border: '1px solid rgba(255,255,255,.06)',\n      borderRadius: 14, padding: 18,\n      position: 'relative', overflow: 'hidden',\n      '--spot-color': color,\n    }}>\n      <div className=\"spot-glow\" />\n      <div style={{\n        position: 'absolute', inset: 0, opacity: .08, pointerEvents: 'none',\n        background: `radial-gradient(circle at top right, ${color} 0%, transparent 60%)`,\n      }} />\n      <div style={{\n        position: 'relative', color: '#94a3b8', fontSize: 11, fontWeight: 800,\n        letterSpacing: '.12em', textTransform: 'uppercase',\n        display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,\n      }}>\n        {icon && <span style={{ fontSize: 14 }}>{icon}</span>} {label}\n      </div>\n      <div style={{ color, fontSize: 30, fontWeight: 900, lineHeight: 1, fontVariantNumeric: 'tabular-nums', position: 'relative' }}>\n        {typeof value === 'number' ? value.toLocaleString('pt-BR') : value}\n      </div>\n      {sub && <div style={{ color: '#94a3b8', fontSize: 11, marginTop: 8, position: 'relative' }}>{sub}</div>}\n    </div>\n  );\n}",
+
+    "card_checklist_pre_disparo": {
+      "_titulo_exato": "CHECKLIST PRÉ-DISPARO",
+      "gradient_borda": "green",
+      "icon": "✓",
+      "items_TEXTO_EXATO_E_MOCKADOS_5": [
+        { "label": "Credenciais Meta", "status": "ok", "detail": "Token System User válido (expira em 87 dias)" },
+        { "label": "WABAs descobertas", "status": "ok", "detail": "16 WABA IDs mapeadas, 0 falhas" },
+        { "label": "Templates aprovados", "status": "warn", "detail": "2 templates em REJECTED — corrigir antes de disparar" },
+        { "label": "Pagamento BM", "status": "block", "detail": "1 BM com método de pagamento expirado" },
+        { "label": "Qualidade dos números", "status": "ok", "detail": "14 GREEN, 2 YELLOW, 0 RED" }
+      ],
+      "row_item_codigo_COPIE": "function RowItem({ left, right, sub, sublineColor }) {\n  return (\n    <div style={{\n      display: 'grid', gridTemplateColumns: right ? '1fr auto' : '1fr',\n      gap: 12, alignItems: 'start',\n      padding: '12px 8px', borderTop: '1px solid rgba(255,255,255,.05)',\n      borderRadius: 8, position: 'relative',\n    }}>\n      <div style={{ minWidth: 0 }}>\n        <div style={{ color: '#f1f5f9', fontSize: 13, fontWeight: 700, lineHeight: 1.3 }}>{left}</div>\n        {sub && <div style={{ color: sublineColor || '#94a3b8', fontSize: 12, lineHeight: 1.45, marginTop: 4 }}>{sub}</div>}\n      </div>\n      {right}\n    </div>\n  );\n}"
+    },
+
+    "card_simulador_de_capacidade": {
+      "_titulo_exato": "SIMULADOR DE CAPACIDADE",
+      "gradient": "cyan",
+      "icon": "🎯",
+      "estrutura": "Input number 'Tamanho da campanha' (default 10000, fonte 18px bold). 3 mini-metrics grid abaixo. Texto recomendação no rodapé.",
+      "mini_metrics_exatos": [
+        { "label": "Hoje", "valor": "84.500", "cor": "#10b981" },
+        { "label": "Dias est.", "valor": "1", "cor": "#f59e0b" },
+        { "label": "Seguro/h", "valor": "10.562", "cor": "#7c3aed" }
+      ],
+      "recomendacao_TEXTO_EXATO": "Capacidade suficiente. Recomenda-se ritmo de 10k/hora distribuído entre os 14 canais GREEN pra evitar gatilho de antifraude da Meta."
+    },
+
+    "card_alerta_de_risco": {
+      "_titulo_exato": "ALERTA DE RISCO DE BLOQUEIO",
+      "icon": "⚠",
+      "valor_grande_destaque": "Médio",
+      "color_dinamica": "#f59e0b (amarelo pra warning)",
+      "summary_TEXTO_EXATO": "Atenção: sinais de degradação. Reduza ritmo e monitore.",
+      "grid_2x2_mini_metrics": [
+        { "label": "RED", "valor": "0", "cor": "#ef4444" },
+        { "label": "YELLOW", "valor": "2", "cor": "#f59e0b" },
+        { "label": "Pagamento", "valor": "1", "cor": "#ef4444" },
+        { "label": "Nome pend.", "valor": "0", "cor": "#f59e0b" }
+      ]
+    },
+
+    "card_health_check": {
+      "_titulo_exato": "HEALTH CHECK DAS INTEGRAÇÕES",
+      "gradient": "purple",
+      "icon": "🩺",
+      "linhas_TEXTO_EXATO_9_items": [
+        { "group": "Meta", "label": "Token System User", "status": "ok", "detail": "Válido — 87 dias restantes" },
+        { "group": "Meta", "label": "WABA discovery", "status": "ok", "detail": "16 WABAs descobertas via 4-strategy" },
+        { "group": "Chatwoot", "label": "Account ID", "status": "ok", "detail": "Account 448 (Edvan Fenix Soluções)" },
+        { "group": "Chatwoot", "label": "CRM Token", "status": "ok", "detail": "Bearer válido" },
+        { "group": "Supabase", "label": "Row Level Security", "status": "ok", "detail": "RLS ativo em 23 tabelas tenant" },
+        { "group": "VendeAI", "label": "BFF JWT", "status": "warn", "detail": "Expira em 4h — renove proativamente" },
+        { "group": "Aesir", "label": "API Token", "status": "ok", "detail": "Headers X-Token + X-Account-ID válidos" },
+        { "group": "Chipcare", "label": "SA Hashes", "status": "ok", "detail": "4 hashes cached, próxima reverificação 24h" },
+        { "group": "Redis", "label": "Conexão", "status": "ok", "detail": "redis://localhost:6381 — 12ms ping" }
+      ]
+    },
+
+    "card_central_de_incidentes": {
+      "_titulo_exato": "CENTRAL DE INCIDENTES",
+      "gradient": "red",
+      "icon": "🛟",
+      "header_direita": "3 ativos",
+      "estado_vazio_TEXTO_EXATO": "Nenhum incidente crítico detectado",
+      "incidentes_TEXTO_EXATO_3": [
+        {
+          "severity": "critical",
+          "title": "Número 5511987654321 — quality RED",
+          "detail": "Recebeu 47 reports de spam nas últimas 24h. Auto-pausado.",
+          "acao": "Pause campanhas neste número por 72h e renove warm-up gradual"
+        },
+        {
+          "severity": "warning",
+          "title": "Template 'oferta_clt_v3' — REJECTED pela Meta",
+          "detail": "Conteúdo não conforme política de promoções",
+          "acao": "Edite o copy e submeta novamente. Use templates utility quando possível."
+        },
+        {
+          "severity": "warning",
+          "title": "Capacidade BM Edvan Fenix = 78% usado",
+          "detail": "Restam 22% da quota mensal. Reset em 12 dias.",
+          "acao": "Considere mover campanhas low-priority pra outra BM"
+        }
+      ]
+    },
+
+    "card_entregabilidade_BM_e_radar": {
+      "entregabilidade_titulo": "ENTREGABILIDADE POR BUSINESS MANAGER",
+      "radar_titulo": "RADAR DE ERROS",
+      "radar_reasons_TEXTO_EXATO_5": [
+        { "reason": "Number not registered on WhatsApp", "count": 47 },
+        { "reason": "Template not found", "count": 23 },
+        { "reason": "Rate limit exceeded", "count": 12 },
+        { "reason": "Recipient phone invalid", "count": 8 },
+        { "reason": "Token expired", "count": 5 }
+      ]
+    }
+  },
+
+  "TELA_3_CRM_KANBAN": {
+    "_titulo_exato": "CRM Comercial",
+    "subtitulo_oculto": "Pipeline de propostas de crédito CLT/FGTS — kanban dark mode",
+
+    "header_topo_layout_ASCII": "┌──────────────────────────────────────────────────────────────────────────────┐\n│ [🧠]  CRM COMERCIAL                                       [+ Nova Proposta] │\n│                                                                              │\n│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐                         │\n│  │ 1.247        │ │ R$ 3.2M      │ │ R$ 2.567     │                         │\n│  │ TOTAL        │ │ VALOR TOTAL  │ │ TICKET MÉDIO │                         │\n│  │ PROPOSTAS    │ │              │ │              │                         │\n│  └──────────────┘ └──────────────┘ └──────────────┘                         │\n│                                                                              │\n│  Filtros: [Banco ▼] [Vendedor ▼] [Período ▼] [Status ▼]                     │\n└──────────────────────────────────────────────────────────────────────────────┘",
+
+    "kanban_8_colunas_ASCII": "┌────────────┬────────────┬────────────┬────────────┬────────────┬────────────┬────────────┬────────────┐\n│ 💰 PAGOS   │ 👤 KAROL   │ 👤 GIOVANNA│ 🤖 GABRIEL │ ⭐ IMPORT. │ ⏳ PENDENT.│ 🔨 LEILÃO  │ 💚 FGTS    │\n│ (ciano)    │ (rosa)     │ (roxo)     │ /I.A(verde)│ (amarelo)  │ (laranja)  │ (roxo)     │ (verde)    │\n│ 47 props.  │ 89 props.  │ 124 props. │ 56 props.  │ 23 props.  │ 312 props. │ 18 props.  │ 78 props.  │\n├────────────┼────────────┼────────────┼────────────┼────────────┼────────────┼────────────┼────────────┤\n│ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │\n│ │👤 M.SI │ │ │👤 J.SAN│ │ │👤 P.OL │ │ │🤖 A.LI │ │ │⭐ R.PE│ │ │⏳ C.RO│ │ │🔨 L.MA│ │ │💚 F.GU│ │\n│ │R$2.847 │ │ │R$4.150 │ │ │R$1.980 │ │ │R$3.247 │ │ │R$5.500│ │ │R$2.100│ │ │R$890   │ │ │R$1.450│ │\n│ │[V8] 2h │ │ │[Zilli]3h│ │ │[VCTex]1d│ │ │[V8] 4h │ │ │[V8] 5h │ │ │[Pan] 2d│ │ │[C6] 3d │ │ │[Facta]│ │\n│ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │\n│ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ┌────────┐ │ ...        │ ...        │\n│ │👤 R.SO │ │ │👤 M.AL │ │ │👤 J.CO │ │ │🤖 B.NA │ │ │⭐ V.NA│ │ │⏳ S.LI│ │            │            │\n│ │R$3.500 │ │ │R$2.800 │ │ │R$4.200 │ │ │R$1.890 │ │ │R$6.800│ │ │R$3.450│ │            │            │\n│ │[Zilli]1h│ │ │[V8] 6h │ │ │[Mercant│ │ │[V8] 8h │ │ │[V8] 1d │ │ │[2S] 3d │ │            │            │\n│ │        │ │ │        │ │ │il] 2d  │ │ │        │ │ │        │ │ │        │ │            │            │\n│ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │ └────────┘ │            │            │\n└────────────┴────────────┴────────────┴────────────┴────────────┴────────────┴────────────┴────────────┘",
+
+    "definicao_8_colunas_COPIE_LITERAL": "const COLUNAS = [\n  { key: 'propostas',  label: 'PAGOS',       cor: '#06b6d4', grad: 'linear-gradient(135deg,#06b6d4,#0891b2)', icon: '💰' },\n  { key: 'karol',      label: 'KAROL',       cor: '#ec4899', grad: 'linear-gradient(135deg,#ec4899,#7c3aed)', icon: '👤' },\n  { key: 'giovanna',   label: 'GIOVANNA',    cor: '#a855f7', grad: 'linear-gradient(135deg,#6d28d9,#7c3aed)', icon: '👤' },\n  { key: 'gabriel',    label: 'GABRIEL/I.A', cor: '#10b981', grad: 'linear-gradient(135deg,#10b981,#06b6d4)', icon: '🤖' },\n  { key: 'importante', label: 'IMPORTANTE',  cor: '#f59e0b', grad: 'linear-gradient(135deg,#f59e0b,#ef8c3b)', icon: '⭐' },\n  { key: 'pendentes',  label: 'PENDENTES',   cor: '#fb923c', grad: 'linear-gradient(135deg,#f59e0b,#ef8c3b)', icon: '⏳' },\n  { key: 'leilao',     label: 'LEILÃO',      cor: '#7c3aed', grad: 'linear-gradient(135deg,#6d28d9,#7c3aed)', icon: '🔨' },\n  { key: 'fgts',       label: 'FGTS',        cor: '#00c896', grad: 'linear-gradient(135deg,#10b981,#06b6d4)', icon: '💚' },\n];",
+
+    "lista_bancos_origem_BR_COPIE_LITERAL": "const BANCOS = ['V8', 'Zilli', 'Novo Saque', 'VCTex', 'Pan', 'Facta', 'C6', 'Mercantil', '2S', 'Soma'];",
+
+    "card_proposta_individual_codigo_REACT_COPIE": "function PropostaCard({ proposta, columnColor, columnGradient }) {\n  return (\n    <div style={{\n      background: `linear-gradient(rgba(15,15,35,.92),rgba(15,15,35,.92)) padding-box, ${columnGradient} border-box`,\n      border: '1px solid transparent', borderRadius: 12, padding: 14,\n      marginBottom: 10, cursor: 'pointer',\n      boxShadow: '0 4px 12px rgba(0,0,0,.4)',\n      animation: 'fade-up .3s ease-out',\n    }}>\n      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>\n        <div style={{\n          width: 32, height: 32, borderRadius: '50%',\n          background: columnGradient,\n          display: 'flex', alignItems: 'center', justifyContent: 'center',\n          fontSize: 14, fontWeight: 800, color: '#fff',\n        }}>{proposta.nome.charAt(0)}</div>\n        <div style={{ flex: 1, minWidth: 0 }}>\n          <div style={{ color: '#f1f5f9', fontSize: 14, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>\n            {proposta.nome}\n          </div>\n          <div style={{ color: '#94a3b8', fontSize: 10, fontFamily: 'monospace', marginTop: 2 }}>\n            {proposta.cpf}\n          </div>\n        </div>\n      </div>\n      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>\n        <span style={{ color: '#10b981', fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>\n          R$ {proposta.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}\n        </span>\n      </div>\n      <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>\n        <span style={{\n          background: `${columnColor}22`, color: columnColor,\n          border: `1px solid ${columnColor}44`,\n          borderRadius: 4, padding: '2px 8px', fontSize: 10, fontWeight: 700,\n        }}>{proposta.banco}</span>\n        <span style={{ color: '#475569', fontSize: 10 }}>{proposta.tempo}</span>\n      </div>\n    </div>\n  );\n}",
+
+    "mock_data_20_propostas_realistas_PT_BR": [
+      { "nome": "MARIA SILVA SANTOS", "cpf": "123.456.789-00", "valor": 2847.50, "banco": "V8", "tempo": "2h", "coluna": "propostas" },
+      { "nome": "JOÃO PEREIRA OLIVEIRA", "cpf": "234.567.890-11", "valor": 4150.00, "banco": "Zilli", "tempo": "3h", "coluna": "karol" },
+      { "nome": "PEDRO HENRIQUE COSTA", "cpf": "345.678.901-22", "valor": 1980.75, "banco": "VCTex", "tempo": "1d", "coluna": "giovanna" },
+      { "nome": "ANA LIVIA RODRIGUES", "cpf": "456.789.012-33", "valor": 3247.00, "banco": "V8", "tempo": "4h", "coluna": "gabriel" },
+      { "nome": "ROBERTO PEREIRA LIMA", "cpf": "567.890.123-44", "valor": 5500.00, "banco": "V8", "tempo": "5h", "coluna": "importante" },
+      { "nome": "CARLA ROCHA MENDES", "cpf": "678.901.234-55", "valor": 2100.50, "banco": "Pan", "tempo": "2d", "coluna": "pendentes" },
+      { "nome": "LUCAS MARTINS SOUZA", "cpf": "789.012.345-66", "valor": 890.00, "banco": "C6", "tempo": "3d", "coluna": "leilao" },
+      { "nome": "FERNANDA GUIMARÃES", "cpf": "890.123.456-77", "valor": 1450.25, "banco": "Facta", "tempo": "4d", "coluna": "fgts" },
+      { "nome": "RICARDO SOUZA ALVES", "cpf": "901.234.567-88", "valor": 3500.00, "banco": "Zilli", "tempo": "1h", "coluna": "propostas" },
+      { "nome": "MARCOS ALMEIDA SILVA", "cpf": "012.345.678-99", "valor": 2800.00, "banco": "V8", "tempo": "6h", "coluna": "karol" },
+      { "nome": "JÚLIA COSTA FERREIRA", "cpf": "123.789.456-00", "valor": 4200.00, "banco": "Mercantil", "tempo": "2d", "coluna": "giovanna" },
+      { "nome": "BRUNO NASCIMENTO RIBEIRO", "cpf": "234.890.567-11", "valor": 1890.75, "banco": "V8", "tempo": "8h", "coluna": "gabriel" },
+      { "nome": "VINÍCIUS NAKAMURA TANAKA", "cpf": "345.901.678-22", "valor": 6800.00, "banco": "V8", "tempo": "1d", "coluna": "importante" },
+      { "nome": "SOFIA LIMA TEIXEIRA", "cpf": "456.012.789-33", "valor": 3450.50, "banco": "2S", "tempo": "3d", "coluna": "pendentes" },
+      { "nome": "GABRIEL OLIVEIRA SANTOS", "cpf": "567.123.890-44", "valor": 2150.00, "banco": "Novo Saque", "tempo": "2h", "coluna": "propostas" },
+      { "nome": "ISABELA FERNANDES MELO", "cpf": "678.234.901-55", "valor": 3900.00, "banco": "V8", "tempo": "7h", "coluna": "karol" },
+      { "nome": "RAFAEL CARVALHO DIAS", "cpf": "789.345.012-66", "valor": 5100.00, "banco": "Zilli", "tempo": "1d", "coluna": "giovanna" },
+      { "nome": "BEATRIZ MOREIRA CAMPOS", "cpf": "890.456.123-77", "valor": 2675.50, "banco": "Facta", "tempo": "5h", "coluna": "gabriel" },
+      { "nome": "HUGO BARBOSA FREITAS", "cpf": "901.567.234-88", "valor": 4750.00, "banco": "Pan", "tempo": "2d", "coluna": "pendentes" },
+      { "nome": "LARISSA VIEIRA ARAUJO", "cpf": "012.678.345-99", "valor": 1620.00, "banco": "Soma", "tempo": "4d", "coluna": "fgts" }
+    ],
+
+    "stats_header_3_KPIs": [
+      { "label": "TOTAL DE PROPOSTAS", "valor": "1.247", "cor": "#06b6d4" },
+      { "label": "VALOR TOTAL", "valor": "R$ 3.2M", "cor": "#10b981" },
+      { "label": "TICKET MÉDIO", "valor": "R$ 2.567", "cor": "#7c3aed" }
+    ],
+
+    "ranking_vendedores_top_5": [
+      { "nome": "Karol Dias", "total": 487500.00 },
+      { "nome": "Giovanna Silva", "total": 412800.50 },
+      { "nome": "Gabriel I.A", "total": 387200.00 },
+      { "nome": "Roberto Lima", "total": 298400.25 },
+      { "nome": "Patricia Souza", "total": 245700.00 }
+    ],
+
+    "grafico_barras_por_banco_dados": [
+      { "banco": "V8", "valor": 980000 },
+      { "banco": "Zilli", "valor": 450000 },
+      { "banco": "Novo Saque", "valor": 320000 },
+      { "banco": "VCTex", "valor": 280000 },
+      { "banco": "Mercantil", "valor": 220000 },
+      { "banco": "Pan", "valor": 180000 },
+      { "banco": "Facta", "valor": 150000 },
+      { "banco": "C6", "valor": 130000 },
+      { "banco": "2S", "valor": 95000 },
+      { "banco": "Soma", "valor": 65000 }
+    ],
+
+    "grafico_estilo_recharts": {
+      "biblioteca": "recharts (já no projeto)",
+      "exemplo_codigo": "<ResponsiveContainer width='100%' height={280}>\n  <BarChart data={dados} margin={{ top: 20, right: 20, left: 20, bottom: 20 }}>\n    <XAxis dataKey='banco' tick={{ fill: '#94a3b8', fontSize: 11 }} />\n    <YAxis tick={{ fill: '#94a3b8', fontSize: 11 }} tickFormatter={(v) => `R$${(v/1000).toFixed(0)}k`} />\n    <Tooltip\n      contentStyle={{ background: '#060612', border: '1px solid #7c3aed44', borderRadius: 8 }}\n      labelStyle={{ color: '#f1f5f9' }}\n      itemStyle={{ color: '#06b6d4' }}\n    />\n    <Bar dataKey='valor' fill='url(#barGradient)' radius={[8,8,0,0]} />\n    <defs>\n      <linearGradient id='barGradient' x1='0' y1='0' x2='0' y2='1'>\n        <stop offset='0%' stopColor='#7c3aed' />\n        <stop offset='100%' stopColor='#06b6d4' />\n      </linearGradient>\n    </defs>\n  </BarChart>\n</ResponsiveContainer>"
+    }
+  },
+
+  "INSTRUCOES_FINAIS_DE_RENDERIZACAO": {
+    "wrapper_pagina_fundo_DARK": {
+      "codigo": "<div style={{\n  minHeight: '100vh', background: '#060612', color: '#f1f5f9',\n  fontFamily: \"-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif\",\n  padding: '22px 24px 56px',\n}}>\n  <style>{ANIMACOES_CSS}</style>\n  {/* conteúdo */}\n</div>"
+    },
+
+    "estrutura_de_apresentacao_recomendada_NA_LANDING": {
+      "opcao_A_tabs_grandes_topo": "Botões grandes [📨 DISPARO] [🎯 CENTRAL DE CONTROLE] [📋 CRM] no topo. Click troca a área abaixo. Active tab com gradient border + glow.",
+      "opcao_B_scroll_vertical_com_anchor": "3 seções uma embaixo da outra com âncoras (#disparo, #central, #crm). Menu fixo no topo da landing.",
+      "opcao_C_carousel_slide": "Setas < > nos lados. 3 slides full-width. Indicador de página embaixo (3 bolinhas).",
+      "recomendacao_minha": "Opção A (tabs grandes). É mais comum em landing 2026 e dá clareza visual."
+    },
+
+    "OBRIGATORIO_NO_RESULTADO_FINAL": [
+      "Cérebro IA animado nas 3 telas (versão hero 260px na Disparo, versão small 92px no header da Central + CRM)",
+      "Glass card com gradient border em TODA card grande",
+      "Animações @keyframes rodando (sem isso vira PNG estático)",
+      "Banner amarelo de PARCIAL na tela de Disparo (etapa 4 do wizard)",
+      "Score Operacional GIGANTE (48px+) na Central de Controle",
+      "8 colunas kanban no CRM com cores distintas",
+      "Dados PT-BR realistas: CPFs (com pontos e traço), telefones (+55 11 9XXXX-XXXX), valores R$ entre R$ 800 e R$ 8.000",
+      "Status pills coloridas com PulseDot",
+      "Tabular nums em todos valores numéricos",
+      "Backdrop blur ativo (não tira pra otimizar performance, é parte da identidade)"
+    ],
+
+    "PROIBIDO": [
+      "Tailwind CSS (sistema real usa inline)",
+      "Bootstrap, Material UI, Chakra ou qualquer framework",
+      "Substituir gradients por cores sólidas (perde 80% do impacto visual)",
+      "Lorem ipsum ou nomes em inglês (John Doe / Jane Smith — quebra credibilidade BR)",
+      "Tirar o cérebro animado (é a marca registrada)",
+      "Usar font_family 'Inter' ou 'Roboto' — sistema usa font system nativa",
+      "Border radius pequeno (4px, 6px) — usa 10-16px",
+      "Sombras sutis demais — sistema usa sombras pesadas tipo 0 8px 40px rgba(0,0,0,.55)",
+      "Modo light em qualquer parte"
+    ],
+
+    "COMO_O_USER_VAI_USAR_NA_LANDING": {
+      "step_1": "Cliente entra na landing, vê headline + sub + CTA principal de venda",
+      "step_2": "Logo abaixo do CTA principal, tem seção '👁 Veja como funciona' ou 'Por dentro do sistema'",
+      "step_3": "Tabs/Carousel mostra as 3 telas. Cliente clica em DISPARO e vê o mockup full-width abaixo. Lê 'caraca tem cérebro IA animado, gradient borders, layout profissional — vou comprar'",
+      "step_4": "Próximo CTA aparece embaixo dos mockups: 'Quero ver isso rodando na minha empresa →'",
+      "objetivo_de_conversao": "Subir taxa em ~30% por matar a objeção 'mas como é por dentro?'"
+    }
+  },
+
+  "_resposta_curta_se_voce_so_ler_isso": "Recrie 3 mockups dark mode (Disparo + Central de Controle + CRM Kanban) usando os design tokens deste JSON. Tudo inline style, sem framework. Cérebro IA animado é OBRIGATÓRIO. Dados PT-BR (CPF, R$, nomes). Use os códigos React que vêm prontos pra copiar nos campos 'codigo_COPIE'. Pergunte se quer 1 arquivo HTML ou 3 componentes React antes de começar."
+}

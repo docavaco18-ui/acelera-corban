@@ -722,3 +722,14 @@ export const commandCenterApi = {
   overview: (params?: { live_meta?: boolean }) =>
     broadcastAxios.get<any>("/api/command-center/overview", { params }).then((r) => r.data),
 };
+
+export const adminUsersMonitorApi = {
+  list: () =>
+    broadcastAxios.get<any>("/api/admin/users-monitor").then((r) => r.data),
+  refreshLiveAll: () =>
+    broadcastAxios.post<any>("/api/admin/users-monitor/refresh-live").then((r) => r.data),
+  detail: (ownerId: string, liveMeta = false) =>
+    broadcastAxios
+      .get<any>(`/api/admin/users-monitor/${ownerId}`, { params: { live_meta: liveMeta } })
+      .then((r) => r.data),
+};

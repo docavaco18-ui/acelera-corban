@@ -191,7 +191,9 @@ def _build_health(db, owner_id: str, settings: dict[str, dict], numbers: dict[st
         credential_rows = []
     by_bank = {str(r.get("bank_code")): r for r in credential_rows}
     for bank, label in BANKS.items():
-        row = by_bank.get(bank) or {}
+        row = by_bank.get(bank)
+        if not row:
+            continue  # banco não configurado → não penaliza score
         ok = _decrypt_ok(row.get("login_enc")) and _decrypt_ok(row.get("password_enc"))
         checks.append({
             "id": f"bank-{bank}",
@@ -212,9 +214,11 @@ def _build_health(db, owner_id: str, settings: dict[str, dict], numbers: dict[st
 
     for key, cfg in DISPATCHERS.items():
         row = settings.get(key) or {}
+        nums = numbers.get(key) or []
+        if not row and not nums:
+            continue  # CRM nunca configurado → não penaliza score
         meta_ok = _decrypt_ok(row.get(cfg["meta_token_col"]))
         crm_ok = all(_decrypt_ok(row.get(f)) if f.endswith("_enc") else _has_value(row, f) for f in cfg["crm_required"])
-        nums = numbers.get(key) or []
         healthy = [n for n in nums if _is_number_healthy(n)]
         checks.extend([
             {
@@ -613,10 +617,7 @@ def _build_score(health: list[dict], deliverability: dict, checklist: list[dict]
 LIVE_META_TIMEOUT_SECONDS = 45
 
 
-@router.get("/overview")
-async def overview(live_meta: bool = False, user: AuthUser = Depends(require_user)):
-    db = get_db()
-    owner_id = user.user_id
+async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dict:
     settings = _collect_settings(db, owner_id)
     numbers = _collect_numbers(db, owner_id)
 
@@ -657,3 +658,9 @@ async def overview(live_meta: bool = False, user: AuthUser = Depends(require_use
         "live_meta_requested": live_meta,
         "live_meta_timed_out": live_timed_out,
     }
+
+
+@router.get("/overview")
+async def overview(live_meta: bool = False, user: AuthUser = Depends(require_user)):
+    db = get_db()
+    return await compute_overview(db, user.user_id, live_meta=live_meta)
