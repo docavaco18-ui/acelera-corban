@@ -1165,7 +1165,7 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
 @router.get("/templates")
 async def list_templates(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
+    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).maybe_single().execute()
     if not creds.data:
         raise HTTPException(400, "Configure credenciais primeiro")
 

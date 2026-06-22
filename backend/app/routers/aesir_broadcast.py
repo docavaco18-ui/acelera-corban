@@ -679,17 +679,18 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
             log.exception("aesir _run unhandled error dispatch=%s", body.dispatch_id)
             final = "error"
         finally:
-            # Don't overwrite terminal state set by cancel endpoint
+            # Always update sent/errors counters; only skip status overwrite if cancelled
             current = db.table("aesir_dispatches").select("status").eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
             current_status = (current.data[0].get("status") if current.data else None)
+            update_payload: dict = {
+                "sent": _total_sent,
+                "errors": _total_errors,
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
             if current_status not in ("cancelled",):
-                db.table("aesir_dispatches").update({
-                    "status": final,
-                    "sent": _total_sent,
-                    "errors": _total_errors,
-                    "finished_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+                update_payload["status"] = final
+            db.table("aesir_dispatches").update(update_payload).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
             _stop_events.pop(body.dispatch_id, None)
             _bg_tasks.discard(task)
 
