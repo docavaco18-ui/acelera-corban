@@ -119,11 +119,19 @@ app.include_router(command_center.router)
 app.include_router(admin_users_monitor.router)
 
 @app.post("/api/data-deletion")
-async def data_deletion():
-    return {
-        "url": "https://ajuda.zdg.com.br/diretrizes-e-politicas/termos-e-condicoes-gerais-de-uso-e-licenciamento",
+async def data_deletion(request: Request):
+    return JSONResponse(content={
+        "url": "https://aceleracorban.com.br/api/data-deletion",
         "confirmation_code": "zdg-data-deletion-confirmed",
-    }
+    })
+
+
+@app.get("/api/data-deletion")
+async def data_deletion_get():
+    return JSONResponse(content={
+        "url": "https://aceleracorban.com.br/api/data-deletion",
+        "confirmation_code": "zdg-data-deletion-confirmed",
+    })
 
 
 @app.exception_handler(Exception)
