@@ -118,7 +118,7 @@ app.include_router(chipcare_broadcast_router.router)
 app.include_router(command_center.router)
 app.include_router(admin_users_monitor.router)
 
-@app.post("/data-deletion")
+@app.post("/api/data-deletion")
 async def data_deletion():
     return {
         "url": "https://ajuda.zdg.com.br/diretrizes-e-politicas/termos-e-condicoes-gerais-de-uso-e-licenciamento",
