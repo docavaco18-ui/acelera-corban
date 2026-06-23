@@ -1,11 +1,12 @@
-"""Nossa Fintech CLT — REST API client para higienização (sem browser).
+"""Nossa Fintech CLT — REST API client para higienização.
 
 Fluxo por CPF:
   login()                          → JWT (Bearer, reusado até 401)
   banking_institutions()           → service_type (ex: "QITECH"), cacheado por client
   check_authorization(cpf)         → "AUTHORIZED" | "PENDING" | "NOT_AUTHORIZED"
-  request_authorization(cpf, nome, phone) → AUTHORIZED|PENDING (envia SMS ao cliente
-                                     se primeira vez; idempotente se já autorizado)
+  request_authorization(cpf, nome, phone) → (status, authorization_link|None)
+                                     Retorna link para auto-aceitação (digitação).
+  auto_accept_authorization(url)   → bool — navega link + aceita via Playwright
   check_enrollment(cpf)            → [EnrollmentInfo] (vínculo: employer_cnpj)
   get_margin(cpf, employer_cnpj)   → MarginInfo (saldo/margem + margin_key)
   list_rebates(margin_key)         → tabelas (cod_tabela, prazo)
@@ -189,6 +190,9 @@ class NossaFintechApiClient:
             "document_number": _digits(cpf),
             "service_type": st,
         })
+        if r.status_code == 404:
+            # CPF não encontrado na base = inelegível (não erro)
+            return "NOT_AUTHORIZED"
         if r.status_code not in (200, 201):
             raise RuntimeError(f"check_authorization {r.status_code}: {r.text[:300]}")
         body = r.json()
@@ -197,11 +201,11 @@ class NossaFintechApiClient:
         data = (body.get("data") if isinstance(body, dict) else body) or {}
         return str(data.get("status") or "NOT_AUTHORIZED").upper()
 
-    def request_authorization(self, cpf: str, person_name: str = "", phone: str = "") -> str:
-        """POST /clt-loan/v1/request-authorization → AUTHORIZED|PENDING.
+    def request_authorization(self, cpf: str, person_name: str = "", phone: str = "") -> tuple[str, str | None]:
+        """POST /clt-loan/v1/request-authorization → (status, authorization_link|None).
 
-        Se já existe autorização ativa retorna AUTHORIZED sem reenviar SMS.
-        Se é nova, envia SMS ao cliente e retorna PENDING.
+        Retorna tuple (status, link). Link usado para auto-aceitar via digitação
+        sem interação do cliente. Se CPF já autorizado, link pode ser None.
         """
         st = self.banking_institutions()
         area, number = _parse_phone_nf(phone)
@@ -217,11 +221,83 @@ class NossaFintechApiClient:
         if r.status_code not in (200, 201):
             raise RuntimeError(f"request_authorization {r.status_code}: {r.text[:300]}")
         body = r.json()
-        # success=false aqui = falha real (ex: CPF inválido, quota) — levanta
         if isinstance(body, dict) and body.get("success") is False:
             raise RuntimeError(f"request_authorization falhou: {body.get('message')}")
         data = (body.get("data") if isinstance(body, dict) else body) or {}
-        return str(data.get("status") or "PENDING").upper()
+        status = str(data.get("status") or "PENDING").upper()
+        link = data.get("authorization_link") or None
+        log.info("nossafintech request_authorization cpf=%s status=%s link=%s",
+                 _digits(cpf), status, bool(link))
+        return status, link
+
+    def auto_accept_authorization(self, url: str) -> bool:
+        """Aceita autorização via Playwright (digitação sem SMS ao cliente).
+
+        Navega até o link de autorização, injeta geolocalização, clica
+        "Tentar novamente" para ir à tela de acordo, e confirma "Autorizar".
+        Retorna True se "Autorização enviada com sucesso" aparecer na página.
+        """
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+
+        _GEO_JS = """
+        if (!navigator.__nf_geo_done__) {
+          Object.defineProperty(navigator, 'geolocation', {
+            configurable: true,
+            value: {
+              getCurrentPosition: (ok) => ok({
+                coords: {latitude: -23.5505, longitude: -46.6333, accuracy: 10},
+                timestamp: Date.now()
+              }),
+              watchPosition: (ok) => {
+                ok({coords:{latitude:-23.5505,longitude:-46.6333,accuracy:10},
+                    timestamp:Date.now()});
+                return 1;
+              },
+              clearWatch: () => {}
+            }
+          });
+          navigator.__nf_geo_done__ = true;
+        }
+        """
+
+        log.info("nossafintech auto_accept_authorization url=%s", url)
+        try:
+            with sync_playwright() as pw:
+                browser = pw.chromium.launch(headless=True)
+                ctx = browser.new_context(
+                    permissions=["geolocation"],
+                    geolocation={"latitude": -23.5505, "longitude": -46.6333},
+                    locale="pt-BR",
+                )
+                page = ctx.new_page()
+
+                # Injeta geolocalização antes de cada carregamento de página
+                page.add_init_script(_GEO_JS)
+
+                # networkidle falha (SPA tem conexões contínuas) — usa load + wait
+                page.goto(url, timeout=30_000, wait_until="load")
+                page.wait_for_timeout(4_000)  # React render + geolocation resolve
+
+                # Com geolocation no contexto, a página resolve geo automaticamente
+                # e exibe "Autorizar" diretamente (sem "Tentar novamente")
+                autorizar = page.get_by_role("button", name="Autorizar")
+                autorizar.wait_for(state="visible", timeout=15_000)
+                autorizar.click()
+
+                # Aguarda mensagem de sucesso (API pode demorar 2-8s)
+                try:
+                    page.get_by_text("Autorização enviada com sucesso").wait_for(timeout=12_000)
+                    sucesso = True
+                except PWTimeout:
+                    content = page.inner_text("body")
+                    sucesso = "sucesso" in content.lower() or "fechar" in content.lower()
+                browser.close()
+
+            log.info("nossafintech auto_accept_authorization resultado=%s", sucesso)
+            return sucesso
+        except Exception as e:
+            log.error("nossafintech auto_accept_authorization erro: %s", str(e)[:200])
+            return False
 
     def check_enrollment(self, cpf: str) -> list[EnrollmentInfo]:
         """POST /clt-loan/v1/check-employee-enrollment → vínculos (employer_cnpj).

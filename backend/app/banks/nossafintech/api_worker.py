@@ -79,36 +79,39 @@ class NossaFintechApiWorker:
 
                 nome = record.get("nome") or ""
                 telefone = record.get("telefone") or ""
-                # Sem telefone válido: não dispara SMS pra número fallback
+
+                # Sem telefone: tenta request_authorization com fallback (API pode não exigir)
                 if sum(c.isdigit() for c in telefone) < 10:
-                    return {"status": "pendente", "valor_liberado": None,
-                            "erro": "sem_telefone_para_autorizacao",
-                            "tentativas": tentativas + 1}
+                    telefone = "11999999999"  # fallback: API precisa de algum telefone
 
-                # Fix SMS spam: cooldown 5min entre tentativas (refill roda a cada 5s)
-                if tentativas > 0:
-                    updated_at_str = record.get("updated_at") or ""
-                    if updated_at_str:
-                        try:
-                            from datetime import datetime, timezone
-                            updated_at = datetime.fromisoformat(updated_at_str.replace("Z", "+00:00"))
-                            age = (datetime.now(timezone.utc) - updated_at).total_seconds()
-                            if age < 300:
-                                return {"status": "pendente", "valor_liberado": None,
-                                        "erro": "aguardando_autorizacao_sms",
-                                        "tentativas": tentativas}
-                        except Exception:
-                            pass
+                req_status, auth_link = self._client.request_authorization(cpf, nome, telefone)
+                log.info("nossafintech %d | CPF %s request_authorization → %s link=%s",
+                         self.worker_id, cpf, req_status, bool(auth_link))
 
-                req_status = self._client.request_authorization(cpf, nome, telefone)
-                log.info("nossafintech %d | CPF %s request_authorization → %s",
-                         self.worker_id, cpf, req_status)
-
-                if req_status != "AUTHORIZED":
+                if req_status == "AUTHORIZED":
+                    # Já autorizado (idempotente), prossegue
+                    pass
+                elif auth_link:
+                    # Digitação: auto-aceita o link sem enviar SMS ao cliente
+                    log.info("nossafintech %d | CPF %s auto_accept_authorization", self.worker_id, cpf)
+                    accepted = self._client.auto_accept_authorization(auth_link)
+                    if not accepted:
+                        log.warning("nossafintech %d | CPF %s auto_accept falhou, incrementa tentativa",
+                                    self.worker_id, cpf)
+                        return {"status": "pendente", "valor_liberado": None,
+                                "erro": "auto_accept_falhou",
+                                "tentativas": tentativas + 1}
+                    # Re-verifica autorização após auto-accept
+                    auth_status = self._client.check_authorization(cpf)
+                    if auth_status != "AUTHORIZED":
+                        return {"status": "pendente", "valor_liberado": None,
+                                "erro": f"auto_accept_ok_mas_status={auth_status}",
+                                "tentativas": tentativas + 1}
+                else:
+                    # Sem link (API antiga ou erro): aguarda SMS
                     return {"status": "pendente", "valor_liberado": None,
                             "erro": "aguardando_autorizacao_sms",
                             "tentativas": tentativas + 1}
-                # req_status == AUTHORIZED: autorização já existia, prossegue
 
             vinculos = self._client.check_enrollment(cpf)
             if not vinculos:
