@@ -120,9 +120,23 @@ app.include_router(admin_users_monitor.router)
 
 @app.post("/api/data-deletion")
 async def data_deletion(request: Request):
+    import hashlib, base64, json as _json
+    app_secret = "c5b0446c55663791cf7d234f4c8c45ac"
+    confirmation_code = "zdg-deletion-confirmed"
+    try:
+        body = await request.form()
+        signed_request = body.get("signed_request", "")
+        if signed_request and "." in signed_request:
+            _, payload_b64 = signed_request.split(".", 1)
+            padding = 4 - len(payload_b64) % 4
+            payload = _json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+            user_id = payload.get("user_id", "unknown")
+            confirmation_code = hashlib.sha256(f"{app_secret}:{user_id}".encode()).hexdigest()[:16]
+    except Exception:
+        pass
     return JSONResponse(content={
         "url": "https://aceleracorban.com.br/api/data-deletion",
-        "confirmation_code": "zdg-data-deletion-confirmed",
+        "confirmation_code": confirmation_code,
     })
 
 
@@ -130,7 +144,7 @@ async def data_deletion(request: Request):
 async def data_deletion_get():
     return JSONResponse(content={
         "url": "https://aceleracorban.com.br/api/data-deletion",
-        "confirmation_code": "zdg-data-deletion-confirmed",
+        "confirmation_code": "zdg-deletion-confirmed",
     })
 
 
