@@ -179,13 +179,22 @@ class NossaFintechApiClient:
         return self._service_type
 
     def check_authorization(self, cpf: str) -> str:
-        """POST /clt-loan/v1/check-authorization → AUTHORIZED|PENDING|NOT_AUTHORIZED."""
+        """POST /clt-loan/v1/check-authorization → AUTHORIZED|PENDING|NOT_AUTHORIZED.
+
+        API retorna success=false quando não há autorização — tratado como NOT_AUTHORIZED,
+        não como erro (comportamento esperado para CPFs novos).
+        """
         st = self.banking_institutions()
         r = self._request("POST", "/clt-loan/v1/check-authorization", json={
             "document_number": _digits(cpf),
             "service_type": st,
         })
-        data = self._unwrap(r, "check_authorization") or {}
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"check_authorization {r.status_code}: {r.text[:300]}")
+        body = r.json()
+        if isinstance(body, dict) and body.get("success") is False:
+            return "NOT_AUTHORIZED"
+        data = (body.get("data") if isinstance(body, dict) else body) or {}
         return str(data.get("status") or "NOT_AUTHORIZED").upper()
 
     def request_authorization(self, cpf: str, person_name: str = "", phone: str = "") -> str:
@@ -205,17 +214,32 @@ class NossaFintechApiClient:
             "notification_method": "sms",
             "service_type": st,
         })
-        data = self._unwrap(r, "request_authorization") or {}
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"request_authorization {r.status_code}: {r.text[:300]}")
+        body = r.json()
+        # success=false aqui = falha real (ex: CPF inválido, quota) — levanta
+        if isinstance(body, dict) and body.get("success") is False:
+            raise RuntimeError(f"request_authorization falhou: {body.get('message')}")
+        data = (body.get("data") if isinstance(body, dict) else body) or {}
         return str(data.get("status") or "PENDING").upper()
 
     def check_enrollment(self, cpf: str) -> list[EnrollmentInfo]:
-        """POST /clt-loan/v1/check-employee-enrollment → vínculos (employer_cnpj)."""
+        """POST /clt-loan/v1/check-employee-enrollment → vínculos (employer_cnpj).
+
+        success=false sem HTTP error = sem vínculo eSocial → retorna [] (inelegível, não erro).
+        """
         st = self.banking_institutions()
         r = self._request("POST", "/clt-loan/v1/check-employee-enrollment", json={
             "document_number": _digits(cpf),
             "service_type": st,
         })
-        data = self._unwrap(r, "check_enrollment") or []
+        if r.status_code not in (200, 201):
+            raise RuntimeError(f"check_enrollment {r.status_code}: {r.text[:300]}")
+        body = r.json()
+        if isinstance(body, dict) and body.get("success") is False:
+            log.info("nossafintech check_enrollment cpf=%s sem_vinculo: %s", cpf, body.get("message"))
+            return []
+        data = (body.get("data") if isinstance(body, dict) else body) or []
         return [
             EnrollmentInfo(
                 work_registration=str(v.get("work_registration", "")),
