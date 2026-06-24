@@ -19,8 +19,8 @@ class NossaFintechConfig:
     ))
 
     # ── Timeouts (s) ─────────────────────────────────────────────────────────
-    timeout_default: float = 20.0
-    timeout_margin: float = 30.0     # get-margin consulta DataPrev/eSocial, pode demorar
+    timeout_default: float = 45.0
+    timeout_margin: float = 60.0     # get-margin consulta DataPrev/eSocial, pode demorar
 
     # ── Jitter entre CPFs (segundos) ─────────────────────────────────────────
     cpf_jitter_min: float = field(default_factory=lambda: float(os.getenv("NOSSAFINTECH_CPF_JITTER_MIN", "2")))

@@ -48,7 +48,7 @@ def list_credentials(
                 login=creds.login,
                 has_password=bool(creds.password),
                 proxies=creds.proxies or [],
-                promot_id=(creds.extra or {}).get("promot_id"),
+                promot_id=str(v) if (v := (creds.extra or {}).get("promot_id")) is not None else None,
             )
     return out
 
