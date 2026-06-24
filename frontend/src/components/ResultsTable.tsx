@@ -151,7 +151,7 @@ export default function ResultsTable() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ background: "#1a1f2e" }}>
-                {["CPF", "Nome", "Telefone", "Status", "Margem", "Valor Liberado", "Parcela", "Parcelas", "CET", "Motivo V8"].map((h) => (
+                {["CPF", "Nome", "Telefone", "Status", "Margem", "Valor Liberado", "Parcela", "Parcelas", "Taxa", "Motivo"].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "10px 12px", color: "#94a3b8", borderBottom: "1px solid #334155", whiteSpace: "nowrap" }}>{h}</th>
                 ))}
               </tr>

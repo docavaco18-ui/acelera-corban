@@ -80,6 +80,10 @@ def _parse_phone_nf(phone: str) -> tuple[str, str]:
     return "11", "999999999"
 
 
+def _money_from_cents(v: Any) -> float:
+    return round(float(v or 0) / 100, 2)
+
+
 class NossaFintechApiClient:
     def __init__(self, cpf: str, promot_id: str, password: str, cfg: NossaFintechConfig | None = None):
         self._cpf = _digits(cpf)
@@ -327,7 +331,7 @@ class NossaFintechApiClient:
             EnrollmentInfo(
                 work_registration=str(v.get("work_registration", "")),
                 employer_cnpj=_digits(str(v.get("employer_cnpj", ""))),
-                employer_name=str(v.get("employer_name", "")),
+                employer_name=str(v.get("employer_name") or ""),
             )
             for v in data
             if v.get("employer_cnpj")
@@ -343,6 +347,9 @@ class NossaFintechApiClient:
         }, timeout=self.cfg.timeout_margin)
         d = self._unwrap(r, "get_margin") or {}
         employer = d.get("employer") or {}
+        employer_doc = _digits(str(employer.get("document") or ""))
+        if len(employer_doc) != 14:
+            employer_doc = _digits(str(employer_cnpj))
         gender = d.get("gender") or {}
         job = d.get("job_code") or {}
         return MarginInfo(
@@ -352,7 +359,7 @@ class NossaFintechApiClient:
             base_margin_value=float(d.get("base_margin_value") or 0),
             name=d.get("name"),
             employer_name=employer.get("name"),
-            employer_cnpj=_digits(str(employer.get("document") or employer_cnpj)),
+            employer_cnpj=employer_doc,
             birth_date=d.get("birth_date"),
             admission_date=d.get("admission_date"),
             mother_name=d.get("mother_name"),
@@ -378,17 +385,32 @@ class NossaFintechApiClient:
         if not rebates:
             return None
 
-        def _parse_range(comp: str) -> tuple[float, float]:
-            nums = re.findall(r"[\d.]+", (comp or "").replace(",", "."))
+        def _parse_amount(v: Any) -> float | None:
+            if v is None:
+                return None
+            s = str(v).strip().lower().replace(",", ".")
+            m = re.search(r"(\d+(?:\.\d+)?)\s*(k)?", s)
+            if not m:
+                return None
+            amount = float(m.group(1))
+            return amount * 1000 if m.group(2) else amount
+
+        def _parse_range(t: dict) -> tuple[float, float]:
+            start = _parse_amount(t.get("start"))
+            end = _parse_amount(t.get("end"))
+            if start is not None and end is not None:
+                return start, end
+
+            nums = re.findall(r"\d+(?:[.,]\d+)?\s*k?", str(t.get("complement") or ""), re.I)
             if len(nums) >= 2:
-                return float(nums[0]), float(nums[1])
+                return _parse_amount(nums[0]) or 0.0, _parse_amount(nums[1]) or float("inf")
             if len(nums) == 1:
-                return float(nums[0]), float("inf")
+                return _parse_amount(nums[0]) or 0.0, float("inf")
             return 0.0, float("inf")
 
         matching = []
         for t in rebates:
-            lo, hi = _parse_range(t.get("complement", ""))
+            lo, hi = _parse_range(t)
             if lo <= margin <= hi:
                 matching.append(t)
         pool = matching or rebates
@@ -407,17 +429,18 @@ class NossaFintechApiClient:
             "cod_tabela": cod_tabela,
         }, timeout=self.cfg.timeout_margin)
         d = self._unwrap(r, "simulate_loan") or {}
-        # valor da parcela: pega o 1º payment não-zero do cronograma
+        # A API retorna valores monetários da simulação em centavos.
+        # Ex.: requested_amount=400 -> schedule.payment=40000 (R$ 400,00).
         installment = 0.0
         for item in (d.get("schedule") or []):
-            p = float(item.get("payment") or 0)
+            p = _money_from_cents(item.get("payment"))
             if p > 0:
                 installment = p
                 break
         return SimulationInfo(
-            disbursement_amount=float(d.get("disbursement_amount") or 0),
-            financed_amount=float(d.get("financed_amount") or 0),
-            total_amount_owed=float(d.get("total_amount_owed") or 0),
+            disbursement_amount=_money_from_cents(d.get("disbursement_amount")),
+            financed_amount=_money_from_cents(d.get("financed_amount")),
+            total_amount_owed=_money_from_cents(d.get("total_amount_owed")),
             num_periods=int(d.get("num_periods") or 0),
             installment=installment,
             interest_rate=float(d.get("interest_rate") or 0),

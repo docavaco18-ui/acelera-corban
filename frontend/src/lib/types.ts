@@ -18,10 +18,17 @@ export interface Lead {
   status: LeadStatus;
   consult_id: string | null;
   margem_disponivel: number | null;
+  saldo_utilizavel?: number | null;
+  saldo_disponivel?: number | null;
+  margem_base?: number | null;
   valor_liberado: number | null;
   valor_parcela: number | null;
+  prazo?: number | null;
   num_parcelas: number | null;
   cet_mensal: number | null;
+  taxa_juros_mes?: number | null;
+  payload?: Record<string, unknown> | null;
+  batch_id?: string | null;
   erro: string | null;
   tentativas: number | null;
   proxima_tentativa: string | null;

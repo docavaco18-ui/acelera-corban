@@ -51,6 +51,7 @@ async def upload_status(job_id: str, _: AuthUser = Depends(require_user)):
 async def list_leads(
     status: str = None,
     batch_id: str | None = None,
+    erro_contains: str | None = None,
     page: int = 1,
     limit: int = 50,
     user: AuthUser = Depends(require_user),
@@ -61,8 +62,10 @@ async def list_leads(
         q = q.eq("status", status)
     if batch_id:
         q = q.eq("batch_id", batch_id)
+    if erro_contains:
+        q = q.ilike("erro", f"%{erro_contains}%")
     result = q.range((page - 1) * limit, page * limit - 1).execute()
-    return {"data": result.data, "page": page}
+    return {"data": [_flatten_lead(row) for row in (result.data or [])], "page": page}
 
 
 # colunas extras vêm do payload jsonb
@@ -78,19 +81,50 @@ _PAYLOAD_COLS = {
 }
 
 
+def _as_float(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _payload(row: dict) -> dict:
+    payload = row.get("payload") or {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _flatten_lead(row: dict) -> dict:
+    """Expõe payload da Nossa Fintech no contrato genérico da dashboard."""
+    out = dict(row)
+    payload = _payload(row)
+    for key, value in payload.items():
+        out.setdefault(key, value)
+
+    saldo_utilizavel = payload.get("saldo_utilizavel")
+    margem_base = payload.get("margem_base")
+    out.setdefault("margem_disponivel", saldo_utilizavel if saldo_utilizavel is not None else margem_base)
+    out.setdefault("num_parcelas", payload.get("prazo"))
+    out.setdefault("cet_mensal", payload.get("taxa_juros_mes"))
+    return out
+
+
 @router.get("/leads/export")
 async def export_csv(
     status: str = "elegivel",
+    batch_id: str | None = None,
     user: AuthUser = Depends(require_user),
 ):
     db = get_db()
-    result = scoped(db, "nossafintech_leads", user.user_id).select("*").eq("status", status).execute()
+    q = scoped(db, "nossafintech_leads", user.user_id).select("*").eq("status", status)
+    if batch_id:
+        q = q.eq("batch_id", batch_id)
+    result = q.execute()
     leads = result.data
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=_EXPORT_COLS)
     writer.writeheader()
     for lead in leads:
-        payload = lead.get("payload") or {}
+        payload = _payload(lead)
         row = {}
         for k in _EXPORT_COLS:
             if k in _PAYLOAD_COLS:
@@ -146,10 +180,13 @@ async def bot_events(user: AuthUser = Depends(require_user)):
 def _aggregate(rows: list[dict]) -> dict:
     counts: dict[str, int] = {}
     total_liberado = 0.0
+    total_margem = 0.0
     for r in rows:
         counts[r["status"]] = counts.get(r["status"], 0) + 1
         if r["status"] == "elegivel":
-            total_liberado += float(r.get("valor_liberado") or 0)
+            payload = _payload(r)
+            total_liberado += _as_float(r.get("valor_liberado"))
+            total_margem += _as_float(payload.get("saldo_utilizavel") or payload.get("margem_base"))
     eleg = counts.get("elegivel", 0)
     ineleg = counts.get("inelegivel", 0)
     erros = counts.get("erro", 0)
@@ -164,7 +201,7 @@ def _aggregate(rows: list[dict]) -> dict:
         "aguardando_autorizacao": 0,
         "processados": eleg + ineleg + erros,
         "total_liberado": round(total_liberado, 2),
-        "total_margem": 0.0,
+        "total_margem": round(total_margem, 2),
         "by_status": counts,
     }
 
@@ -174,7 +211,7 @@ def _scan_leads(db, user_id: str, batch_id: str | None) -> list[dict]:
     PAGE = 1000
     offset = 0
     while offset < MAX_ROWS:
-        q = scoped(db, "nossafintech_leads", user_id).select("status,valor_liberado,batch_id")
+        q = scoped(db, "nossafintech_leads", user_id).select("status,valor_liberado,payload,batch_id")
         if batch_id is not None:
             q = q.eq("batch_id", batch_id)
         chunk = q.range(offset, offset + PAGE - 1).execute().data or []
