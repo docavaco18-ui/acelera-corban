@@ -114,6 +114,10 @@ class NossaFintechApiWorker:
                             "tentativas": tentativas + 1}
 
             vinculos = self._client.check_enrollment(cpf)
+            if vinculos is None:
+                # DataPrev 202: ainda processando, marcar pendente para retry
+                log.info("nossafintech %d | CPF %s dataprev_processando, pendente", self.worker_id, cpf)
+                return {"status": "pendente", "valor_liberado": None, "erro": "dataprev_processando"}
             if not vinculos:
                 return {"status": "inelegivel", "valor_liberado": None, "erro": "sem_vinculo"}
 

@@ -309,6 +309,10 @@ class NossaFintechApiClient:
             "document_number": _digits(cpf),
             "service_type": st,
         })
+        if r.status_code == 202:
+            # DataPrev async: consulta ainda em processamento, tentar novamente
+            log.info("nossafintech check_enrollment cpf=%s dataprev_processando (202)", cpf)
+            return None  # type: ignore[return-value]  — sentinela: retry
         if r.status_code not in (200, 201):
             raise RuntimeError(f"check_enrollment {r.status_code}: {r.text[:300]}")
         body = r.json()

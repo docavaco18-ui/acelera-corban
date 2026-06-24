@@ -5,12 +5,16 @@ from redis.asyncio.retry import Retry
 from redis.backoff import ExponentialBackoff
 from redis.exceptions import ConnectionError as RedisConnectionError, TimeoutError as RedisTimeoutError
 
+import os
+
 from .config import settings
 
 _redis = None
 
-# Backpressure: latência acima disso = Redis degradado, recusar novos jobs
-REDIS_MAX_LATENCY_MS = 500
+# Backpressure: latência acima disso = Redis degradado, recusar novos jobs.
+# Em Docker prod (~1ms) 500ms é seguro. Em Mac local pode chegar a 500ms+
+# em situação normal — usar REDIS_MAX_LATENCY_MS=2000 no .env local se necessário.
+REDIS_MAX_LATENCY_MS = int(os.getenv("REDIS_MAX_LATENCY_MS", "2000"))
 
 
 async def get_redis():
@@ -35,6 +39,12 @@ async def assert_redis_responsive(max_latency_ms: int = REDIS_MAX_LATENCY_MS) ->
     workers já em execução — eles têm retry próprio.
     """
     r = await get_redis()
+    # Warm-up: primeiro ping estabelece conexão TCP (pode ser lento em cold start).
+    # Medimos latência só no segundo ping (estado steady-state).
+    try:
+        await r.ping()
+    except Exception as e:
+        raise RuntimeError(f"Redis indisponível: {e}") from e
     t0 = time.monotonic()
     try:
         await r.ping()
