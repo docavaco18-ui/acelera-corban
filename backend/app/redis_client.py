@@ -13,8 +13,8 @@ _redis = None
 
 # Backpressure: latência acima disso = Redis degradado, recusar novos jobs.
 # Em Docker prod (~1ms) 500ms é seguro. Em Mac local pode chegar a 500ms+
-# em situação normal — usar REDIS_MAX_LATENCY_MS=2000 no .env local se necessário.
-REDIS_MAX_LATENCY_MS = int(os.getenv("REDIS_MAX_LATENCY_MS", "2000"))
+# em situação normal — definir REDIS_MAX_LATENCY_MS=2000 no .env local.
+REDIS_MAX_LATENCY_MS = int(os.getenv("REDIS_MAX_LATENCY_MS", "500"))
 
 
 async def get_redis():

@@ -38,7 +38,7 @@ def _norm_key(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", s.lower())
 
 
-CPF_KEYS = {"cpf", "cpfcliente", "documento", "doc", "cpfcnpj"}
+CPF_KEYS = {"cpf", "cpfcliente", "documento", "doc", "cpfcnpj", "cnpjcpf", "cnpj_cpf"}
 NOME_KEYS = {"nome", "nomecliente", "cliente", "nomecompleto"}
 TEL_KEYS = {"telefone", "celular", "telefonecelular", "telefone1", "fone", "phone", "ddd"}
 
@@ -69,13 +69,20 @@ def _parse_csv(content: bytes, owner_id: str, batch_id: str | None = None) -> li
     reader = csv.DictReader(io.StringIO(text), dialect=dialect)
     if not reader.fieldnames:
         return []
-    normalized_row = {_norm_key(f): f for f in reader.fieldnames}
+    # CSV sem header: primeira linha vira nome de coluna.
+    # Detecta quando a única coluna é um CPF (só dígitos, 8-14 chars) → injeta header.
+    if (len(reader.fieldnames) == 1 and
+            re.fullmatch(r"\d{8,14}", reader.fieldnames[0].strip().replace(".", "").replace("-", ""))):
+        text = "cpf\n" + text
+        reader = csv.DictReader(io.StringIO(text), dialect=dialect)
+    normalized_row = {_norm_key(f): f for f in (reader.fieldnames or [])}
     leads: list[dict] = []
     seen_cpfs: set[str] = set()
     for row in reader:
         cpf_raw = _pick(row, normalized_row, CPF_KEYS)
-        cpf = re.sub(r"\D", "", cpf_raw).zfill(11)
-        if not cpf or len(cpf) > 11 or cpf in seen_cpfs:
+        cpf = re.sub(r"\D", "", cpf_raw or "")
+        # Rejeita vazio, menos de 11 dígitos, mais de 11, ou all-zeros (lixo)
+        if len(cpf) != 11 or len(set(cpf)) == 1 or cpf in seen_cpfs:
             continue
         seen_cpfs.add(cpf)
         lead = {

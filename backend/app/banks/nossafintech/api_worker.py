@@ -22,6 +22,7 @@ from ...credentials.service import BankCredentials
 log = logging.getLogger("nossafintech.api_worker")
 
 MAX_AUTH_RETRIES = 3
+MAX_DATAPREV_RETRIES = 10
 
 
 class NossaFintechApiWorker:
@@ -80,9 +81,9 @@ class NossaFintechApiWorker:
                 nome = record.get("nome") or ""
                 telefone = record.get("telefone") or ""
 
-                # Sem telefone: tenta request_authorization com fallback (API pode não exigir)
                 if sum(c.isdigit() for c in telefone) < 10:
-                    telefone = "11999999999"  # fallback: API precisa de algum telefone
+                    # Sem telefone válido: não há como obter consentimento via SMS
+                    return {"status": "inelegivel", "valor_liberado": None, "erro": "sem_telefone"}
 
                 req_status, auth_link = self._client.request_authorization(cpf, nome, telefone)
                 log.info("nossafintech %d | CPF %s request_authorization → %s link=%s",
@@ -115,9 +116,14 @@ class NossaFintechApiWorker:
 
             vinculos = self._client.check_enrollment(cpf)
             if vinculos is None:
-                # DataPrev 202: ainda processando, marcar pendente para retry
-                log.info("nossafintech %d | CPF %s dataprev_processando, pendente", self.worker_id, cpf)
-                return {"status": "pendente", "valor_liberado": None, "erro": "dataprev_processando"}
+                # DataPrev 202: ainda processando, marcar pendente para retry com limite
+                if tentativas >= MAX_DATAPREV_RETRIES:
+                    return {"status": "inelegivel", "valor_liberado": None,
+                            "erro": f"dataprev_timeout ({tentativas} tentativas)"}
+                log.info("nossafintech %d | CPF %s dataprev_processando, pendente (tentativa %d)",
+                         self.worker_id, cpf, tentativas + 1)
+                return {"status": "pendente", "valor_liberado": None,
+                        "erro": "dataprev_processando", "tentativas": tentativas + 1}
             if not vinculos:
                 return {"status": "inelegivel", "valor_liberado": None, "erro": "sem_vinculo"}
 
