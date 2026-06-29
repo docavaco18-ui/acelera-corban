@@ -448,7 +448,13 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
 
     # _prev_rows só p/ limpeza de órfãos (Step 4). NÃO preservamos mais daily_limit/
     # messaging_tier antigos — isso carregava lixo fabricado (250/500/"nao reportado").
-    _prev_rows = db.table("broadcast_numbers").select("phone_id").eq("owner_id", user_id).execute().data or []
+    _prev_rows = db.table("broadcast_numbers").select("phone_id,meta_token_id").eq("owner_id", user_id).execute().data or []
+
+    # Tokens que retornaram ao menos 1 número nesta rodada — só limpamos órfãos
+    # desses tokens (protege contra WABAs que falham silenciosamente em get_all_phones_auto).
+    _tokens_with_phones: set[str] = {
+        str(t_id or "") for t_id, _, p in collected if p.get("phone_id")
+    }
 
     # Limite manual da BM por porta (Meta não expõe tier via API p/ número novo).
     _tok_limit = {t.get("id"): t.get("bm_daily_limit") for t in tokens}
@@ -518,10 +524,18 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     # WABA removida). Só roda quando o cruzamento é confiável (CRM ok) E a busca
     # Meta veio limpa (sem meta_error) — senão evita apagar número que só falhou
     # de buscar nesta rodada.
+    # IMPORTANTE: limpeza por-token — só remove órfãos de tokens que devolveram
+    # ao menos 1 número nesta rodada. Evita deletar números de WABAs que falharam
+    # silenciosamente em get_all_phones_auto (exceções swallowed por WABA).
     removed = 0
     if crm_ok and collected and meta_error is None:
         kept = set(kept_phone_ids)
-        stale = [r["phone_id"] for r in _prev_rows if r.get("phone_id") and r["phone_id"] not in kept]
+        stale = [
+            r["phone_id"] for r in _prev_rows
+            if r.get("phone_id")
+            and r["phone_id"] not in kept
+            and str(r.get("meta_token_id") or "") in _tokens_with_phones
+        ]
         if stale:
             db.table("broadcast_numbers").delete().eq("owner_id", user_id).in_("phone_id", stale).execute()
             removed = len(stale)
@@ -1165,21 +1179,49 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
 @router.get("/templates")
 async def list_templates(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).maybe_single().execute()
-    if not creds.data:
-        raise HTTPException(400, "Configure credenciais primeiro")
-
-    meta_token = safe_decrypt(creds.data.get("meta_token_enc"))
-    if not meta_token:
+    tokens = _load_meta_tokens(db, user_id)
+    if not tokens:
         raise HTTPException(400, "Token Meta não configurado ou corrompido. Re-salve em Configurações.")
 
-    waba_ids: list[str] = creds.data.get("waba_ids") or []
-    if not waba_ids:
+    numbers = db.table("broadcast_numbers") \
+        .select("waba_id,meta_token_id") \
+        .eq("owner_id", user_id) \
+        .execute().data or []
+
+    token_by_id = {str(t["id"]): t for t in tokens if t.get("id")}
+    wabas_by_token: dict[str, dict[str, Any]] = {}
+
+    def _bucket(token: dict) -> dict[str, Any]:
+        key = str(token.get("id") or "__legacy__")
+        if key not in wabas_by_token:
+            wabas_by_token[key] = {"token": token, "waba_ids": []}
+        return wabas_by_token[key]
+
+    def _add_waba(token: dict, waba_id: str | None) -> None:
+        wid = str(waba_id or "").strip()
+        if not wid:
+            return
+        bucket = _bucket(token)
+        if wid not in bucket["waba_ids"]:
+            bucket["waba_ids"].append(wid)
+
+    for token in tokens:
+        for wid in token.get("waba_ids") or []:
+            _add_waba(token, wid)
+
+    for number in numbers:
+        wid = number.get("waba_id")
+        token_id = str(number.get("meta_token_id") or "")
+        if token_id and token_id in token_by_id:
+            _add_waba(token_by_id[token_id], wid)
+        elif len(tokens) == 1:
+            _add_waba(tokens[0], wid)
+
+    if not wabas_by_token:
         raise HTTPException(400, "Nenhum WABA ID configurado")
 
-    meta = MetaClient(meta_token)
-
-    async def _fetch_waba(wid: str) -> tuple[str, list]:
+    async def _fetch_waba(token: dict, wid: str) -> tuple[str, list]:
+        meta = MetaClient(token["token"])
         try:
             tpls = await meta.get_templates(wid)
             return wid, sorted([
@@ -1193,10 +1235,16 @@ async def list_templates(user_id: str = Depends(_get_user_id)):
                 }
                 for t in tpls
             ], key=lambda t: t["name"])
-        except Exception:
+        except Exception as e:
+            log.warning("templates fetch failed owner=%s waba=%s token=%s: %s", user_id, wid, token.get("id"), e)
             return wid, []
 
-    pairs = await asyncio.gather(*[_fetch_waba(wid) for wid in waba_ids])
+    tasks = [
+        _fetch_waba(bucket["token"], wid)
+        for bucket in wabas_by_token.values()
+        for wid in bucket["waba_ids"]
+    ]
+    pairs = await asyncio.gather(*tasks)
     return dict(pairs)
 
 

@@ -97,6 +97,17 @@ export function CsvUploadWizard({ onDispatched }: Props) {
       setEditableAssignments(result.split.assignments.map(a => ({
         ...a, template_id: '', variable_mappings: {},
       })));
+      // Auto-detecta coluna de telefone pelo nome da coluna (case-insensitive).
+      // Evita que o default "telefone" (minúsculo) fique ativo quando o CSV
+      // tem "Telefone", "CELULAR", "phone", etc. — o mismatch fazia VendeAI
+      // receber phone_column errada e não enviar nenhuma mensagem.
+      const phoneKeywords = ['telefone', 'phone', 'celular', 'numero', 'tel', 'mobile', 'whatsapp'];
+      const detectedPhone = result.csv_columns.find(col =>
+        phoneKeywords.some(kw => col.toLowerCase().includes(kw))
+      );
+      if (detectedPhone) {
+        setConfig(c => ({ ...c, phone_column: detectedPhone }));
+      }
       setState('confirming');
     } catch (err: any) {
       setError(err?.response?.data?.detail ?? 'Erro ao analisar CSV');
