@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 from supabase import Client
 
 from app.services.broadcast.vendeai_client import VendeAIClient
+
+log = logging.getLogger(__name__)
+
+
+async def _safe_pause(vendeai: VendeAIClient, mailing_id) -> bool:
+    """Pausa o mailing com 1 retry. Retorna False se ambas tentativas falharem —
+    caso em que o provider PODE seguir disparando (número RED = risco de ban), então
+    o chamador deve escalar um alerta crítico em vez de engolir a falha em silêncio."""
+    for attempt in range(2):
+        try:
+            await vendeai.pause(mailing_id)
+            return True
+        except Exception as exc:
+            log.warning("intervention pause failed mailing=%s attempt=%s: %s",
+                        mailing_id, attempt, str(exc)[:120])
+    return False
 
 
 async def evaluate_and_intervene(
@@ -61,11 +78,15 @@ async def evaluate_and_intervene(
             )
             if alert:
                 alerts_created.append(alert)
-                if mailing_id:
-                    try:
-                        await vendeai.pause(mailing_id)
-                    except Exception:
-                        pass
+                if mailing_id and not await _safe_pause(vendeai, mailing_id):
+                    escalation = await _create_alert(
+                        db, owner_id, dispatch_id, phone_id, "pause_failed", "critical",
+                        f"FALHA ao pausar mailing {mailing_id} (número {phone_id} RED) — "
+                        "pause manual URGENTE no VendeAI para não seguir disparando com número RED",
+                        window_hour, action_taken="pause_failed",
+                    )
+                    if escalation:
+                        alerts_created.append(escalation)
                 db.table("broadcast_dispatch_assignments").update({
                     "status": "paused"
                 }).eq("owner_id", owner_id).eq("id", asn["id"]).execute()
@@ -75,21 +96,27 @@ async def evaluate_and_intervene(
                 # Failover
                 await _attempt_failover(db, owner_id, dispatch_id, phone_id, asn)
 
-        # Trigger 2: failed spike (>10%)
-        elif sent > 0 and failed / sent > 0.10:
+        # Trigger 2: failed spike (>10% com envios) OU falha total (0 enviados + N falhas).
+        # O segundo caso pega o mailing que falha 100% (número/template quebrado): antes
+        # exigia sent>0 e NUNCA pausava, martelando lead inválido e derrubando a quality.
+        elif (sent > 0 and failed / sent > 0.10) or (sent == 0 and failed >= 20):
+            pct = f"{failed / sent * 100:.0f}%" if sent > 0 else "100%"
             alert = await _create_alert(
                 db, owner_id, dispatch_id, phone_id,
                 "failed_spike", "critical",
-                f"Número {phone_id}: taxa de falha {failed}/{sent} ({failed/sent*100:.0f}%) — pausando",
+                f"Número {phone_id}: taxa de falha {failed}/{sent} ({pct}) — pausando",
                 window_hour,
             )
             if alert:
                 alerts_created.append(alert)
-                if mailing_id:
-                    try:
-                        await vendeai.pause(mailing_id)
-                    except Exception:
-                        pass
+                if mailing_id and not await _safe_pause(vendeai, mailing_id):
+                    escalation = await _create_alert(
+                        db, owner_id, dispatch_id, phone_id, "pause_failed", "critical",
+                        f"FALHA ao pausar mailing {mailing_id} ({phone_id}) — pause manual URGENTE no VendeAI",
+                        window_hour, action_taken="pause_failed",
+                    )
+                    if escalation:
+                        alerts_created.append(escalation)
                 db.table("broadcast_dispatch_assignments").update({
                     "status": "paused"
                 }).eq("owner_id", owner_id).eq("id", asn["id"]).execute()

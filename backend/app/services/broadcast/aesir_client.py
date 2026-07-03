@@ -126,11 +126,15 @@ class AesirClient:
 
         Returns {sent, errors, total}.
         """
+        # Floor anti-ban: nunca disparar sem pacing (cooldown 0 = rajada full-speed
+        # → queda de quality → risco de bloqueio do número/BM).
+        cooldown_seconds = max(1, int(cooldown_seconds or 0))
         text = csv_bytes.lstrip(b"\xef\xbb\xbf").decode("utf-8", errors="replace")
         rows = list(csv.DictReader(io.StringIO(text)))
 
         sent = 0
         errors = 0
+        consecutive_errors = 0
 
         async with httpx.AsyncClient(timeout=15) as client:
             for i, row in enumerate(rows):
@@ -166,10 +170,16 @@ class AesirClient:
                     )
                     r.raise_for_status()
                     sent += 1
+                    consecutive_errors = 0
                     log.info(f"aesir_sent phone={phone} instance={instance_id}")
                 except Exception as exc:
                     errors += 1
+                    consecutive_errors += 1
                     log.warning("aesir_send_error phone=%s error=%s: %s", phone, type(exc).__name__, str(exc)[:120])
+                    # Backoff anti-ban: erros seguidos costumam ser rate-limit — desacelera
+                    # em vez de marteladar o número (senão a quality despenca → bloqueio).
+                    if consecutive_errors >= 3:
+                        await asyncio.sleep(min(60, cooldown_seconds * consecutive_errors))
 
                 # sleep between rows, skip after last
                 if i < len(rows) - 1:

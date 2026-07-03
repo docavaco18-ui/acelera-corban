@@ -585,6 +585,14 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
 
+    # Floor anti-tampering: a UI oferece 4 modos (SEGURO/MEDIUM/AGRESSIVO/MAXIMO).
+    # Rejeita nível fora da lista e cadência <=0 (edição via DevTools) que viraria
+    # rajada sem pacing. Não mexe nos modos legítimos da UI.
+    if str(body.aggression_level).upper() not in ("SEGURO", "MEDIUM", "AGRESSIVO", "MAXIMO"):
+        body.aggression_level = "MEDIUM"
+    body.min_interval_ms = max(250, int(body.min_interval_ms or 0))
+    body.max_interval_ms = max(body.min_interval_ms, int(body.max_interval_ms or 0))
+
     # ── Server-side validation (no tampering, no partial by default) ───────────
     total_leads_for_dispatch = int(dispatch.data[0].get("total_leads") or 0)
     assigned_count, unassigned_count = validate_chipcare_assignments(
@@ -749,7 +757,10 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
 
     # Marca dispatching + roda em BACKGROUND (mesmo motivo do broadcast: o loop
     # create_campaign por canal passa do timeout do Cloudflare -> 502).
-    db.table("chipcare_dispatches").update({"status": "dispatching", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+    # Transição ATÔMICA pending_confirm→dispatching: evita duplo-submit criar 2 campanhas.
+    claim = db.table("chipcare_dispatches").update({"status": "dispatching", "updated_at": datetime.now(timezone.utc).isoformat()}).eq("id", body.dispatch_id).eq("owner_id", user_id).eq("status", "pending_confirm").execute()
+    if not claim.data:
+        raise HTTPException(409, "Disparo já está sendo processado (duplo-envio evitado).")
     import asyncio as _asyncio
     _task = _asyncio.create_task(_run())
     _BG_CHIPCARE_TASKS.add(_task)

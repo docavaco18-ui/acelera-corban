@@ -351,19 +351,33 @@ def _audit_meta_tokens_cached(settings: dict[str, dict], numbers: dict[str, list
     audits: list[dict] = []
     for key, row in settings.items():
         cfg = DISPATCHERS[key]
-        token_ok = _decrypt_ok((row or {}).get(cfg["meta_token_col"]))
         rows = numbers.get(key) or []
+        # CRM nunca configurado (sem settings E sem números): não emite auditoria —
+        # senão vira incidente crítico FANTASMA "Auditoria Meta falhou" e derruba o
+        # score de quem usa só 1 CRM. Espelha o comportamento de _build_health.
+        if not row and not rows:
+            continue
+        token_ok = _decrypt_ok((row or {}).get(cfg["meta_token_col"]))
         wabas = sorted({str(r.get("waba_id")) for r in rows if r.get("waba_id")})
         phones = [r for r in rows if r.get("phone_id")]
+        # Multi-BM: números sincronizados provam Meta funcional mesmo SEM o token legado
+        # (as portas ficam em vendeai_meta_tokens). Só é crítico quando não há token
+        # legado NEM números sincronizados.
+        has_meta = token_ok or bool(phones)
+        if has_meta:
+            status = "ok" if phones else "warning"
+            if token_ok:
+                message = f"Token salvo · {len(wabas)} WABAs em cache · {len(phones)} numeros sincronizados"
+            else:
+                message = f"{len(wabas)} WABAs · {len(phones)} numeros sincronizados (multi-BM)"
+        else:
+            status = "critical"
+            message = "Token Meta ausente ou corrompido"
         audits.append({
             "source": key,
             "source_label": cfg["label"],
-            "status": "ok" if token_ok and phones else "warning" if token_ok else "critical",
-            "message": (
-                f"Token salvo · {len(wabas)} WABAs em cache · {len(phones)} numeros sincronizados"
-                if token_ok else
-                "Token Meta ausente ou corrompido"
-            ),
+            "status": status,
+            "message": message,
             "wabas": wabas,
             "phones": phones,
             "templates": [],
@@ -618,12 +632,19 @@ LIVE_META_TIMEOUT_SECONDS = 45
 
 
 async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dict:
-    settings = _collect_settings(db, owner_id)
-    numbers = _collect_numbers(db, owner_id)
+    # Toda a agregação síncrona (supabase-py é bloqueante: ~13 queries sequenciais)
+    # roda numa thread separada para NÃO congelar o event loop do único worker —
+    # senão o overview de um tenant trava o disparo e a API de todos os outros.
+    def _collect_sync():
+        _settings = _collect_settings(db, owner_id)
+        _numbers = _collect_numbers(db, owner_id)
+        _health = _build_health(db, owner_id, _settings, _numbers)
+        _deliverability = _build_deliverability(db, owner_id, _numbers)
+        _capacity = _build_capacity(_deliverability, target=10000)
+        _error_radar = _build_error_radar(db, owner_id, _numbers)
+        return _settings, _numbers, _health, _deliverability, _capacity, _error_radar
 
-    health = _build_health(db, owner_id, settings, numbers)
-    deliverability = _build_deliverability(db, owner_id, numbers)
-    capacity = _build_capacity(deliverability, target=10000)
+    settings, numbers, health, deliverability, capacity, error_radar = await asyncio.to_thread(_collect_sync)
 
     live_timed_out = False
     if live_meta:
@@ -639,7 +660,6 @@ async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dic
         meta_audits = _audit_meta_tokens_cached(settings, numbers)
 
     templates = _build_templates(meta_audits)
-    error_radar = _build_error_radar(db, owner_id, numbers)
     incidents = _build_incidents(health, deliverability, error_radar, meta_audits)
     checklist = _build_checklist(health, deliverability, templates, capacity)
     score = _build_score(health, deliverability, checklist, incidents)

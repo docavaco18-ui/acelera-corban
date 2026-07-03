@@ -506,11 +506,15 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "business_verification_status": p.get("business_verification_status"),
             "waba_currency": p.get("waba_currency"),
             "waba_country": p.get("waba_country"),
-            "chatwoot_connected": inbox_id is not None,
-            "chatwoot_inbox_id": inbox_id,
             "last_meta_check_at": now_iso,
             "quality_updated_at": now_iso,
         }
+        # Só atualiza o vínculo CRM quando o cruzamento é confiável (crm_ok).
+        # Se VendeAI falhou ou retornou 0 inboxes, preserva o chatwoot_connected
+        # existente no banco — evita que uma falha transitória apague o mapeamento.
+        if crm_ok:
+            record["chatwoot_connected"] = inbox_id is not None
+            record["chatwoot_inbox_id"] = inbox_id
         try:
             db.table("broadcast_numbers").upsert(record, on_conflict="owner_id,phone_id").execute()
             updated.append(p.get("phone_id") or "")
@@ -676,6 +680,11 @@ async def confirm_dispatch(
     if dispatch.data["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já está em status {dispatch.data['status']}")
 
+    # Floor anti-ban: cadência 0/negativa viraria rajada sem pacing (queda de quality
+    # → risco de bloqueio da BM); dedup 0 reenviaria o MESMO lead no mesmo dia (spam).
+    body.cooldown_seconds = max(1, int(body.cooldown_seconds or 0))
+    body.dedup_window_hours = max(1, int(body.dedup_window_hours or 0))
+
     creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
     if not creds.data:
         raise HTTPException(400, "Configure credenciais VendeAI primeiro")
@@ -726,7 +735,13 @@ async def confirm_dispatch(
         raise HTTPException(400, f"Login VendeAI falhou — verifique email/senha em Configurações → VendeAI. ({str(auth_exc)[:140]})")
 
     # Marca dispatching ANTES de spawnar (guard anti-duplo-submit imediato).
-    db.table("broadcast_dispatches").update({"status": "dispatching"}).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+    # Transição ATÔMICA pending_confirm→dispatching: se outra request (duplo-clique
+    # ou retry do axios) já reivindicou este dispatch, o UPDATE condicional não afeta
+    # nenhuma linha → abortamos ESTA para não disparar o lote duas vezes.
+    claim = db.table("broadcast_dispatches").update({"status": "dispatching"}) \
+        .eq("id", body.dispatch_id).eq("owner_id", user_id).eq("status", "pending_confirm").execute()
+    if not claim.data:
+        raise HTTPException(409, "Disparo já está sendo processado (duplo-envio evitado).")
 
     # ── Disparo roda em BACKGROUND ──────────────────────────────────────────
     # O loop VendeAI (login BFF + upload CSV por número) passa do timeout do

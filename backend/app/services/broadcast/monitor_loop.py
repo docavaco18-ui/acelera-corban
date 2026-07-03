@@ -24,6 +24,10 @@ def _utcnow() -> str:
 
 logger = logging.getLogger(__name__)
 POLL_INTERVAL = 20
+# Qualidade/tier da Meta mudam devagar (horas). Consultar a Graph API por número a
+# cada tick (20s) é N+1 desnecessário e acumula application rate limit. Só reconsulta
+# um número se a última checagem foi há mais de este intervalo.
+META_QUALITY_MIN_INTERVAL = 120
 
 
 async def monitor_tick(redis_client: aioredis.Redis) -> None:
@@ -152,10 +156,22 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
         default_client = clients.get(None) or next(iter(clients.values()), None)
         try:
             numbers_resp = db.table("broadcast_numbers") \
-                .select("phone_id,quality_rating,meta_token_id") \
+                .select("phone_id,quality_rating,meta_token_id,last_meta_check_at") \
                 .eq("owner_id", owner_id) \
                 .execute()
+            now_ts = datetime.now(timezone.utc)
             for num in (numbers_resp.data or []):
+                # Throttle anti-rate-limit: pula número já consultado há < META_QUALITY_MIN_INTERVAL
+                last_check = num.get("last_meta_check_at")
+                if last_check:
+                    try:
+                        prev = datetime.fromisoformat(str(last_check).replace("Z", "+00:00"))
+                        if prev.tzinfo is None:
+                            prev = prev.replace(tzinfo=timezone.utc)
+                        if (now_ts - prev).total_seconds() < META_QUALITY_MIN_INTERVAL:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
                 tid = num.get("meta_token_id")
                 meta = clients.get(tid)
                 if meta is None:

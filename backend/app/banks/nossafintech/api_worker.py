@@ -25,6 +25,16 @@ MAX_AUTH_RETRIES = 3
 MAX_DATAPREV_RETRIES = 10
 
 
+def _is_sandbox_mock_margin(margem) -> bool:
+    employer = (margem.employer_name or "").strip().upper()
+    return (
+        employer == "EMPRESA XYZ LTDA"
+        and abs(float(margem.available_balance or 0) - 500.0) < 0.01
+        and abs(float(margem.utilizable_balance or 0) - 400.0) < 0.01
+        and abs(float(margem.base_margin_value or 0) - 4500.0) < 0.01
+    )
+
+
 class NossaFintechApiWorker:
     def __init__(
         self,
@@ -129,6 +139,18 @@ class NossaFintechApiWorker:
 
             v = vinculos[0]
             margem = self._client.get_margin(cpf, v.employer_cnpj)
+            if self.cfg.reject_sandbox_mock and _is_sandbox_mock_margin(margem):
+                return {
+                    "status": "erro",
+                    "valor_liberado": None,
+                    "erro": "nossafintech_sandbox_mock: API retornou EMPRESA XYZ LTDA e margem fixa 400/500/4500; credencial/promot_id não está em produção real",
+                    "saldo_disponivel": margem.available_balance,
+                    "saldo_utilizavel": margem.utilizable_balance,
+                    "margem_base": margem.base_margin_value,
+                    "cnpj_empregador": margem.employer_cnpj,
+                    "nome_empregador": margem.employer_name,
+                    "matricula": v.work_registration,
+                }
             if margem.utilizable_balance <= 0 and margem.base_margin_value <= 0:
                 return {"status": "inelegivel", "valor_liberado": None, "erro": "sem_margem",
                         "saldo_disponivel": margem.available_balance,

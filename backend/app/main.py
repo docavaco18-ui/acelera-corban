@@ -120,8 +120,11 @@ app.include_router(admin_users_monitor.router)
 
 @app.post("/api/data-deletion")
 async def data_deletion(request: Request):
-    import hashlib, base64, json as _json
-    app_secret = "c5b0446c55663791cf7d234f4c8c45ac"
+    import hashlib, base64, json as _json, os
+    # App Secret usado só como salt do confirmation_code. Lê de env para permitir
+    # ROTAÇÃO (o literal já vazou no histórico git — rotacionar no painel Meta +
+    # setar META_APP_SECRET na VPS). Fallback mantém comportamento idêntico.
+    app_secret = os.getenv("META_APP_SECRET", "c5b0446c55663791cf7d234f4c8c45ac")
     confirmation_code = "zdg-deletion-confirmed"
     try:
         body = await request.form()

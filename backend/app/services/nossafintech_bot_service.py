@@ -51,14 +51,6 @@ async def _fetch_pending(db: Any, user_id: str, limit: int, batch_id: str | None
 
     rows = await asyncio.to_thread(_q)
 
-    if not rows and batch_id is not None:
-        logger.warning("nossafintech batch %s vazia, buscando sem filtro de batch", batch_id)
-        def _q_all():
-            return scoped(db, "nossafintech_leads", user_id).select("*").in_(
-                "status", PENDING_STATUSES
-            ).limit(limit).execute().data or []
-        rows = await asyncio.to_thread(_q_all)
-
     return rows
 
 

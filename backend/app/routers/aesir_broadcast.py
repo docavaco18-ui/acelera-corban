@@ -586,6 +586,9 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
     if dispatch.data[0]["status"] != "pending_confirm":
         raise HTTPException(400, f"Dispatch já em status {dispatch.data[0]['status']}")
 
+    # Floor anti-ban: cooldown 0/negativo viraria rajada sem pacing no loop de envio.
+    body.cooldown_seconds = max(1, int(body.cooldown_seconds or 0))
+
     if body.send_mode == "template":
         if not body.template_name or not body.template_lang:
             raise HTTPException(400, "Selecione um template e idioma para disparo oficial")
@@ -624,7 +627,9 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
     ]
 
     now = datetime.now(timezone.utc).isoformat()
-    db.table("aesir_dispatches").update({
+    # Transição ATÔMICA pending_confirm→running: bloqueia duplo-submit / retry axios
+    # de criar a mesma campanha (envio duplicado por lead) duas vezes.
+    claim = db.table("aesir_dispatches").update({
         "status": "running",
         "campaign_name": body.campaign_name or body.dispatch_id[:8],
         "phone_column": body.phone_column,
@@ -633,7 +638,9 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
         "cooldown_seconds": body.cooldown_seconds,
         "assignments_json": assignments_json,
         "updated_at": now,
-    }).eq("id", body.dispatch_id).eq("owner_id", user_id).execute()
+    }).eq("id", body.dispatch_id).eq("owner_id", user_id).eq("status", "pending_confirm").execute()
+    if not claim.data:
+        raise HTTPException(409, "Disparo já está sendo processado (duplo-envio evitado).")
 
     stop_event = asyncio.Event()
     _stop_events[body.dispatch_id] = stop_event
