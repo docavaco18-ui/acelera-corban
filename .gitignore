@@ -24,3 +24,5 @@ dump.rdb
 storage_state*.json
 *.sqlite
 *.db
+*.bak
+*.bak-*
