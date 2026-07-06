@@ -1,11 +1,51 @@
 aceleracorban.com.br, www.aceleracorban.com.br {
 	encode gzip
-	reverse_proxy frontend:80
+	handle /openclaw-office* {
+		reverse_proxy 172.19.0.1:4200
+	}
+	# WS gateway bypass: no basic-auth (server-side device token handles security)
+	handle /agent-town/api/gateway* {
+		reverse_proxy 172.19.0.1:4300
+	}
+	handle /agent-town* {
+		basic_auth {
+			gabriel $2a$14$IwO.24WdCLIR7BxIXSPs1OlneTCc.ZSKCah807BiCL.falzMB67CG
+		}
+		reverse_proxy 172.19.0.1:4300
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
 }
 
 openclaw.aceleracorban.com.br {
 	encode gzip
-	# OpenClaw Gateway publicado na porta 18789 do host.
-	# 172.19.0.1 é o host visto de dentro da rede acelera-corban_default.
+	tls internal
 	reverse_proxy 172.19.0.1:18789
+}
+
+desktop.aceleracorban.com.br {
+	encode gzip
+	tls internal
+	reverse_proxy 172.19.0.1:3001
+}
+
+claw3d.aceleracorban.com.br {
+	encode gzip
+	tls internal
+	# Login: basic_auth seta o cookie studio_access (cookie vai no WS, basic_auth nao)
+	handle /login {
+		basic_auth {
+			gabriel $2a$14$QlcsBopQWeYI12GqJ0A5ouEgK8Zjo/aZaLmSB/SS6wBSsSEbM/p.S
+		}
+		header Set-Cookie "studio_access=0ff6c2c457aa42441f05a1fbd6df0424ea0565afc2dbaec6; Path=/; SameSite=Lax; Max-Age=31536000"
+		header Location "/office"
+		respond 302
+	}
+	handle {
+		@html not path /_next/static/* /static/* /assets/* /favicon.ico
+		header @html -Cache-Control
+		header @html Cache-Control "no-store, must-revalidate"
+		reverse_proxy claw3d:3000
+	}
 }
