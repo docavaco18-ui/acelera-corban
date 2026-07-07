@@ -503,7 +503,7 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
         display_phone: a.display_phone || '',
         quality_rating: a.quality_rating || 'UNKNOWN',
         can_send: a.can_send || 'UNKNOWN',
-        daily_limit: a.daily_limit || 500,
+        daily_limit: a.daily_limit || 0,  // tier null = 0 'aguardando Meta', nunca 500 fabricado
         planned_count: a.planned_count,
       }));
       if (!asns.length) { setErr(res.split.justification || 'Nenhuma instância elegível'); setAnalyzing(false); return; }

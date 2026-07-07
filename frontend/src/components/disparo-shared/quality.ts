@@ -165,8 +165,11 @@ export function bmSummary(instances: any[]): BMSummaryStats {
     else if (isOk(i)) out.okCount++;
     else out.unknownCount++;
 
-    // Capacidade: número precisa estar ativo (não pausado, não grave)
-    if (!i.is_paused && !isProblemGrave(i)) {
+    // Capacidade: número ativo (não pausado, não grave) E disparável — números
+    // "SÓ META" (sem canal no CRM) não entram na soma (não dá pra disparar por eles).
+    const iid = String(i.instance_id || i.channel_id || i.phone_id || '');
+    const isMetaOnly = iid.startsWith('meta:') || i.status === 'meta-only';
+    if (!i.is_paused && !isProblemGrave(i) && !isMetaOnly) {
       const lim = parseInt(String(i.daily_limit || '0')) || 0;
       out.capacityActive += lim;
     }

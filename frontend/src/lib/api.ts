@@ -669,6 +669,7 @@ export const broadcastApi = {
     chatwoot_error?: string | null;
   }>("/api/broadcast/numbers/refresh"),
   resumeNumber: (phoneId: string) => broadcastAxios.post(`/api/broadcast/numbers/${phoneId}/resume`),
+  pauseNumber: (phoneId: string) => broadcastAxios.post(`/api/broadcast/numbers/${phoneId}/pause`),
   analyzeCSV: (file: File) => {
     const form = new FormData();
     form.append("file", file);

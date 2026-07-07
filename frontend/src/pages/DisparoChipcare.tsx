@@ -319,10 +319,10 @@ interface ChannelAssignment {
 }
 
 const AGGRESSION_OPTS = [
-  { value: 'SEGURO', label: 'Seguro', sub: '~17 msgs/h · 2–5min entre envios' },
-  { value: 'MEDIUM', label: 'Moderado', sub: '~30 msgs/h · 1–3min entre envios' },
-  { value: 'AGRESSIVO', label: 'Agressivo', sub: '~96 msgs/h · 15–60s' },
-  { value: 'MAXIMO', label: 'Máximo', sub: '~3600 msgs/h · 0.5–1.5s' },
+  { value: 'SEGURO', label: 'Seguro', sub: '~17 msgs/h · 2–5min entre envios', risky: false },
+  { value: 'MEDIUM', label: 'Moderado', sub: '~30 msgs/h · 1–3min entre envios', risky: false },
+  { value: 'AGRESSIVO', label: 'Agressivo', sub: '~96 msgs/h · 15–60s', risky: true },
+  { value: 'MAXIMO', label: 'Máximo', sub: '~3600 msgs/h · 0.5–1.5s', risky: true },
 ];
 
 function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDispatched: () => void }) {
@@ -361,7 +361,7 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
         channel_id: a.channel_id,
         title: a.title || String(a.channel_id),
         status: a.status || 'UNKNOWN',
-        daily_limit: a.daily_limit || 500,
+        daily_limit: a.daily_limit || 0,  // tier null = 0 'aguardando Meta', nunca 500 fabricado
         planned_count: a.planned_count,
       }));
       if (!asns.length) { setErr(res.split.justification || 'Nenhum canal elegível'); setAnalyzing(false); return; }
@@ -544,6 +544,14 @@ function CsvUploadWizard({ templates, onDispatched }: { templates: any[]; onDisp
                 </div>
               ))}
             </div>
+            {AGGRESSION_OPTS.find(o => o.value === aggression)?.risky && (
+              <div style={{ marginTop: 10, background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.4)',
+                borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 12, lineHeight: 1.4 }}>
+                ⚠️ <strong>Alto risco de bloqueio pela Meta.</strong> Velocidades Agressivo/Máximo derrubam a
+                qualidade rápido — use só em números aquecidos e de tier alto (TIER_10K+). Para números novos
+                ou TIER_250/1K, prefira Seguro/Moderado.
+              </div>
+            )}
           </div>
           <div>
             <label style={{ color: '#94a3b8', fontSize: 12, display: 'block', marginBottom: 8 }}>Templates disponíveis</label>

@@ -530,7 +530,7 @@ export default function Disparo() {
   const handleTogglePause = async (phoneId: string, paused: boolean) => {
     try {
       if (paused) await broadcastApi.resumeNumber(phoneId);
-      // VendeAI não tem pauseNumber explícito — só resume
+      else await broadcastApi.pauseNumber(phoneId);  // pausa real: número sai do split
       await loadData();
     } catch (e: any) {
       console.error('[Disparo] togglePause falhou:', e);
