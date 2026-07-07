@@ -17,7 +17,7 @@ from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
 from app.services.broadcast.aesir_client import AesirClient
-from app.services.broadcast.assignment_validator import validate_aesir_assignments
+from app.services.broadcast.assignment_validator import _dispatch_sent_today, validate_aesir_assignments
 from app.services.broadcast.meta_client import MetaClient
 
 router = APIRouter(prefix="/api/aesir-broadcast", tags=["aesir-broadcast"])
@@ -39,6 +39,19 @@ def _get_user_id(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     return verify_token(credentials.credentials).user_id
 
 
+def _tier_and_limit(meta_tier, meta_limit, prev_tier, prev_limit) -> tuple[str, int]:
+    """Regra VendeAI (16-18/06): tier null → 'aguardando Meta' + capacidade 0.
+    NUNCA fabrica 500/dia — capacidade fabricada acima do tier real = estouro
+    de tier → queda de quality → ban. Preserva o último tier REAL conhecido
+    (tem dígito) quando a Meta falha só nesta rodada."""
+    if meta_tier:
+        return str(meta_tier), int(meta_limit or 0)
+    prev_t = str(prev_tier or "")
+    if any(c.isdigit() for c in prev_t) and "aguardando" not in prev_t:
+        return prev_t, int(prev_limit or 0)
+    return "aguardando Meta", 0
+
+
 def _get_client(user_id: str) -> AesirClient:
     db = get_db()
     resp = db.table("aesir_settings").select("*").eq("owner_id", user_id).execute()
@@ -53,6 +66,10 @@ def _get_client(user_id: str) -> AesirClient:
 
 def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
     """Distribute leads proportionally across eligible Aesir instances."""
+    def _remaining(inst: dict) -> int:
+        # limite RESTANTE do dia — sem fabricar 500 quando a Meta não reportou tier
+        return max(0, int(inst.get("daily_limit") or 0) - int(inst.get("sent_today") or 0))
+
     def is_eligible(inst: dict) -> bool:
         if inst.get("is_paused"):
             return False
@@ -68,7 +85,7 @@ def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
             return False
         if inst.get("quality_rating") == "RED":
             return False
-        if (inst.get("daily_limit") or 500) <= 0:
+        if _remaining(inst) <= 0:
             return False
         return True
 
@@ -82,12 +99,12 @@ def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
             "risks": "Verifique se há instâncias ativas com qualidade OK.",
         }
 
-    total_capacity = sum(i.get("daily_limit") or 500 for i in active)
+    total_capacity = sum(_remaining(i) for i in active)
     remaining = total_leads
     assignments = []
 
     for idx, inst in enumerate(active):
-        limit = inst.get("daily_limit") or 500
+        limit = _remaining(inst)
         if idx == len(active) - 1:
             planned = min(remaining, limit)
         else:
@@ -330,12 +347,16 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "updated_at": now,
         }
         if quality:
+            _tier, _limit = _tier_and_limit(
+                quality.get("messaging_tier"), quality.get("daily_limit"),
+                _prev_tier.get(quality.get("phone_id")), _prev_limit.get(quality.get("phone_id")),
+            )
             upsert_payload.update({
                 "display_phone": quality.get("display_phone"),
                 "quality_rating": quality.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": quality.get("messaging_tier") or _prev_tier.get(quality.get("phone_id")) or "nao reportado",
+                "messaging_tier": _tier,
                 "can_send": quality.get("can_send", "UNKNOWN"),
-                "daily_limit": quality.get("daily_limit") or _prev_limit.get(quality.get("phone_id")) or 500,
+                "daily_limit": _limit,
                 "waba_id": quality.get("waba_id"),
                 "phone_id": quality.get("phone_id"),
                 "verified_name": quality.get("verified_name"),
@@ -364,6 +385,10 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         phone_id = p.get("phone_id") or p.get("id") or key
         meta_iid = f"meta:{phone_id}"
         seen_ids.add(meta_iid)
+        _tier, _limit = _tier_and_limit(
+            p.get("messaging_tier"), p.get("daily_limit"),
+            _prev_tier.get(p.get("phone_id")), _prev_limit.get(p.get("phone_id")),
+        )
         db.table("aesir_instances").upsert({
             "owner_id": user_id,
             "instance_id": meta_iid,
@@ -372,9 +397,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "status": "meta-only",
             "display_phone": p.get("display_phone"),
             "quality_rating": p.get("quality_rating", "UNKNOWN"),
-            "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
+            "messaging_tier": _tier,
             "can_send": p.get("can_send", "UNKNOWN"),
-            "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
+            "daily_limit": _limit,
             "waba_id": p.get("waba_id"),
             "phone_id": p.get("phone_id"),
             "verified_name": p.get("verified_name"),
@@ -444,6 +469,11 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
     instances = instances_resp.data or []
     if not instances:
         raise HTTPException(400, "Nenhuma instância cadastrada. Faça Refresh Números primeiro.")
+
+    # sent_today por instância — split propõe sobre o limite RESTANTE do dia
+    sent_map = _dispatch_sent_today(db, user_id, "aesir_dispatches", "instance_id")
+    for inst in instances:
+        inst["sent_today"] = sent_map.get(str(inst.get("instance_id") or ""), 0)
 
     split = _advise_split(instances, total_leads)
 

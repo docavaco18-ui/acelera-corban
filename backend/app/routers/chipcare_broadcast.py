@@ -22,6 +22,7 @@ import csv
 import hashlib
 import io
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -33,7 +34,7 @@ from pydantic import BaseModel
 from app.config import settings
 from app.credentials.crypto import encrypt, safe_decrypt
 from app.database import get_db
-from app.services.broadcast.assignment_validator import validate_chipcare_assignments
+from app.services.broadcast.assignment_validator import _dispatch_sent_today, validate_chipcare_assignments
 from app.services.broadcast.chipcare_client import (
     ChipcareClient,
     ChipcareHashes,
@@ -103,14 +104,45 @@ def _get_client_and_settings(user_id: str) -> tuple[ChipcareClient, dict]:
     return client, row
 
 
+def _tier_and_limit(meta_tier, meta_limit, prev_tier, prev_limit) -> tuple[str, int]:
+    """Regra VendeAI (16-18/06): tier null → 'aguardando Meta' + capacidade 0.
+    NUNCA fabrica 500/dia. Preserva o último tier REAL conhecido (tem dígito)
+    quando a Meta falha só nesta rodada."""
+    if meta_tier:
+        return str(meta_tier), int(meta_limit or 0)
+    prev_t = str(prev_tier or "")
+    if any(c.isdigit() for c in prev_t) and "aguardando" not in prev_t:
+        return prev_t, int(prev_limit or 0)
+    return "aguardando Meta", 0
+
+
+def _phone_key_from_title(title: str) -> str:
+    """Extrai o telefone do título do canal: primeiro bloco contíguo de 10-13
+    dígitos (ignorando separadores comuns). Dígito extra solto depois do número
+    (ex.: 'Canal 9999-9999 (2)') não contamina mais a chave."""
+    compact = re.sub(r"[\s\-\(\)\.\+]", "", title or "")
+    m = re.search(r"\d{10,13}", compact)
+    if not m:
+        return ""
+    return m.group(0)[-10:]
+
+
 def _advise_split(channels: list[dict], total_leads: int) -> dict:
     """Distribute leads proportionally across eligible official channels."""
+    def _remaining(ch: dict) -> int:
+        # limite RESTANTE do dia — sem fabricar 500 quando a Meta não reportou tier
+        return max(0, int(ch.get("daily_limit") or 0) - int(ch.get("sent_today") or 0))
+
     def is_eligible(ch: dict) -> bool:
         if ch.get("is_paused"):
             return False
         if ch.get("status") not in ("CONNECTED", "Online", "ONLINE", "online"):
             return False
-        if (ch.get("daily_limit") or 500) <= 0:
+        if (ch.get("quality_rating") or "").upper() == "RED":
+            return False
+        if (ch.get("can_send") or "").upper() in ("BLOCKED", "DISABLED"):
+            return False
+        if _remaining(ch) <= 0:
             return False
         return True
 
@@ -121,15 +153,15 @@ def _advise_split(channels: list[dict], total_leads: int) -> dict:
         return {
             "assignments": [],
             "justification": "Nenhum canal Chipcare elegível.",
-            "risks": "Verifique se há canais Oficial conectados.",
+            "risks": "Verifique se há canais Oficial conectados, com qualidade OK e capacidade confirmada pela Meta.",
         }
 
-    total_capacity = sum(c.get("daily_limit") or 500 for c in active)
+    total_capacity = sum(_remaining(c) for c in active)
     remaining = total_leads
     assignments = []
 
     for idx, ch in enumerate(active):
-        limit = ch.get("daily_limit") or 500
+        limit = _remaining(ch)
         if idx == len(active) - 1:
             planned = min(remaining, limit)
         else:
@@ -343,9 +375,8 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
             continue
         seen_ids.add(int(cid))
         title = ch.get("title") or str(cid)
-        digits = "".join(c for c in title if c.isdigit())
-        key = digits[-10:] if len(digits) >= 10 else digits
-        meta_q = meta_phones_by_key.get(key, {})
+        key = _phone_key_from_title(title)
+        meta_q = meta_phones_by_key.get(key, {}) if key else {}
         if key and meta_q:
             matched_keys.add(key)
 
@@ -359,12 +390,16 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
             "updated_at": now,
         }
         if meta_q:
+            _tier, _limit = _tier_and_limit(
+                meta_q.get("messaging_tier"), meta_q.get("daily_limit"),
+                _prev_tier.get(meta_q.get("phone_id")), _prev_limit.get(meta_q.get("phone_id")),
+            )
             payload.update({
                 "waba_id": meta_q.get("waba_id"),
                 "phone_id": meta_q.get("phone_id"),
                 "display_phone": meta_q.get("display_phone"),
                 "quality_rating": meta_q.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": meta_q.get("messaging_tier") or _prev_tier.get(meta_q.get("phone_id")) or "nao reportado",
+                "messaging_tier": _tier,
                 "can_send": meta_q.get("can_send", "UNKNOWN"),
                 "verified_name": meta_q.get("verified_name"),
                 "name_status": meta_q.get("name_status"),
@@ -378,7 +413,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "business_verification_status": meta_q.get("business_verification_status"),
                 "waba_currency": meta_q.get("waba_currency"),
                 "waba_country": meta_q.get("waba_country"),
-                "daily_limit": meta_q.get("daily_limit") or _prev_limit.get(meta_q.get("phone_id")) or 500,
+                "daily_limit": _limit,
                 "quality_updated_at": now,
             })
         try:
@@ -402,6 +437,10 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
         except Exception:
             continue
         seen_ids.add(synth_id)
+        _tier, _limit = _tier_and_limit(
+            p.get("messaging_tier"), p.get("daily_limit"),
+            _prev_tier.get(p.get("phone_id")), _prev_limit.get(p.get("phone_id")),
+        )
         try:
             db.table("chipcare_channels").upsert({
                 "owner_id": user_id,
@@ -414,7 +453,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "phone_id": p.get("phone_id"),
                 "display_phone": p.get("display_phone"),
                 "quality_rating": p.get("quality_rating", "UNKNOWN"),
-                "messaging_tier": p.get("messaging_tier") or _prev_tier.get(p.get("phone_id")) or "nao reportado",
+                "messaging_tier": _tier,
                 "can_send": p.get("can_send", "UNKNOWN"),
                 "verified_name": p.get("verified_name"),
                 "name_status": p.get("name_status"),
@@ -428,7 +467,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
                 "business_verification_status": p.get("business_verification_status"),
                 "waba_currency": p.get("waba_currency"),
                 "waba_country": p.get("waba_country"),
-                "daily_limit": p.get("daily_limit") or _prev_limit.get(p.get("phone_id")) or 500,
+                "daily_limit": _limit,
                 "quality_updated_at": now,
                 "updated_at": now,
             }, on_conflict="owner_id,channel_id").execute()
@@ -527,6 +566,11 @@ async def analyze_csv(file: UploadFile = File(...), user_id: str = Depends(_get_
     channels = channels_resp.data or []
     if not channels:
         raise HTTPException(400, "Nenhum canal cadastrado. Faça Refresh Canais primeiro.")
+
+    # sent_today por canal — split propõe sobre o limite RESTANTE do dia
+    sent_map = _dispatch_sent_today(db, user_id, "chipcare_dispatches", "channel_id")
+    for ch in channels:
+        ch["sent_today"] = sent_map.get(str(ch.get("channel_id")), 0)
 
     split = _advise_split(channels, total_leads)
 

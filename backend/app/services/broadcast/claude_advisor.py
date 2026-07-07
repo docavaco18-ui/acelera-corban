@@ -9,10 +9,15 @@ async def advise_split(
     api_key: str = "",
 ) -> dict[str, Any]:
     """
-    Split leads proportionally by daily_limit.
+    Split leads proportionally by daily_limit REMANESCENTE do dia.
     Excludes RED/paused numbers when alternatives exist.
-    numbers: [{phone_id, quality_rating, messaging_tier, daily_limit, is_paused}]
+    numbers: [{phone_id, quality_rating, messaging_tier, daily_limit, sent_today?, is_paused}]
     """
+    def remaining_limit(n: dict) -> int:
+        # Desconta o já-enviado hoje — segundo disparo no dia não pode planejar
+        # o tier CHEIO de novo (estouro de tier = queda de quality = ban)
+        return max(0, int(n.get("daily_limit") or 0) - int(n.get("sent_today") or 0))
+
     def is_eligible(n: dict) -> bool:
         if not n.get("chatwoot_connected"):
             return False
@@ -22,7 +27,7 @@ async def advise_split(
             return False
         if n.get("quality_rating") == "RED":
             return False
-        if (n.get("daily_limit") or 0) <= 0:
+        if remaining_limit(n) <= 0:
             return False
         return True
 
@@ -36,16 +41,16 @@ async def advise_split(
             "risks": "Verifique se há números conectados ao Chatwoot com status disponível e capacidade > 0.",
         }
 
-    total_capacity = sum(n.get("daily_limit", 0) for n in active)
+    total_capacity = sum(remaining_limit(n) for n in active)
     remaining = total_leads
     assignments = []
 
-    # 1ª passada: proporcional à capacidade, SEMPRE capado pelo daily_limit do
-    # número (inclusive o último — antes o último levava todo o `remaining` e
-    # estourava o próprio limite → VendeAI/Meta rejeitava ou queimava o número).
+    # 1ª passada: proporcional à capacidade RESTANTE, SEMPRE capado pelo limite
+    # remanescente do número (inclusive o último — antes o último levava todo o
+    # `remaining` e estourava o próprio limite → VendeAI/Meta rejeitava ou queimava o número).
     plans: list[list] = []  # [n, planned, limit]
     for n in active:
-        limit = n.get("daily_limit", 0)
+        limit = remaining_limit(n)
         planned = min(round(total_leads * limit / total_capacity), remaining, limit)
         remaining -= planned
         plans.append([n, planned, limit])
@@ -66,10 +71,14 @@ async def advise_split(
     for n, planned, limit in plans:
         quality = n.get("quality_rating", "UNKNOWN")
         can_send = n.get("can_send", "UNKNOWN")
+        sent_today = int(n.get("sent_today") or 0)
+        reason = f"Qualidade {quality}, limite restante hoje {limit}"
+        if sent_today:
+            reason += f" ({sent_today} já enviadas)"
         assignments.append({
             "phone_id": n["phone_id"],
             "planned_count": planned,
-            "reason": f"Qualidade {quality}, limite diário {limit}",
+            "reason": reason,
             "can_send": can_send,
         })
 

@@ -15,12 +15,70 @@ whether to add to response or block.
 """
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from fastapi import HTTPException
 
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _today_iso() -> str:
+    return datetime.now(timezone.utc).date().isoformat()
+
+
+def _vendeai_sent_today(db, user_id: str) -> dict[str, int]:
+    """Enviadas hoje por phone_id (broadcast_dispatch_assignments de hoje)."""
+    try:
+        rows = db.table("broadcast_dispatch_assignments") \
+            .select("phone_id, sent_count") \
+            .eq("owner_id", user_id) \
+            .gte("created_at", _today_iso()) \
+            .execute().data or []
+    except Exception:
+        return {}
+    totals: dict[str, int] = defaultdict(int)
+    for r in rows:
+        pid = r.get("phone_id")
+        if pid:
+            totals[str(pid)] += int(r.get("sent_count") or 0)
+    return dict(totals)
+
+
+def _dispatch_sent_today(db, user_id: str, table: str, id_field: str) -> dict[str, int]:
+    """Enviadas hoje por instância/canal, somando assignments_json dos dispatches de hoje."""
+    try:
+        rows = db.table(table) \
+            .select("assignments_json, created_at") \
+            .eq("owner_id", user_id) \
+            .gte("created_at", _today_iso()) \
+            .execute().data or []
+    except Exception:
+        return {}
+    totals: dict[str, int] = defaultdict(int)
+    for r in rows:
+        for a in (r.get("assignments_json") or []):
+            key = a.get(id_field)
+            if key is not None:
+                totals[str(key)] += int(a.get("sent") or a.get("sent_count") or 0)
+    return dict(totals)
+
+
+def _check_remaining_capacity(planned: int, limit: int, sent: int, ident: str) -> None:
+    """Bloqueia estouro do tier diário: planned deve caber no limite RESTANTE."""
+    if limit <= 0:
+        raise HTTPException(
+            400,
+            f"{ident} sem capacidade diária confirmada pela Meta (tier não reportado). "
+            "Aguarde o tier ou defina um limite manual da BM."
+        )
+    remaining = max(0, limit - sent)
+    if planned > remaining:
+        detail = f"planned_count={planned} excede o limite diário restante ({remaining}) para {ident}"
+        if sent:
+            detail += f" — {sent} já enviadas hoje de um limite de {limit}"
+        raise HTTPException(400, detail)
 
 def _check_planned_integer(planned_raw: Any, ident: str) -> int:
     try:
@@ -81,10 +139,11 @@ def validate_vendeai_assignments(
 
     # Load all numbers for this owner — single query
     nums_resp = db.table("broadcast_numbers") \
-        .select("phone_id, daily_limit, is_paused, can_send") \
+        .select("phone_id, daily_limit, is_paused, can_send, quality_rating") \
         .eq("owner_id", user_id) \
         .execute()
     nums_by_id = {n["phone_id"]: n for n in (nums_resp.data or [])}
+    sent_map = _vendeai_sent_today(db, user_id)
 
     assigned_total = 0
     active_phone_ids: list[str] = []
@@ -102,12 +161,10 @@ def validate_vendeai_assignments(
             raise HTTPException(400, f"phone {phone_id} está pausado")
         if (num.get("can_send") or "").upper() in ("DISABLED", "BLOCKED"):
             raise HTTPException(400, f"phone {phone_id} can_send={num.get('can_send')} — bloqueado")
-        limit = int(num.get("daily_limit") or 500)
-        if planned > limit:
-            raise HTTPException(
-                400,
-                f"planned_count={planned} excede daily_limit={limit} para phone {phone_id}"
-            )
+        if (num.get("quality_rating") or "").upper() == "RED":
+            raise HTTPException(400, f"phone {phone_id} com qualidade RED — disparo bloqueado (risco de ban)")
+        limit = int(num.get("daily_limit") or 0)
+        _check_remaining_capacity(planned, limit, sent_map.get(str(phone_id), 0), f"phone {phone_id}")
         if not asn.get("inbox_id") or not asn.get("template_id"):
             raise HTTPException(
                 400,
@@ -141,6 +198,7 @@ def validate_aesir_assignments(
         .eq("owner_id", user_id) \
         .execute()
     inst_by_id = {i["instance_id"]: i for i in (inst_resp.data or [])}
+    sent_map = _dispatch_sent_today(db, user_id, "aesir_dispatches", "instance_id")
 
     assigned_total = 0
     active_ids: list[str] = []
@@ -164,12 +222,8 @@ def validate_aesir_assignments(
             raise HTTPException(400, f"instance {iid} can_send={inst.get('can_send')} — bloqueado")
         if (inst.get("quality_rating") or "").upper() == "RED":
             raise HTTPException(400, f"instance {iid} qualidade RED — bloqueado")
-        limit = int(inst.get("daily_limit") or 500)
-        if planned > limit:
-            raise HTTPException(
-                400,
-                f"planned_count={planned} excede daily_limit={limit} para instance {iid}"
-            )
+        limit = int(inst.get("daily_limit") or 0)
+        _check_remaining_capacity(planned, limit, sent_map.get(str(iid), 0), f"instance {iid}")
         assigned_total += planned
         active_ids.append(iid)
 
@@ -198,6 +252,7 @@ def validate_chipcare_assignments(
         .eq("owner_id", user_id) \
         .execute()
     ch_by_id = {c["channel_id"]: c for c in (ch_resp.data or [])}
+    sent_map = _dispatch_sent_today(db, user_id, "chipcare_dispatches", "channel_id")
 
     assigned_total = 0
     active_ids: list[int] = []
@@ -225,12 +280,8 @@ def validate_chipcare_assignments(
         can_send = (ch.get("can_send") or "").upper()
         if can_send in ("DISABLED", "BLOCKED"):
             raise HTTPException(400, f"channel {cid} com envio bloqueado pela Meta (can_send={ch.get('can_send')})")
-        limit = int(ch.get("daily_limit") or 500)
-        if planned > limit:
-            raise HTTPException(
-                400,
-                f"planned_count={planned} excede daily_limit={limit} para channel {cid}"
-            )
+        limit = int(ch.get("daily_limit") or 0)
+        _check_remaining_capacity(planned, limit, sent_map.get(str(cid), 0), f"channel {cid}")
         assigned_total += planned
         active_ids.append(cid)
 

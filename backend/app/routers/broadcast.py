@@ -311,7 +311,10 @@ def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depend
             "owner_id", user_id).eq("meta_token_id", token_id).execute().data or []
         for n in nums:
             tier = str(n.get("messaging_tier") or "")
-            if any(c.isdigit() for c in tier):
+            # tier real da Meta tem dígito E não é o próprio override "(BM)" —
+            # sem o 2º check, "300/dia (BM)" era tratado como tier real e a
+            # mudança/limpeza do limite manual nunca propagava
+            if any(c.isdigit() for c in tier) and "(BM)" not in tier:
                 continue  # tem tier real da Meta → não sobrescreve
             db.table("broadcast_numbers").update({
                 "daily_limit": val or 0,
@@ -651,12 +654,27 @@ async def analyze_csv(
     # Build lookup: phone_id → full number record
     numbers_by_id = {n["phone_id"]: n for n in numbers}
 
+    # Já-enviado hoje por número — o split planeja sobre o limite RESTANTE
+    # (mesma query do /snapshot); sem isso, 2º disparo do dia estoura o tier
+    _today = datetime.now(timezone.utc).date().isoformat()
+    _today_asns = db.table("broadcast_dispatch_assignments") \
+        .select("phone_id, sent_count") \
+        .eq("owner_id", user_id) \
+        .gte("created_at", _today) \
+        .execute().data or []
+    _sent_today: dict[str, int] = {}
+    for row in _today_asns:
+        pid = row.get("phone_id")
+        if pid:
+            _sent_today[pid] = _sent_today.get(pid, 0) + (row.get("sent_count") or 0)
+
     numbers_input = [
         {
             "phone_id": n["phone_id"],
             "quality_rating": n.get("quality_rating", "UNKNOWN"),
             "messaging_tier": n.get("messaging_tier", "—"),
             "daily_limit": n.get("daily_limit", 0),
+            "sent_today": _sent_today.get(n["phone_id"], 0),
             "is_paused": n.get("is_paused", False),
             "can_send": n.get("can_send", "UNKNOWN"),
             "chatwoot_connected": n.get("chatwoot_connected", False),

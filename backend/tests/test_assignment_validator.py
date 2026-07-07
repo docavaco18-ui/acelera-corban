@@ -83,7 +83,7 @@ def test_vendeai_rejects_planned_above_daily_limit():
     with pytest.raises(HTTPException) as exc:
         validate_vendeai_assignments(db, "u1", assignments, 999999)
     assert exc.value.status_code == 400
-    assert "excede daily_limit" in exc.value.detail
+    assert "excede o limite diário restante" in exc.value.detail
 
 
 def test_vendeai_rejects_paused_phone():
@@ -254,3 +254,82 @@ def test_negative_planned_count_rejected():
     with pytest.raises(HTTPException) as exc:
         validate_vendeai_assignments(db, "u1", [{"phone_id": "p1", "planned_count": -5, "inbox_id": "1", "template_id": "t1"}], 0)
     assert "negativo" in exc.value.detail
+
+
+# ── Capacidade: tier não reportado + desconto de sent_today (ultra review 06/07)
+
+class MockTableGte(MockTable):
+    def gte(self, key, val):
+        return self
+
+
+class MockDBGte(MockDB):
+    def table(self, name):
+        return MockTableGte(self._tables.get(name, []))
+
+
+def test_vendeai_rejects_zero_daily_limit_sem_tier():
+    """Tier não reportado (daily_limit 0) NÃO vira 500 fabricado — bloqueia com 400."""
+    db = MockDBGte({"broadcast_numbers": [
+        {"owner_id": "u1", "phone_id": "p1", "daily_limit": 0, "is_paused": False, "can_send": "AVAILABLE"},
+    ]})
+    assignments = [{"phone_id": "p1", "planned_count": 10, "inbox_id": "1", "template_id": "t1"}]
+    with pytest.raises(HTTPException) as exc:
+        validate_vendeai_assignments(db, "u1", assignments, 10)
+    assert exc.value.status_code == 400
+    assert "sem capacidade" in exc.value.detail
+
+
+def test_vendeai_desconta_sent_today():
+    """2º disparo do dia só pode planejar o limite RESTANTE (limit - sent hoje)."""
+    db = MockDBGte({
+        "broadcast_numbers": [
+            {"owner_id": "u1", "phone_id": "p1", "daily_limit": 100, "is_paused": False, "can_send": "AVAILABLE"},
+        ],
+        "broadcast_dispatch_assignments": [
+            {"owner_id": "u1", "phone_id": "p1", "sent_count": 80},
+        ],
+    })
+    ok = [{"phone_id": "p1", "planned_count": 20, "inbox_id": "1", "template_id": "t1"}]
+    validate_vendeai_assignments(db, "u1", ok, 20)  # 20 cabe no restante (100-80)
+    too_much = [{"phone_id": "p1", "planned_count": 21, "inbox_id": "1", "template_id": "t1"}]
+    with pytest.raises(HTTPException) as exc:
+        validate_vendeai_assignments(db, "u1", too_much, 21)
+    assert exc.value.status_code == 400
+    assert "já enviadas hoje" in exc.value.detail
+
+
+def test_vendeai_rejects_quality_red():
+    db = MockDBGte({"broadcast_numbers": [
+        {"owner_id": "u1", "phone_id": "p1", "daily_limit": 100, "is_paused": False,
+         "can_send": "AVAILABLE", "quality_rating": "RED"},
+    ]})
+    assignments = [{"phone_id": "p1", "planned_count": 10, "inbox_id": "1", "template_id": "t1"}]
+    with pytest.raises(HTTPException) as exc:
+        validate_vendeai_assignments(db, "u1", assignments, 10)
+    assert "RED" in exc.value.detail
+
+
+def test_aesir_desconta_sent_today_do_assignments_json():
+    db = MockDBGte({
+        "aesir_instances": [
+            {"owner_id": "u1", "instance_id": "i1", "daily_limit": 100, "is_paused": False,
+             "can_send": "AVAILABLE", "quality_rating": "GREEN", "status": "connected"},
+        ],
+        "aesir_dispatches": [
+            {"owner_id": "u1", "assignments_json": [{"instance_id": "i1", "sent": 90}]},
+        ],
+    })
+    with pytest.raises(HTTPException) as exc:
+        validate_aesir_assignments(db, "u1", [{"instance_id": "i1", "planned_count": 11}], 11)
+    assert "já enviadas hoje" in exc.value.detail
+
+
+def test_chipcare_rejects_quality_red():
+    db = MockDBGte({"chipcare_channels": [
+        {"owner_id": "u1", "channel_id": 7, "daily_limit": 100, "is_paused": False,
+         "status": "CONNECTED", "quality_rating": "RED"},
+    ]})
+    with pytest.raises(HTTPException) as exc:
+        validate_chipcare_assignments(db, "u1", [{"channel_id": 7, "planned_count": 5}], 5)
+    assert "RED" in exc.value.detail
