@@ -218,6 +218,12 @@ async def add_meta_token(body: MetaTokenIn, user_id: str = Depends(_get_user_id)
     if not ident.get("valid"):
         raise HTTPException(400, ident.get("error") or "Token Meta inválido")
 
+    # dedup de novo com o bm_id RESOLVIDO pela Meta — o check acima só pega
+    # quando o usuário digitou o bm_id; sem ele, 2 tokens da mesma BM passavam
+    resolved_bm = ident.get("bm_id") or bm_id
+    if resolved_bm and any((e.get("bm_id") or "") == resolved_bm for e in existing):
+        raise HTTPException(400, "Já existe uma porta para essa BM")
+
     status, detail = _conn_from_ident(ident)
     waba_ids = [w.strip() for w in (body.waba_ids or []) if w and w.strip()]
     row = {
@@ -263,14 +269,30 @@ async def test_meta_token(token_id: str, user_id: str = Depends(_get_user_id)):
 @router.patch("/meta-tokens/{token_id}")
 def update_meta_token(token_id: str, body: MetaTokenPatch, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    rows = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).eq("id", token_id).execute().data
+    rows = db.table("vendeai_meta_tokens").select("id,bm_id").eq("owner_id", user_id).eq("id", token_id).execute().data
     if not rows:
         raise HTTPException(404, "Porta não encontrada")
     patch: dict = {"updated_at": datetime.now(timezone.utc).isoformat()}
     if body.label is not None:
         patch["label"] = body.label.strip() or "Porta"
+    bm_changed = False
     if body.bm_id is not None:
-        patch["bm_id"] = body.bm_id.strip() or None
+        new_bm = body.bm_id.strip() or None
+        # dedup também no PATCH — antes dava pra criar 2 portas da mesma BM por aqui
+        if new_bm:
+            others = db.table("vendeai_meta_tokens").select("id,bm_id").eq(
+                "owner_id", user_id).neq("id", token_id).execute().data or []
+            if any((e.get("bm_id") or "") == new_bm for e in others):
+                raise HTTPException(400, "Já existe uma porta para essa BM")
+        bm_changed = new_bm != rows[0].get("bm_id")
+        patch["bm_id"] = new_bm
+    if bm_changed:
+        # BM trocada: números da BM antiga viram órfãos (refresh reconstrói o cache)
+        # e o badge cai pra "unknown" até o próximo teste de conexão
+        db.table("broadcast_numbers").delete().eq("owner_id", user_id).eq("meta_token_id", token_id).execute()
+        patch["connection_status"] = "unknown"
+        patch["connection_detail"] = "BM alterada — teste a conexão e rode o refresh"
+        patch["waba_count"] = 0
     if body.waba_ids is not None:
         patch["waba_ids"] = [w.strip() for w in body.waba_ids if w and w.strip()]
     bm_limit_changed = False
@@ -407,10 +429,24 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
         nonlocal meta_error
         meta_error = (meta_error + " | " if meta_error else "") + msg
 
+    def _set_port_status(token_id, status: str, detail: str) -> None:
+        """Persiste o badge da porta — token morto não pode continuar 'ESTÁVEL'."""
+        if not token_id:
+            return
+        try:
+            db.table("vendeai_meta_tokens").update({
+                "connection_status": status,
+                "connection_detail": (detail or "")[:240],
+                "last_check_at": datetime.now(timezone.utc).isoformat(),
+            }).eq("owner_id", user_id).eq("id", token_id).execute()
+        except Exception:
+            pass
+
     for t in tokens:
         label = t.get("label") or t.get("bm_name") or "porta"
         if t.get("corrupted"):
             _note(f"{label}: token ilegível — recadastre a porta")
+            _set_port_status(t.get("id"), "erro", "Token ilegível (chave Fernet mudou) — recadastre a porta")
             continue
         try:
             phones = await _phones_for_token(MetaClient(t["token"]), t.get("waba_ids") or [], t.get("bm_id"))
@@ -418,10 +454,13 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
                 # porta sem números não é exceção, mas o usuário precisa saber
                 # (token sem WABAs / BM id errado / permissão revogada)
                 _note(f"{label}: 0 números encontrados")
+            else:
+                _set_port_status(t.get("id"), "estavel", f"{len(phones)} números sincronizados no refresh")
             for p in phones:
                 collected.append((t.get("id"), t.get("bm_name"), p))
         except Exception as e:
             _note(f"{label}: {e}")
+            _set_port_status(t.get("id"), "erro", str(e))
 
     # ── Step 2: Chatwoot/VendeAI inboxes (não-fatal, creds únicas legadas) ───
     chatwoot_map: dict[str, str] = {}
@@ -538,14 +577,13 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
 
     # ── Step 4: Limpa órfãos ─────────────────────────────────────────────────
     # Remove números que não estão mais em BM∩CRM (BM trocada, número saiu do CRM,
-    # WABA removida). Só roda quando o cruzamento é confiável (CRM ok) E a busca
-    # Meta veio limpa (sem meta_error) — senão evita apagar número que só falhou
-    # de buscar nesta rodada.
+    # WABA removida). Só roda quando o cruzamento é confiável (CRM ok).
     # IMPORTANTE: limpeza por-token — só remove órfãos de tokens que devolveram
-    # ao menos 1 número nesta rodada. Evita deletar números de WABAs que falharam
-    # silenciosamente em get_all_phones_auto (exceções swallowed por WABA).
+    # ao menos 1 número nesta rodada (_tokens_with_phones). Erro em OUTRA porta
+    # não desliga mais a limpeza global: a porta com erro não entra no set, então
+    # os números dela ficam intocados, e as portas saudáveis limpam os próprios órfãos.
     removed = 0
-    if crm_ok and collected and meta_error is None:
+    if crm_ok and collected:
         kept = set(kept_phone_ids)
         stale = [
             r["phone_id"] for r in _prev_rows

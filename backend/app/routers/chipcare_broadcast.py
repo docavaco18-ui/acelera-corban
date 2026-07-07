@@ -336,10 +336,12 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
     _prev_limit = {r.get("phone_id"): r.get("daily_limit") for r in _prev_rows if r.get("phone_id")}
     _prev_tier = {r.get("phone_id"): r.get("messaging_tier") for r in _prev_rows if r.get("phone_id")}
     matched_keys: set[str] = set()
+    seen_ids: set[int] = set()
     for ch in channels:
         cid = ch.get("id")
         if not cid:
             continue
+        seen_ids.add(int(cid))
         title = ch.get("title") or str(cid)
         digits = "".join(c for c in title if c.isdigit())
         key = digits[-10:] if len(digits) >= 10 else digits
@@ -399,6 +401,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
             synth_id = -(int.from_bytes(digest[:6], "big") % 2_000_000_000)
         except Exception:
             continue
+        seen_ids.add(synth_id)
         try:
             db.table("chipcare_channels").upsert({
                 "owner_id": user_id,
@@ -432,6 +435,16 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
         except Exception:
             pass
 
+    # ── Step 5: Limpa órfãos (BM/CRM trocados) — espelha o Step 4 do VendeAI ──
+    # Só quando Chipcare e Meta responderam limpos; falha em qualquer fonte preserva tudo.
+    removed = 0
+    if chipcare_error is None and meta_error is None and seen_ids:
+        all_rows = db.table("chipcare_channels").select("channel_id").eq("owner_id", user_id).execute().data or []
+        stale = [r["channel_id"] for r in all_rows if r.get("channel_id") is not None and int(r["channel_id"]) not in seen_ids]
+        if stale:
+            db.table("chipcare_channels").delete().eq("owner_id", user_id).in_("channel_id", stale).execute()
+            removed = len(stale)
+
     stored = db.table("chipcare_channels").select("*").eq("owner_id", user_id).execute()
     return {
         "ok": True,
@@ -439,6 +452,7 @@ async def refresh_channels(user_id: str = Depends(_get_user_id)):
         "count": len(channels),
         "meta_total": len(meta_phones_list),
         "meta_matched": len(matched_keys),
+        "removed_stale": removed,
         "chipcare_error": chipcare_error,
         "meta_error": meta_error,
     }

@@ -181,6 +181,12 @@ class MetaClient:
             if bm_id:
                 await _add_edge(bm_id, "owned_whatsapp_business_accounts")
                 await _add_edge(bm_id, "client_whatsapp_business_accounts")
+                # Porta com BM explícita usa SOMENTE a Strategy 0: as Strategies
+                # 1-3 varrem TODAS as businesses do token e contaminariam a porta
+                # com WABAs de outras BMs (token de agência multi-BM = caso comum).
+                # Vazio aqui = erro honesto "0 números, confira o BM id" no refresh,
+                # nunca números da BM errada. Mesmo racional do guard da Strategy 4.
+                return waba_ids
 
             # ── Strategy 1: debug_token granular_scopes → owned WABAs ────────
             try:

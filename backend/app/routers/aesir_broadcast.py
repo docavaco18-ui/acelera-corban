@@ -309,10 +309,12 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     _prev_limit = {r.get("phone_id"): r.get("daily_limit") for r in _prev_rows if r.get("phone_id")}
     _prev_tier = {r.get("phone_id"): r.get("messaging_tier") for r in _prev_rows if r.get("phone_id")}
     matched_keys: set[str] = set()
+    seen_ids: set[str] = set()
     for inst in aesir_instances:
         iid = str(inst.get("id") or inst.get("instance_id") or "")
         if not iid:
             continue
+        seen_ids.add(iid)
         phone_raw = inst.get("phone") or inst.get("phone_number") or ""
         digits = "".join(c for c in phone_raw if c.isdigit())
         key = digits[-10:] if len(digits) >= 10 else digits
@@ -361,6 +363,7 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             continue
         phone_id = p.get("phone_id") or p.get("id") or key
         meta_iid = f"meta:{phone_id}"
+        seen_ids.add(meta_iid)
         db.table("aesir_instances").upsert({
             "owner_id": user_id,
             "instance_id": meta_iid,
@@ -390,12 +393,24 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
             "updated_at": now,
         }, on_conflict="owner_id,instance_id").execute()
 
+    # ── Step 5: Limpa órfãos (BM/CRM trocados) — espelha o Step 4 do VendeAI ──
+    # Só quando Aesir e Meta responderam limpos: instância que sumiu das duas
+    # fontes não existe mais; falha em qualquer fonte preserva tudo.
+    removed = 0
+    if aesir_error is None and meta_error is None and seen_ids:
+        all_rows = db.table("aesir_instances").select("instance_id").eq("owner_id", user_id).execute().data or []
+        stale = [r["instance_id"] for r in all_rows if r.get("instance_id") and r["instance_id"] not in seen_ids]
+        if stale:
+            db.table("aesir_instances").delete().eq("owner_id", user_id).in_("instance_id", stale).execute()
+            removed = len(stale)
+
     stored = db.table("aesir_instances").select("*").eq("owner_id", user_id).execute()
     return {
         "ok": True,
         "instances": stored.data or [],
         "meta_matched": len(meta_phones),
         "meta_total": len(meta_phones_list),
+        "removed_stale": removed,
         "aesir_error": aesir_error,
         "meta_error": meta_error,
     }
