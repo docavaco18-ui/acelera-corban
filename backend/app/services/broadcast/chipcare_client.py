@@ -39,6 +39,10 @@ class ChipcareHashes:
     sa_activate: str = "40d6c8e94ed90438c061742726eb102e9e30d7aad6"
     sa_list_tpl: str = "40431d7dacd2374aaaaa250e1993d7c8c512d4eef2"  # getCommonChannelTemplates
     sa_list_camps: str = "60d1f84d254eb29a6024a5d2206b8153916b2bbcc7"
+    # SA de desativar/pausar campanha — descobrir via curl+grep createServerReference
+    # (mesma técnica dos outros hashes) e salvar em chipcare_settings.sa_deactivate.
+    # Vazio = capacidade indisponível → cancel retorna aviso honesto em vez de mentir.
+    sa_deactivate: str = ""
 
 
 class ChipcareClient:
@@ -288,6 +292,23 @@ class ChipcareClient:
             )
             r.raise_for_status()
             log.info("chipcare activate_campaign ok campaign_id=%s", campaign_id)
+            return {"ok": True, "campaign_id": campaign_id}
+
+    async def deactivate_campaign(self, jwt: str, campaign_id: int) -> dict:
+        """SA de desativar campanha. Só funciona quando sa_deactivate está configurado
+        (via chipcare_settings). Raises RuntimeError se o hash não estiver disponível —
+        o caller trata como 'parada indisponível' e avisa o operador."""
+        if not self.hashes.sa_deactivate:
+            raise RuntimeError("SA de desativar campanha não configurado (chipcare_settings.sa_deactivate)")
+        async with httpx.AsyncClient() as client:
+            r = await client.post(
+                f"{BASE_URL}/admin/campanhas",
+                headers=self._headers_sa(jwt, self.hashes.sa_deactivate),
+                content=json.dumps([campaign_id]),
+                timeout=15,
+            )
+            r.raise_for_status()
+            log.info("chipcare deactivate_campaign ok campaign_id=%s", campaign_id)
             return {"ok": True, "campaign_id": campaign_id}
 
     # ── List campaigns ────────────────────────────────────────────────────────

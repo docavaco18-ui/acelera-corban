@@ -99,6 +99,7 @@ def _get_client_and_settings(user_id: str) -> tuple[ChipcareClient, dict]:
         sa_activate=row.get("sa_activate") or ChipcareHashes.sa_activate,
         sa_list_tpl=row.get("sa_list_tpl") or ChipcareHashes.sa_list_tpl,
         sa_list_camps=row.get("sa_list_camps") or ChipcareHashes.sa_list_camps,
+        sa_deactivate=row.get("sa_deactivate") or ChipcareHashes.sa_deactivate,
     )
     client = ChipcareClient(email=email, password=password, hashes=hashes)
     return client, row
@@ -831,46 +832,103 @@ async def confirm_dispatch(body: ChipcareDispatchIn, user_id: str = Depends(_get
     }
 
 
+def _campaign_ids_of(row: dict) -> list[int]:
+    """Todos os campaign_ids criados no dispatch (multi-canal), não só o 1º."""
+    ids: list[int] = []
+    for e in (row.get("assignments_json") or []):
+        cid = e.get("chipcare_campaign_id")
+        if cid and cid not in ids:
+            ids.append(cid)
+    legacy = row.get("chipcare_campaign_id")
+    if legacy and legacy not in ids:
+        ids.append(legacy)
+    return ids
+
+
 @router.post("/dispatches/{dispatch_id}/activate")
 async def activate_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
-    """Ativa campanha Chipcare criada em modo pausado."""
+    """Ativa TODAS as campanhas Chipcare criadas no dispatch (uma por canal)."""
     db = get_db()
     dispatch = db.table("chipcare_dispatches").select("*").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not dispatch.data:
         raise HTTPException(404, "Dispatch não encontrado")
     row = dispatch.data[0]
-    chipcare_id = row.get("chipcare_campaign_id")
-    if not chipcare_id:
+    campaign_ids = _campaign_ids_of(row)
+    if not campaign_ids:
         raise HTTPException(400, "Campanha Chipcare não criada ainda")
 
     client, settings_row = _get_client_and_settings(user_id)
+    activated, failures = 0, []
     try:
         jwt = _get_cached_jwt(user_id) or await client.login(tenant_id=settings_row.get("tenant_id"))
         _set_cached_jwt(user_id, jwt)
-        await client.activate_campaign(jwt, chipcare_id)
+        for cid in campaign_ids:
+            try:
+                await client.activate_campaign(jwt, cid)
+                activated += 1
+            except Exception as e:
+                log.warning("chipcare activate campaign=%s falhou: %s", cid, e)
+                failures.append({"campaign_id": cid, "error": str(e)[:200]})
     except Exception as e:
         _invalidate_jwt(user_id)
-        log.exception("chipcare activate_dispatch error dispatch=%s campaign=%s: %s", dispatch_id, chipcare_id, e)
+        log.exception("chipcare activate_dispatch login/error dispatch=%s: %s", dispatch_id, e)
         raise HTTPException(502, f"Chipcare ativar campanha falhou: {e}")
 
+    if activated == 0:
+        raise HTTPException(502, f"Nenhuma campanha ativada ({len(failures)} falha(s))")
+
     db.table("chipcare_dispatches").update({
-        "status": "running",
+        "status": "running" if not failures else "partial_error",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True, "chipcare_campaign_id": chipcare_id}
+    return {"ok": True, "activated": activated, "failures": failures}
 
 
 @router.post("/dispatches/{dispatch_id}/cancel")
-def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    existing = db.table("chipcare_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    existing = db.table("chipcare_dispatches").select("*").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
         raise HTTPException(404, "Dispatch não encontrado")
+    row = existing.data[0]
+    campaign_ids = _campaign_ids_of(row)
+
+    # Tenta parar de verdade no Chipcare (SA de desativar). Sem o hash configurado,
+    # NÃO marca cancelled silenciosamente — avisa que o envio segue ativo no CRM.
+    stopped, failures = 0, []
+    warning = None
+    if campaign_ids:
+        client, settings_row = _get_client_and_settings(user_id)
+        try:
+            jwt = _get_cached_jwt(user_id) or await client.login(tenant_id=settings_row.get("tenant_id"))
+            _set_cached_jwt(user_id, jwt)
+            for cid in campaign_ids:
+                try:
+                    await client.deactivate_campaign(jwt, cid)
+                    stopped += 1
+                except Exception as e:
+                    failures.append({"campaign_id": cid, "error": str(e)[:200]})
+        except Exception as e:
+            _invalidate_jwt(user_id)
+            failures.append({"login": str(e)[:200]})
+
+    fully_stopped = campaign_ids and stopped == len(campaign_ids)
+    now = datetime.now(timezone.utc).isoformat()
+    if fully_stopped or not campaign_ids:
+        db.table("chipcare_dispatches").update({
+            "status": "cancelled", "updated_at": now,
+        }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
+        return {"ok": True, "stopped": stopped}
+
+    # Não conseguiu parar tudo: status honesto + aviso pro operador
+    warning = ("Não foi possível desativar a campanha no Chipcare "
+               f"({stopped}/{len(campaign_ids)} paradas). O envio pode continuar — "
+               "desative manualmente no painel do Chipcare.")
     db.table("chipcare_dispatches").update({
-        "status": "cancelled",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "status": "cancel_requested", "updated_at": now,
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    log.warning("chipcare cancel incompleto dispatch=%s: %s", dispatch_id, warning)
+    return {"ok": False, "stopped": stopped, "warning": warning, "failures": failures}
 
 
 # ── Read endpoints ─────────────────────────────────────────────────────────────

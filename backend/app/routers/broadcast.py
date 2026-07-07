@@ -1181,7 +1181,9 @@ async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id))
         .eq("status", "running") \
         .execute()
     provider_errors: list[str] = []
-    mailings_with_id = [a for a in (asns.data or []) if a.get("vendeai_mailing_id")]
+    all_running = asns.data or []
+    mailings_with_id = [a for a in all_running if a.get("vendeai_mailing_id")]
+    without_id = len(all_running) - len(mailings_with_id)
     for asn in mailings_with_id:
         try:
             await vendeai.pause(asn["vendeai_mailing_id"])
@@ -1196,6 +1198,11 @@ async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id))
     result: dict = {"ok": True}
     if provider_errors:
         result["provider_warnings"] = provider_errors
+    # Mailings sem id NÃO foram pausados no VendeAI — não mentir que pausou
+    if without_id:
+        result["ok"] = False
+        result["warning"] = (f"{without_id} número(s) sem ID de mailing — o envio pode continuar no VendeAI. "
+                             "Pause manualmente no painel do VendeAI.")
     return result
 
 
@@ -1238,7 +1245,11 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
         .eq("owner_id", user_id) \
         .execute()
     provider_errors: list[str] = []
-    mailings_with_id = [a for a in (asns.data or []) if a.get("vendeai_mailing_id")]
+    all_asns = asns.data or []
+    mailings_with_id = [a for a in all_asns if a.get("vendeai_mailing_id")]
+    # só conta como "sem id" os que ainda estavam rodando (não os já terminados)
+    without_id = sum(1 for a in all_asns
+                     if not a.get("vendeai_mailing_id") and a.get("status") in ("running", "paused"))
     for asn in mailings_with_id:
         try:
             await vendeai.cancel(asn["vendeai_mailing_id"])
@@ -1255,6 +1266,10 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
     result: dict = {"ok": True}
     if provider_errors:
         result["provider_warnings"] = provider_errors
+    if without_id:
+        result["ok"] = False
+        result["warning"] = (f"{without_id} número(s) sem ID de mailing — o envio pode continuar no VendeAI. "
+                             "Cancele manualmente no painel do VendeAI.")
     return result
 
 

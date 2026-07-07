@@ -98,6 +98,26 @@ class AesirClient:
             r.raise_for_status()
             return r.json()
 
+    async def cancel_campaign(self, campaign_id: int | str) -> dict:
+        """Tenta parar a campanha no Aesir. Endpoint não documentado no V1 —
+        tenta DELETE /campaigns/{id} e POST /campaigns/{id}/cancel. Levanta se
+        nenhum funcionar, pra o caller avisar que o envio pode continuar no Aesir."""
+        last_exc: Exception | None = None
+        async with httpx.AsyncClient(timeout=15) as client:
+            for method, url in (
+                ("delete", f"{BASE_URL}/campaigns/{campaign_id}"),
+                ("post", f"{BASE_URL}/campaigns/{campaign_id}/cancel"),
+            ):
+                try:
+                    r = await client.request(method, url, headers=self._headers())
+                    if r.status_code < 300:
+                        log.info("aesir cancel_campaign ok id=%s via %s", campaign_id, method)
+                        return {"ok": True, "campaign_id": campaign_id}
+                    last_exc = RuntimeError(f"{method} {url} → {r.status_code}")
+                except Exception as e:
+                    last_exc = e
+        raise last_exc or RuntimeError("cancel_campaign: nenhum endpoint respondeu")
+
     async def list_instances(self) -> list[dict]:
         """GET /whatsapp/instances — lista instâncias WA do tenant."""
         async with httpx.AsyncClient() as client:
@@ -135,6 +155,12 @@ class AesirClient:
         sent = 0
         errors = 0
         consecutive_errors = 0
+        aborted = False
+        seen_phones: set[str] = set()
+        duplicates = 0
+        # Circuit breaker: token revogado / instância desconectada = 100% falha.
+        # Sem abortar, o loop marteladaria a API por milhares de leads (risco de ban).
+        MAX_CONSECUTIVE_ERRORS = 10
 
         async with httpx.AsyncClient(timeout=15) as client:
             for i, row in enumerate(rows):
@@ -152,6 +178,12 @@ class AesirClient:
                     errors += 1
                     log.debug("aesir_skip invalid_phone raw=%r digits=%r", phone_raw, phone)
                     continue
+
+                # Dedup: telefone repetido no CSV não recebe a mesma msg 2x (anti-spam)
+                if phone in seen_phones:
+                    duplicates += 1
+                    continue
+                seen_phones.add(phone)
 
                 message = message_tpl
                 for key, val in row.items():
@@ -176,8 +208,14 @@ class AesirClient:
                     errors += 1
                     consecutive_errors += 1
                     log.warning("aesir_send_error phone=%s error=%s: %s", phone, type(exc).__name__, str(exc)[:120])
-                    # Backoff anti-ban: erros seguidos costumam ser rate-limit — desacelera
-                    # em vez de marteladar o número (senão a quality despenca → bloqueio).
+                    # Abort: N erros seguidos = falha estrutural (token/instância/template),
+                    # não rate-limit passageiro. Continuar só queima a quality do número.
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                        aborted = True
+                        log.error("aesir_dispatch abortado após %d erros consecutivos instance=%s",
+                                  consecutive_errors, instance_id)
+                        break
+                    # Backoff anti-ban antes do limite: desacelera em vez de marteladar.
                     if consecutive_errors >= 3:
                         await asyncio.sleep(min(60, cooldown_seconds * consecutive_errors))
 
@@ -185,4 +223,7 @@ class AesirClient:
                 if i < len(rows) - 1:
                     await asyncio.sleep(cooldown_seconds)
 
-        return {"sent": sent, "errors": errors, "total": sent + errors}
+        if duplicates:
+            log.info("aesir_dispatch dedup: %d telefone(s) repetido(s) ignorado(s)", duplicates)
+        return {"sent": sent, "errors": errors, "total": sent + errors,
+                "aborted": aborted, "duplicates": duplicates}

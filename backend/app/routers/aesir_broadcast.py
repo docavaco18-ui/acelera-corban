@@ -549,6 +549,7 @@ async def _dispatch_template_campaign(
     csv_bytes: bytes,
     body: "DispatchIn",
     stop_event: asyncio.Event,
+    on_campaign_id=None,
 ) -> dict[str, Any]:
     """POST /campaigns — envia lote via Aesir; registra no Gerenciador de Campanhas.
 
@@ -601,8 +602,17 @@ async def _dispatch_template_campaign(
     )
 
     if not campaign_id:
-        log.warning("aesir_campaign: sem campaign_id na resposta — retorno otimista")
-        return {"sent": len(recipients), "errors": skipped, "total": len(recipients) + skipped}
+        # Sem id não dá pra confirmar entrega NEM cancelar — não inventa sent.
+        log.warning("aesir_campaign: sem campaign_id na resposta — sem confirmação de envio")
+        return {"sent": 0, "errors": skipped, "total": len(recipients) + skipped,
+                "status": "sem_confirmacao", "note": "Aesir não retornou campaign_id — rastreio/cancelamento indisponíveis"}
+
+    # Persiste o campaign_id (permite cancelar de verdade, inclusive pós-restart)
+    if on_campaign_id:
+        try:
+            on_campaign_id(campaign_id)
+        except Exception:
+            pass
 
     # Polling: GET /campaigns/{id} até terminar ou stop_event
     TERMINAL = {"completed", "done", "finished", "failed", "error", "cancelled"}
@@ -729,9 +739,11 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
 
                 try:
                     if is_template:
+                        def _save_cid(cid, _iid=iid):
+                            _update_assignment(body.dispatch_id, _iid, {"campaign_id": cid}, db, user_id)
                         result = await _dispatch_template_campaign(
                             client, str(iid), type_map.get(str(iid), "waba"),
-                            slice_bytes, body, stop_event,
+                            slice_bytes, body, stop_event, on_campaign_id=_save_cid,
                         )
                     else:
                         result = await client.dispatch_csv(
@@ -743,10 +755,18 @@ async def confirm_dispatch(body: DispatchIn, user_id: str = Depends(_get_user_id
                             stop_event=stop_event,
                             instance_type=type_map.get(str(iid), "waba"),
                         )
+                    if stop_event.is_set():
+                        _asn_status = "paused"
+                    elif result.get("status") == "sem_confirmacao":
+                        _asn_status = "sem_confirmacao"  # Aesir não devolveu campaign_id
+                    elif result.get("aborted"):
+                        _asn_status = "error"  # circuit breaker: falha estrutural
+                    else:
+                        _asn_status = "done"
                     _update_assignment(body.dispatch_id, iid, {
                         "sent": result["sent"],
                         "errors": result["errors"],
-                        "status": "done" if not stop_event.is_set() else "paused",
+                        "status": _asn_status,
                     }, db, user_id)
                     _total_sent += result["sent"]
                     _total_errors += result["errors"]
@@ -826,38 +846,75 @@ def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db, owne
 
 # ── Dispatch control ──────────────────────────────────────────────────────────
 
+def _aesir_campaign_ids(row: dict) -> list:
+    ids = []
+    for a in (row.get("assignments_json") or []):
+        cid = a.get("campaign_id")
+        if cid and cid not in ids:
+            ids.append(cid)
+    return ids
+
+
+async def _stop_aesir_campaigns(user_id: str, row: dict) -> tuple[int, list]:
+    """Para as campanhas template no Aesir (modo texto para pelo stop_event local)."""
+    campaign_ids = _aesir_campaign_ids(row)
+    if not campaign_ids:
+        return 0, []
+    client = _get_client(user_id)
+    stopped, failures = 0, []
+    for cid in campaign_ids:
+        try:
+            await client.cancel_campaign(cid)
+            stopped += 1
+        except Exception as e:
+            failures.append({"campaign_id": cid, "error": str(e)[:200]})
+    return stopped, failures
+
+
 @router.post("/dispatches/{dispatch_id}/pause")
-def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+async def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    existing = db.table("aesir_dispatches").select("*").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
         raise HTTPException(404, "Dispatch não encontrado")
-    # stop_event só DEPOIS de validar ownership — senão qualquer tenant para disparo alheio
+    # stop_event só DEPOIS de validar ownership — senão qualquer tenant para disparo alheio.
+    # Para o modo texto (loop local) na hora; o modo template roda no Aesir → cancela lá.
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
+    stopped, failures = await _stop_aesir_campaigns(user_id, existing.data[0])
+    campaign_ids = _aesir_campaign_ids(existing.data[0])
     db.table("aesir_dispatches").update({
         "status": "paused",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    if campaign_ids and stopped < len(campaign_ids):
+        return {"ok": False, "stopped": stopped,
+                "warning": "Campanha de template pode continuar no Aesir — pause manualmente no painel do Aesir.",
+                "failures": failures}
+    return {"ok": True, "stopped": stopped}
 
 
 @router.post("/dispatches/{dispatch_id}/cancel")
-def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
+async def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
     db = get_db()
-    existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
+    existing = db.table("aesir_dispatches").select("*").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
         raise HTTPException(404, "Dispatch não encontrado")
-    # stop_event só DEPOIS de validar ownership — senão qualquer tenant para disparo alheio
     ev = _stop_events.get(dispatch_id)
     if ev:
         ev.set()
+    stopped, failures = await _stop_aesir_campaigns(user_id, existing.data[0])
+    campaign_ids = _aesir_campaign_ids(existing.data[0])
     db.table("aesir_dispatches").update({
-        "status": "cancelled",
+        "status": "cancelled" if (not campaign_ids or stopped == len(campaign_ids)) else "cancel_requested",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", dispatch_id).eq("owner_id", user_id).execute()
-    return {"ok": True}
+    if campaign_ids and stopped < len(campaign_ids):
+        return {"ok": False, "stopped": stopped,
+                "warning": "Campanha de template pode continuar no Aesir — cancele manualmente no painel do Aesir.",
+                "failures": failures}
+    return {"ok": True, "stopped": stopped}
 
 
 # ── Read endpoints ────────────────────────────────────────────────────────────
