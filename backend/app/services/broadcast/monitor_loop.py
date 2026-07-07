@@ -24,6 +24,45 @@ def _utcnow() -> str:
 
 logger = logging.getLogger(__name__)
 POLL_INTERVAL = 20
+
+# Estados em que um disparo ainda está "vivo" e precisa de monitoramento/polling.
+# 'partial_error'/'dispatching' antes ficavam de fora → envio seguia sem vigilância.
+ACTIVE_DISPATCH_STATUSES = ["running", "dispatching", "partial_error"]
+
+
+def compute_dispatch_terminal(assignments: list[dict]) -> str | None:
+    """Estado terminal de um dispatch a partir dos assignments, ou None se ainda vivo.
+
+    Um assignment está concluído quando (sent+failed) >= planned (planned>0) ou já
+    tem status terminal. Só marca o dispatch como terminal quando NENHUM assignment
+    ainda está em andamento — evita marcar 'done' cedo demais (deferido 8: dispatch
+    VendeAI ficava 'running' pra sempre alimentando o N+1 do polling)."""
+    live_states = {"running", "scheduled", "queued", "dispatching", "pending"}
+    any_assignment = False
+    any_error = False
+    any_success = False
+    for a in assignments or []:
+        planned = int(a.get("planned_count") or a.get("planned") or 0)
+        if planned <= 0:
+            continue
+        any_assignment = True
+        status = str(a.get("status") or "").lower()
+        sent = int(a.get("sent_count") or a.get("sent") or 0)
+        failed = int(a.get("failed_count") or a.get("errors") or 0)
+        done_by_count = (sent + failed) >= planned
+        if status in live_states and not done_by_count:
+            return None  # ainda tem assignment vivo → dispatch não terminou
+        if status in ("error", "sem_confirmacao") or (failed > 0 and sent == 0):
+            any_error = True
+        elif sent > 0:
+            any_success = True
+    if not any_assignment:
+        return None
+    if any_success and any_error:
+        return "partial_error"
+    if any_error and not any_success:
+        return "error"
+    return "done"
 # Qualidade/tier da Meta mudam devagar (horas). Consultar a Graph API por número a
 # cada tick (20s) é N+1 desnecessário e acumula application rate limit. Só reconsulta
 # um número se a última checagem foi há mais de este intervalo.
@@ -36,7 +75,7 @@ async def monitor_tick(redis_client: aioredis.Redis) -> None:
     # Find all users with active dispatches
     active = db.table("broadcast_dispatches") \
         .select("owner_id") \
-        .in_("status", ["running"]) \
+        .in_("status", ACTIVE_DISPATCH_STATUSES) \
         .execute()
 
     owner_ids = list({row["owner_id"] for row in (active.data or [])})
@@ -46,6 +85,13 @@ async def monitor_tick(redis_client: aioredis.Redis) -> None:
             await _process_owner(db, owner_id, redis_client)
         except Exception as e:
             logger.exception(f"Monitor error for owner {owner_id}: {e}")
+
+    # CRM Aesir/Chipcare: vigilância de qualidade + auto-pause durante disparo ativo
+    for crm in ("aesir", "chipcare"):
+        try:
+            await _monitor_crm_quality(db, crm, redis_client)
+        except Exception as e:
+            logger.exception(f"CRM monitor {crm} error: {e}")
 
 
 async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> None:
@@ -225,6 +271,25 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
     except Exception as e:
         logger.warning(f"Intervention failed for {owner_id}: {e}")
 
+    # 3b. Transição terminal: dispatch que já terminou não pode ficar 'running'
+    #     pra sempre (deferido 8) — alimentava o N+1 do polling Meta indefinidamente.
+    try:
+        live = db.table("broadcast_dispatches") \
+            .select("id, status, broadcast_dispatch_assignments(*)") \
+            .eq("owner_id", owner_id) \
+            .in_("status", ["running", "dispatching", "partial_error"]) \
+            .execute()
+        for disp in (live.data or []):
+            terminal = compute_dispatch_terminal(disp.get("broadcast_dispatch_assignments") or [])
+            if terminal:
+                db.table("broadcast_dispatches").update({
+                    "status": terminal,
+                    "finished_at": _utcnow(),
+                    "updated_at": _utcnow(),
+                }).eq("owner_id", owner_id).eq("id", disp["id"]).execute()
+    except Exception as e:
+        logger.warning(f"Terminal transition failed for {owner_id}: {e}")
+
     # 4. Publish snapshot
     try:
         numbers = db.table("broadcast_numbers").select("*").eq("owner_id", owner_id).execute()
@@ -252,6 +317,82 @@ async def _process_owner(db, owner_id: str, redis_client: aioredis.Redis) -> Non
         )
     except Exception as e:
         logger.warning(f"Snapshot publish failed for {owner_id}: {e}")
+
+
+_CRM_CFG = {
+    "aesir": {
+        "settings": "aesir_settings", "numbers": "aesir_instances", "dispatches": "aesir_dispatches",
+        "id_col": "instance_id",
+    },
+    "chipcare": {
+        "settings": "chipcare_settings", "numbers": "chipcare_channels", "dispatches": "chipcare_dispatches",
+        "id_col": "channel_id",
+    },
+}
+
+
+async def _monitor_crm_quality(db, crm: str, redis_client: aioredis.Redis) -> None:
+    """Vigia a qualidade dos números Aesir/Chipcare durante disparo ativo e
+    auto-pausa (marca is_paused + pausa o dispatch) quando um número cai pra RED.
+    Antes, só o VendeAI tinha essa proteção — Aesir/Chipcare rodavam às cegas."""
+    cfg = _CRM_CFG[crm]
+    active = db.table(cfg["dispatches"]).select("owner_id") \
+        .in_("status", ACTIVE_DISPATCH_STATUSES).execute()
+    owner_ids = list({r["owner_id"] for r in (active.data or [])})
+    if not owner_ids:
+        return
+
+    for owner_id in owner_ids:
+        try:
+            srow = db.table(cfg["settings"]).select("meta_token_enc").eq("owner_id", owner_id).execute().data
+            token = decrypt(srow[0].get("meta_token_enc")) if srow and srow[0].get("meta_token_enc") else None
+            if not token:
+                continue
+            meta = MetaClient(token)
+            nums = db.table(cfg["numbers"]).select(
+                f"{cfg['id_col']}, phone_id, quality_rating, is_paused, quality_updated_at"
+            ).eq("owner_id", owner_id).execute().data or []
+            now_ts = datetime.now(timezone.utc)
+            for num in nums:
+                phone_id = num.get("phone_id")
+                if not phone_id or num.get("is_paused"):
+                    continue
+                # throttle anti-rate-limit (mesmo intervalo do VendeAI)
+                lc = num.get("quality_updated_at")
+                if lc:
+                    try:
+                        prev = datetime.fromisoformat(str(lc).replace("Z", "+00:00"))
+                        if prev.tzinfo is None:
+                            prev = prev.replace(tzinfo=timezone.utc)
+                        if (now_ts - prev).total_seconds() < META_QUALITY_MIN_INTERVAL:
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+                try:
+                    q = await meta.get_phone_quality(phone_id)
+                except Exception as e:
+                    logger.warning(f"{crm} meta poll {phone_id}: {e}")
+                    continue
+                upd = {"quality_rating": q["quality_rating"], "can_send": q["can_send"],
+                       "quality_updated_at": _utcnow()}
+                if q["daily_limit"] > 0:
+                    upd["daily_limit"] = q["daily_limit"]
+                    upd["messaging_tier"] = q["messaging_tier"]
+                if q["quality_rating"] == "RED":
+                    # auto-pause: número RED não pode seguir disparando (risco de ban)
+                    upd["is_paused"] = True
+                    db.table(cfg["dispatches"]).update({"status": "paused", "updated_at": _utcnow()}) \
+                        .eq("owner_id", owner_id).in_("status", ACTIVE_DISPATCH_STATUSES).execute()
+                    await redis_client.publish("broadcast:events", json.dumps({
+                        "user_id": owner_id, "type": "broadcast.alert", "crm": crm,
+                        "alert_type": "quality_drop", "phone_id": phone_id, "severity": "critical",
+                        "message": f"[{crm}] número {phone_id} caiu para RED — disparo pausado automaticamente",
+                    }))
+                    logger.error(f"{crm} auto-pause owner={owner_id} phone={phone_id} RED")
+                db.table(cfg["numbers"]).update(upd) \
+                    .eq("owner_id", owner_id).eq(cfg["id_col"], num[cfg["id_col"]]).execute()
+        except Exception as e:
+            logger.warning(f"{crm} monitor owner {owner_id}: {e}")
 
 
 async def run_monitor_loop(redis_client: aioredis.Redis) -> None:
