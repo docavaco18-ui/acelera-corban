@@ -741,7 +741,7 @@ async def confirm_dispatch(
         .select("*") \
         .eq("id", body.dispatch_id) \
         .eq("owner_id", user_id) \
-        .single() \
+        .maybe_single() \
         .execute()
 
     if not dispatch.data:
@@ -754,7 +754,7 @@ async def confirm_dispatch(
     body.cooldown_seconds = max(1, int(body.cooldown_seconds or 0))
     body.dedup_window_hours = max(1, int(body.dedup_window_hours or 0))
 
-    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
+    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).maybe_single().execute()
     if not creds.data:
         raise HTTPException(400, "Configure credenciais VendeAI primeiro")
 
@@ -1049,7 +1049,7 @@ def get_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
         .select("*, broadcast_dispatch_assignments(*)") \
         .eq("id", dispatch_id) \
         .eq("owner_id", user_id) \
-        .single() \
+        .maybe_single() \
         .execute()
     if not resp.data:
         raise HTTPException(404, "Dispatch não encontrado")
@@ -1073,7 +1073,7 @@ def get_dispatch_metrics(dispatch_id: str, user_id: str = Depends(_get_user_id))
         .select("id, total_leads, status, broadcast_dispatch_assignments(planned_count,sent_count,failed_count,open_count,converted_count)") \
         .eq("id", dispatch_id) \
         .eq("owner_id", user_id) \
-        .single() \
+        .maybe_single() \
         .execute()
     if not head.data:
         raise HTTPException(404, "Dispatch não encontrado")
@@ -1135,7 +1135,7 @@ def list_dispatch_recipients(
     user_id: str = Depends(_get_user_id),
 ):
     db = get_db()
-    head = db.table("broadcast_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).single().execute()
+    head = db.table("broadcast_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).maybe_single().execute()
     if not head.data:
         raise HTTPException(404, "Dispatch não encontrado")
     query = db.table("broadcast_recipients") \
@@ -1156,7 +1156,7 @@ def list_dispatch_recipients(
 
 async def _get_vendeai_for_user(user_id: str) -> VendeAIClient:
     db = get_db()
-    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).single().execute()
+    creds = db.table("vendeai_settings").select("*").eq("owner_id", user_id).maybe_single().execute()
     if not creds.data:
         raise HTTPException(400, "Credenciais não configuradas")
     email = safe_decrypt(creds.data.get("email_enc"))

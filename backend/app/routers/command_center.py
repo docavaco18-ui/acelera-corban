@@ -16,6 +16,8 @@ from ..services.broadcast.meta_client import MetaClient
 router = APIRouter(prefix="/api/command-center", tags=["command-center"])
 logger = logging.getLogger(__name__)
 
+ERROR_RADAR_WINDOW_DAYS = 7
+
 
 DISPATCHERS = {
     "vendeai": {
@@ -178,6 +180,37 @@ def _collect_numbers(db, owner_id: str) -> dict[str, list[dict]]:
     }
 
 
+def _used_today_by_source(db, owner_id: str) -> dict[str, dict[str, int]]:
+    """Enviadas hoje por número, POR CRM. Antes só o VendeAI contava — Aesir/Chipcare
+    ficavam com used_today=0 e a capacidade restante da Central era superestimada."""
+    today = _now().date().isoformat()
+    out: dict[str, dict[str, int]] = {"vendeai": defaultdict(int), "aesir": defaultdict(int), "chipcare": defaultdict(int)}
+    # VendeAI: broadcast_dispatch_assignments por phone_id
+    try:
+        rows = db.table("broadcast_dispatch_assignments").select("phone_id, sent_count, created_at") \
+            .eq("owner_id", owner_id).gte("created_at", today).limit(5000).execute().data or []
+        for r in rows:
+            pid = r.get("phone_id")
+            if pid:
+                out["vendeai"][str(pid)] += int(r.get("sent_count") or 0)
+    except Exception as e:
+        logger.warning("used_today vendeai falhou: %s", e)
+    # Aesir/Chipcare: assignments_json dos dispatches de hoje
+    for crm, table, id_field in (("aesir", "aesir_dispatches", "instance_id"),
+                                 ("chipcare", "chipcare_dispatches", "channel_id")):
+        try:
+            rows = db.table(table).select("assignments_json, created_at") \
+                .eq("owner_id", owner_id).gte("created_at", today).limit(1000).execute().data or []
+            for r in rows:
+                for a in (r.get("assignments_json") or []):
+                    key = a.get(id_field)
+                    if key is not None:
+                        out[crm][str(key)] += int(a.get("sent") or a.get("sent_count") or 0)
+        except Exception as e:
+            logger.warning("used_today %s falhou: %s", crm, e)
+    return {k: dict(v) for k, v in out.items()}
+
+
 def _collect_settings(db, owner_id: str) -> dict[str, dict]:
     settings: dict[str, dict] = {}
     for key, cfg in DISPATCHERS.items():
@@ -259,16 +292,19 @@ def _build_health(db, owner_id: str, settings: dict[str, dict], numbers: dict[st
 
 
 def _build_deliverability(db, owner_id: str, numbers: dict[str, list[dict]]) -> dict:
-    sent_today = _sent_today_from_assignments(db, owner_id)
+    used_by_source = _used_today_by_source(db, owner_id)
+    id_field = {"vendeai": "phone_id", "aesir": "instance_id", "chipcare": "channel_id"}
     channels = []
     totals = {"all": 0, "healthy": 0, "warning": 0, "critical": 0, "capacity_today": 0, "used_today": 0}
 
     for key, rows in numbers.items():
         label = DISPATCHERS[key]["label"]
+        used_map = used_by_source.get(key, {})
         for row in rows:
             limit = _daily_limit(row)
-            pid = str(row.get("phone_id") or "")
-            used = sent_today.get(pid, int(row.get("sent_today") or 0))
+            # id específico do CRM (phone_id só existe no VendeAI)
+            src_id = str(row.get(id_field.get(key, "phone_id")) or "")
+            used = used_map.get(src_id, 0)
             remaining = max(0, limit - used)
             level = _risk_level(row)
             healthy = _is_number_healthy(row)
@@ -405,17 +441,39 @@ def _audit_meta_tokens_cached(settings: dict[str, dict], numbers: dict[str, list
     return audits
 
 
-async def _audit_meta_tokens_live(settings: dict[str, dict], numbers: dict[str, list[dict]] | None = None) -> list[dict]:
+def _vendeai_port_tokens(db, owner_id: str) -> list[dict]:
+    """Portas multi-BM do VendeAI com token decifrado + waba_ids salvos."""
+    try:
+        rows = db.table("vendeai_meta_tokens").select("meta_token_enc, waba_ids, bm_name") \
+            .eq("owner_id", owner_id).execute().data or []
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        tok = safe_decrypt(r.get("meta_token_enc"))
+        if tok:
+            out.append({"token": tok, "waba_ids": r.get("waba_ids") or [], "bm_name": r.get("bm_name")})
+    return out
+
+
+async def _audit_meta_tokens_live(settings: dict[str, dict], numbers: dict[str, list[dict]] | None = None,
+                                  db=None, owner_id: str | None = None) -> list[dict]:
     numbers = numbers or {}
+    # Deferido 4: no live, o VendeAI multi-BM guarda os tokens em vendeai_meta_tokens,
+    # não no token legado. Sem isto, o audit reportava 'crítico' pra quem só usa portas.
+    port_tokens = _vendeai_port_tokens(db, owner_id) if (db is not None and owner_id) else []
 
     async def audit_one(key: str, row: dict) -> dict | None:
         cfg = DISPATCHERS[key]
         label = cfg["label"]
         # CRM nunca configurado (sem settings E sem números): não emite auditoria —
         # espelha o skip do modo cached, senão vira incidente crítico fantasma no live.
-        if not row and not (numbers.get(key) or []):
+        if not row and not (numbers.get(key) or []) and not (key == "vendeai" and port_tokens):
             return None
         token = safe_decrypt(row.get(cfg["meta_token_col"]))
+        # VendeAI sem token legado: usa o token da 1ª porta multi-BM
+        if not token and key == "vendeai" and port_tokens:
+            token = port_tokens[0]["token"]
         if not token:
             return {
                 "source": key,
@@ -507,22 +565,33 @@ def _build_error_radar(db, owner_id: str, numbers: dict[str, list[dict]]) -> dic
                 if len(examples[issue]) < 4:
                     examples[issue].append(_number_title(n))
 
-    assignment_rows = _safe_select(
-        db,
-        "broadcast_dispatch_assignments",
-        "phone_id, failed_count, status, display_phone",
-        owner_id=owner_id,
-        limit=5000,
-    )
+    # Janela de 7 dias: falhas/campanhas de meses atrás não são incidente "ativo"
+    window = _days_ago(ERROR_RADAR_WINDOW_DAYS)
+
+    def _recent(rows: list[dict]) -> list[dict]:
+        out = []
+        for r in rows:
+            ca = str(r.get("created_at") or "")
+            if not ca or ca >= window:
+                out.append(r)
+        return out
+
+    try:
+        assignment_rows = db.table("broadcast_dispatch_assignments") \
+            .select("phone_id, failed_count, status, display_phone, created_at") \
+            .eq("owner_id", owner_id).gte("created_at", window).limit(5000).execute().data or []
+    except Exception:
+        assignment_rows = []
     failed_assignments = sum(int(r.get("failed_count") or 0) for r in assignment_rows)
     if failed_assignments:
         reasons["Falhas em assignments VendeAI"] += failed_assignments
 
     for key, cfg in DISPATCHERS.items():
-        rows = _safe_select(db, cfg["dispatches_table"], "*", owner_id=owner_id, limit=1000)
+        rows = _recent(_safe_select(db, cfg["dispatches_table"], "*", owner_id=owner_id, limit=1000))
         for row in rows:
             status = str(row.get("status") or "").lower()
-            if status in {"error", "failed", "cancelled", "revoked"}:
+            # cancelled/revoked = AÇÃO do usuário, não erro operacional — não conta
+            if status in {"error", "failed", "partial_error"}:
                 label = f"Campanhas {cfg['label']} em {status}"
                 reasons[label] += 1
                 if len(examples[label]) < 4:
@@ -597,7 +666,7 @@ def _build_incidents(health: list[dict], deliverability: dict, error_radar: dict
     return incidents[:50]
 
 
-def _build_checklist(health: list[dict], deliverability: dict, templates: dict, capacity: dict) -> list[dict]:
+def _build_checklist(health: list[dict], deliverability: dict, templates: dict, capacity: dict, templates_synced: bool = True) -> list[dict]:
     approved_templates = templates["by_status"].get("APPROVED", 0)
     marketing = templates["by_category"].get("MARKETING", 0)
     utility = templates["by_category"].get("UTILITY", 0)
@@ -622,9 +691,12 @@ def _build_checklist(health: list[dict], deliverability: dict, templates: dict, 
         },
         {
             "id": "templates",
+            # Sem auditoria ao vivo o cache SEMPRE reporta 0 templates — não penalizar
+            # o checklist/score por um dado que não foi sincronizado (era -4 fantasma).
             "label": "Templates aprovados disponiveis",
-            "status": "ok" if approved_templates > 0 else "warn",
-            "detail": f"{approved_templates} aprovados · {marketing} marketing · {utility} utility.",
+            "status": ("ok" if approved_templates > 0 else "warn") if templates_synced else "info",
+            "detail": (f"{approved_templates} aprovados · {marketing} marketing · {utility} utility."
+                       if templates_synced else "Rode a auditoria ao vivo para sincronizar os templates da Meta."),
         },
         {
             "id": "capacity",
@@ -676,7 +748,7 @@ async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dic
     if live_meta:
         try:
             meta_audits = await asyncio.wait_for(
-                _audit_meta_tokens_live(settings, numbers),
+                _audit_meta_tokens_live(settings, numbers, db=db, owner_id=owner_id),
                 timeout=LIVE_META_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
@@ -686,8 +758,9 @@ async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dic
         meta_audits = _audit_meta_tokens_cached(settings, numbers)
 
     templates = _build_templates(meta_audits)
+    templates_synced = any(a.get("live") for a in meta_audits)
     incidents = _build_incidents(health, deliverability, error_radar, meta_audits)
-    checklist = _build_checklist(health, deliverability, templates, capacity)
+    checklist = _build_checklist(health, deliverability, templates, capacity, templates_synced=templates_synced)
     score = _build_score(health, deliverability, checklist, incidents)
 
     return {
@@ -706,7 +779,29 @@ async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dic
     }
 
 
+LIVE_META_COOLDOWN_SECONDS = 120
+
+
 @router.get("/overview")
 async def overview(live_meta: bool = False, user: AuthUser = Depends(require_user)):
     db = get_db()
-    return await compute_overview(db, user.user_id, live_meta=live_meta)
+    if live_meta:
+        # Cooldown por owner: cada clique em "auditar ao vivo" dispara N chamadas
+        # Graph. Dentro da janela, serve o último resultado live cacheado (a qualidade
+        # Meta muda em horas, não em segundos) — corta rajada de rate-limit.
+        try:
+            from ..redis_client import get_redis
+            redis = await get_redis()
+            cache_key = f"cc:live_overview:{user.user_id}"
+            cached = await redis.get(cache_key)
+            if cached:
+                import json as _json
+                return _json.loads(cached)
+            result = await compute_overview(db, user.user_id, live_meta=True)
+            import json as _json
+            await redis.set(cache_key, _json.dumps(result, default=str), ex=LIVE_META_COOLDOWN_SECONDS)
+            return result
+        except Exception as e:
+            logger.warning("live overview cache indisponível (%s) — rodando direto", e)
+            return await compute_overview(db, user.user_id, live_meta=True)
+    return await compute_overview(db, user.user_id, live_meta=False)

@@ -114,13 +114,30 @@ async def list_users_monitor(force: bool = False, _: AuthUser = Depends(require_
     return result
 
 
+_REFRESH_LOCK_KEY = "admin:users_monitor:refresh_lock"
+_REFRESH_LOCK_TTL = 300  # 5 min — auditoria live de TODOS os users é cara
+
+
 @router.post("/refresh-live")
 async def refresh_live(_: AuthUser = Depends(require_admin)):
-    result = await _build_all(live_meta=True)
-    if result.get("users"):
-        redis = await get_redis()
-        await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
-    return result
+    redis = await get_redis()
+    # Lock: refresh-live varre a Graph API de todos os clientes. Sem lock, 2 cliques
+    # (ou 2 admins) empilham a varredura inteira → timeout de proxy + rate-limit Meta.
+    acquired = await redis.set(_REFRESH_LOCK_KEY, "1", ex=_REFRESH_LOCK_TTL, nx=True)
+    if not acquired:
+        cached = await redis.get(_CACHE_KEY)
+        if cached:
+            data = json.loads(cached)
+            data["_refresh_in_progress"] = True
+            return data
+        raise HTTPException(429, "Auditoria ao vivo já em andamento — aguarde alguns minutos.")
+    try:
+        result = await _build_all(live_meta=True)
+        if result.get("users"):
+            await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
+        return result
+    finally:
+        await redis.delete(_REFRESH_LOCK_KEY)
 
 
 @router.get("/{owner_id}")
