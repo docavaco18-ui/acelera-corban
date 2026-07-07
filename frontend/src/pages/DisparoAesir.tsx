@@ -474,10 +474,12 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
   // Disparo oficial via template Meta (Aesir V1 não suporta texto livre fora da janela 24h)
   const [templates, setTemplates] = useState<{ name: string; language: string; category: string; body: string; variables: string[] }[]>([]);
   const [tplName, setTplName] = useState('');
+  const [tplLang, setTplLang] = useState('');
   const [tplVars, setTplVars] = useState<{ source: 'column' | 'text'; value: string }[]>([]);
   const [loadingTpls, setLoadingTpls] = useState(false);
   const [tplErr, setTplErr] = useState('');
-  const tplObj = templates.find(t => t.name === tplName);
+  // Meta permite o mesmo nome de template em vários idiomas — resolver por nome+idioma
+  const tplObj = templates.find(t => t.name === tplName && (!tplLang || t.language === tplLang));
 
   const labelStyle = { color: C.sec, fontSize: 13, fontWeight: 600, display: 'block' as const, marginBottom: 8, textTransform: 'uppercase' as const, letterSpacing: '0.06em' };
 
@@ -530,9 +532,14 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
     }
   }, [step]);
 
-  const selectTemplate = (name: string) => {
+  const selectTemplate = (key: string) => {
+    // key = "nome:idioma" (nomes de template Meta não contêm ':')
+    const sep = key.lastIndexOf(':');
+    const name = sep >= 0 ? key.slice(0, sep) : key;
+    const lang = sep >= 0 ? key.slice(sep + 1) : '';
     setTplName(name);
-    const t = templates.find(x => x.name === name);
+    setTplLang(lang);
+    const t = templates.find(x => x.name === name && (!lang || x.language === lang));
     const n = t?.variables.length || 0;
     setTplVars(Array.from({ length: n }, () => ({ source: 'column' as const, value: csvColumns[0] || '' })));
   };
@@ -566,7 +573,7 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
       });
       onDispatched();
       setStep('upload'); setFile(null); setDispatchId(''); setTotalLeads(0);
-      setCsvColumns([]); setAssignments([]); setTplName(''); setTplVars([]); setCampaignName('');
+      setCsvColumns([]); setAssignments([]); setTplName(''); setTplLang(''); setTplVars([]); setCampaignName('');
       if (fileRef.current) fileRef.current.value = '';
     } catch (e: any) { setErr(e?.response?.data?.detail || e?.message || 'Erro ao confirmar'); }
     finally { setSending(false); }
@@ -693,10 +700,10 @@ function CsvUploadWizard({ onDispatched }: { onDispatched: () => void }) {
           {templates.length > 0 && (
             <div>
               <label style={labelStyle}>Template da Meta</label>
-              <select className="aesir-select" style={{ ...INPUT_STYLE, appearance: 'none' as const }} value={tplName} onChange={e => selectTemplate(e.target.value)}>
+              <select className="aesir-select" style={{ ...INPUT_STYLE, appearance: 'none' as const }} value={tplName ? `${tplName}:${tplLang}` : ''} onChange={e => selectTemplate(e.target.value)}>
                 <option value="" style={{ background: '#0d0d20' }}>Selecione um template...</option>
                 {templates.map(t => (
-                  <option key={`${t.name}:${t.language}`} value={t.name} style={{ background: '#0d0d20' }}>
+                  <option key={`${t.name}:${t.language}`} value={`${t.name}:${t.language}`} style={{ background: '#0d0d20' }}>
                     {t.name} · {t.language} · {t.category}
                   </option>
                 ))}
@@ -908,6 +915,7 @@ function AesirCampaignHistory({ refreshKey }: { refreshKey: number }) {
   const [rows, setRows] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [acting, setActing] = useState<string | null>(null);
+  const [actErr, setActErr] = useState('');
 
   const load = async () => {
     try { setRows(await aesirApi.listDispatches()); } catch { /* ignore */ } finally { setLoading(false); }
@@ -921,11 +929,15 @@ function AesirCampaignHistory({ refreshKey }: { refreshKey: number }) {
 
   const act = async (id: string, action: 'pause' | 'cancel') => {
     setActing(id + action);
+    setActErr('');
     try {
       if (action === 'pause') await aesirApi.pauseDispatch(id);
       else await aesirApi.cancelDispatch(id);
       await load();
-    } catch { /* ignore */ } finally { setActing(null); }
+    } catch (e: any) {
+      // pause/cancel falho = campanha continua rodando — o usuário PRECISA saber
+      setActErr(`Falha ao ${action === 'pause' ? 'pausar' : 'cancelar'}: ${e?.response?.data?.detail || e?.message || 'erro desconhecido'}`);
+    } finally { setActing(null); }
   };
 
   const fmt = (iso?: string) => iso ? new Date(iso).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—';
@@ -935,6 +947,11 @@ function AesirCampaignHistory({ refreshKey }: { refreshKey: number }) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {actErr && (
+        <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.3)', borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 13 }}>
+          ⚠️ {actErr}
+        </div>
+      )}
       {rows.map((d, idx) => {
         const asns = d.assignments_json || [];
         const sent = (typeof d.sent === 'number' && d.sent) || asns.reduce((s: number, a: any) => s + (a.sent || 0), 0);

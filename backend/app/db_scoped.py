@@ -11,11 +11,13 @@ TENANT_TABLES: set[str] = {
     # CRM
     "crm_propostas", "crm_settings",
     # Disparo WhatsApp (VendeAI / Aesir / Chipcare)
-    "vendeai_settings",
+    "vendeai_settings", "vendeai_meta_tokens",
     "broadcast_numbers", "broadcast_dispatches", "broadcast_dispatch_assignments",
     "broadcast_alerts", "broadcast_recipients",
-    "aesir_instances", "aesir_dispatches",
+    "aesir_instances", "aesir_dispatches", "aesir_settings",
     "chipcare_channels", "chipcare_dispatches", "chipcare_settings",
+    # CRM / integrações
+    "chatwoot_settings",
 }
 
 

@@ -155,7 +155,16 @@ def _load_meta_tokens(db, user_id: str) -> list[dict]:
                 "waba_ids": r.get("waba_ids") or [], "bm_name": r.get("bm_name"),
                 "bm_id": r.get("bm_id"), "bm_daily_limit": r.get("bm_daily_limit"),
             })
-    if not out:
+        else:
+            # porta com token indecifrável (rechave Fernet): não some silenciosamente —
+            # entra flagada pra virar aviso no refresh em vez de números congelados sem explicação
+            out.append({
+                "id": r.get("id"), "label": r.get("label"), "token": None,
+                "waba_ids": [], "bm_name": r.get("bm_name"),
+                "bm_id": r.get("bm_id"), "bm_daily_limit": r.get("bm_daily_limit"),
+                "corrupted": True,
+            })
+    if not any(t.get("token") for t in out):
         legacy = db.table("vendeai_settings").select("meta_token_enc,waba_ids").eq("owner_id", user_id).execute().data
         if legacy:
             tok = safe_decrypt(legacy[0].get("meta_token_enc"))
@@ -359,11 +368,12 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
     db = get_db()
 
     tokens = _load_meta_tokens(db, user_id)
-    if not tokens:
+    if not any(t.get("token") for t in tokens):
         # diferencia "não configurou" de "configurou mas token não decifra (rechave Fernet)"
-        raw = db.table("vendeai_meta_tokens").select("id").eq("owner_id", user_id).execute().data or []
+        if tokens:  # só portas corrompidas
+            raise HTTPException(400, "Token Meta ilegível (chave Fernet mudou). Recadastre a porta.")
         legacy = db.table("vendeai_settings").select("meta_token_enc").eq("owner_id", user_id).execute().data
-        had_token = bool(raw) or bool(legacy and legacy[0].get("meta_token_enc"))
+        had_token = bool(legacy and legacy[0].get("meta_token_enc"))
         if had_token:
             raise HTTPException(400, "Token Meta ilegível (chave Fernet mudou). Recadastre a porta.")
         raise HTTPException(400, "Configure o token Meta antes de sincronizar.")
@@ -399,6 +409,9 @@ async def refresh_numbers(user_id: str = Depends(_get_user_id)):
 
     for t in tokens:
         label = t.get("label") or t.get("bm_name") or "porta"
+        if t.get("corrupted"):
+            _note(f"{label}: token ilegível — recadastre a porta")
+            continue
         try:
             phones = await _phones_for_token(MetaClient(t["token"]), t.get("waba_ids") or [], t.get("bm_id"))
             if not phones:
@@ -1194,7 +1207,7 @@ async def revoke_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)
 @router.get("/templates")
 async def list_templates(user_id: str = Depends(_get_user_id)):
     db = get_db()
-    tokens = _load_meta_tokens(db, user_id)
+    tokens = [t for t in _load_meta_tokens(db, user_id) if t.get("token")]
     if not tokens:
         raise HTTPException(400, "Token Meta não configurado ou corrompido. Re-salve em Configurações.")
 

@@ -15,6 +15,7 @@ interface UserSummary {
   templates: { approved: number; total: number } | null;
   crm: Record<string, string>;
   pending: Pending[];
+  last_meta_check_at: string | null;
   live: boolean; live_failed: boolean; error: boolean;
 }
 interface Aggregate {
@@ -24,6 +25,14 @@ interface Aggregate {
 
 const fmt = (n: number) => Number(n || 0).toLocaleString("pt-BR");
 const colorFor = (s: string) => s === "ok" ? C.green : s === "warning" ? C.yellow : s === "critical" ? C.red : C.sec;
+const ageOf = (iso: string | null | undefined): { label: string; stale: boolean } | null => {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const h = Math.floor(ms / 3600_000);
+  const label = h < 1 ? `${Math.max(1, Math.floor(ms / 60_000))}min` : h < 48 ? `${h}h` : `${Math.floor(h / 24)}d`;
+  return { label, stale: h >= 24 };
+};
 
 export default function CentralUsuarios() {
   const [agg, setAgg] = useState<Aggregate | null>(null);
@@ -33,10 +42,10 @@ export default function CentralUsuarios() {
   const [error, setError] = useState("");
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (force = false) => {
     setLoading(true); setError("");
     try {
-      const d = await adminUsersMonitorApi.list();
+      const d = await adminUsersMonitorApi.list(force);
       setAgg(d.aggregate); setUsers(d.users);
     } catch (e: any) {
       setError(e?.response?.data?.detail || e?.message || "Falha ao carregar Central de Usuários");
@@ -78,9 +87,14 @@ export default function CentralUsuarios() {
             {fmt(agg?.users_total || 0)} clientes ·{' '}
             <span style={{ color: C.red }}>{fmt(agg?.users_critical || 0)} em risco</span>
           </h1>
+          {agg?.generated_at && (
+            <div style={{ color: C.sec, fontSize: 12, marginTop: 6 }}>
+              Snapshot de {new Date(agg.generated_at).toLocaleString('pt-BR')}
+            </div>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-          <button onClick={load} disabled={loading} className="ds-btn" style={btnStyle(G.primary, loading)}>
+          <button onClick={() => load(true)} disabled={loading} className="ds-btn" style={btnStyle(G.primary, loading)}>
             {loading ? 'Atualizando…' : '↻ Atualizar'}
           </button>
           <button onClick={liveAll} disabled={live} className="ds-btn" style={btnStyle(G.purple, live)}>
@@ -148,6 +162,15 @@ function UserCard({ u, onOpen }: { u: UserSummary; onOpen: () => void }) {
         <Mini label="🟢🟡🔴" value={`${u.quality.green}·${u.quality.yellow}·${u.quality.red}`} />
         <Mini label="Live" value={u.live ? (u.live_failed ? '⚠' : '✓') : '—'} />
       </div>
+      {(() => {
+        const age = ageOf(u.last_meta_check_at);
+        if (!age) return null;
+        return (
+          <div style={{ color: age.stale ? C.yellow : C.sec, fontSize: 11, marginBottom: 8 }}>
+            {age.stale ? '⚠ ' : ''}Dados Meta de {age.label} atrás
+          </div>
+        );
+      })()}
       {u.pending.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {u.pending.slice(0, 4).map((p, i) => (

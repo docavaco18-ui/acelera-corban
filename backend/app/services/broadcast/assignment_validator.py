@@ -194,7 +194,7 @@ def validate_chipcare_assignments(
         raise HTTPException(400, "Lista de assignments vazia")
 
     ch_resp = db.table("chipcare_channels") \
-        .select("channel_id, daily_limit, is_paused, status, channel_type") \
+        .select("channel_id, daily_limit, is_paused, status, channel_type, quality_rating, can_send") \
         .eq("owner_id", user_id) \
         .execute()
     ch_by_id = {c["channel_id"]: c for c in (ch_resp.data or [])}
@@ -219,6 +219,12 @@ def validate_chipcare_assignments(
         status = (ch.get("status") or "").upper()
         if status not in ("CONNECTED", "ONLINE"):
             raise HTTPException(400, f"channel {cid} status={ch.get('status')} — não conectado")
+        quality = (ch.get("quality_rating") or "").upper()
+        if quality == "RED":
+            raise HTTPException(400, f"channel {cid} com qualidade RED — disparo bloqueado (risco de ban)")
+        can_send = (ch.get("can_send") or "").upper()
+        if can_send in ("DISABLED", "BLOCKED"):
+            raise HTTPException(400, f"channel {cid} com envio bloqueado pela Meta (can_send={ch.get('can_send')})")
         limit = int(ch.get("daily_limit") or 500)
         if planned > limit:
             raise HTTPException(

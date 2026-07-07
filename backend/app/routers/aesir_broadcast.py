@@ -56,6 +56,13 @@ def _advise_split(instances: list[dict], total_leads: int) -> dict[str, Any]:
     def is_eligible(inst: dict) -> bool:
         if inst.get("is_paused"):
             return False
+        # meta-only (sem canal Aesir real) e desconectadas são rejeitadas pelo
+        # validator na confirmação — excluir aqui evita propor split que dá 400
+        status = str(inst.get("status") or "").lower()
+        if status == "meta-only":
+            return False
+        if status in ("disconnected", "offline", "banned", "closed"):
+            return False
         can_send = inst.get("can_send", "UNKNOWN")
         if can_send in ("DISABLED", "BLOCKED"):
             return False
@@ -776,13 +783,14 @@ def _update_assignment(dispatch_id: str, instance_id: str, patch: dict, db, owne
 
 @router.post("/dispatches/{dispatch_id}/pause")
 def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
-    ev = _stop_events.get(dispatch_id)
-    if ev:
-        ev.set()
     db = get_db()
     existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
         raise HTTPException(404, "Dispatch não encontrado")
+    # stop_event só DEPOIS de validar ownership — senão qualquer tenant para disparo alheio
+    ev = _stop_events.get(dispatch_id)
+    if ev:
+        ev.set()
     db.table("aesir_dispatches").update({
         "status": "paused",
         "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -792,13 +800,14 @@ def pause_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
 
 @router.post("/dispatches/{dispatch_id}/cancel")
 def cancel_dispatch(dispatch_id: str, user_id: str = Depends(_get_user_id)):
-    ev = _stop_events.get(dispatch_id)
-    if ev:
-        ev.set()
     db = get_db()
     existing = db.table("aesir_dispatches").select("id").eq("id", dispatch_id).eq("owner_id", user_id).execute()
     if not existing.data:
         raise HTTPException(404, "Dispatch não encontrado")
+    # stop_event só DEPOIS de validar ownership — senão qualquer tenant para disparo alheio
+    ev = _stop_events.get(dispatch_id)
+    if ev:
+        ev.set()
     db.table("aesir_dispatches").update({
         "status": "cancelled",
         "updated_at": datetime.now(timezone.utc).isoformat(),

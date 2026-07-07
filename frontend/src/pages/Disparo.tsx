@@ -436,15 +436,15 @@ function MetaPanel({ onSaved }: { onSaved: () => void }) {
 // ── Analytics Panel ─────────────────────────────────────────────────────────
 
 function AnalyticsStrip({ data }: { data: any[] }) {
-  // VendeAI analytics is array; aggregate totals
+  // GET /analytics retorna 1 item POR NÚMERO com campo `failed` (não `errors`)
   const totalSent = data.reduce((s, d) => s + (d.sent || 0), 0);
-  const totalErrors = data.reduce((s, d) => s + (d.errors || 0), 0);
-  const totalCampaigns = data.length;
+  const totalErrors = data.reduce((s, d) => s + (d.failed || 0), 0);
+  const totalNumbers = data.length;
 
   const stats = [
     { label: 'Total Enviadas', value: totalSent, icon: '📤', grad: G.green, glow: 'rgba(16,185,129,.2)' },
     { label: 'Total Erros', value: totalErrors, icon: '⚠️', grad: G.red, glow: 'rgba(239,68,68,.2)' },
-    { label: 'Campanhas', value: totalCampaigns, icon: '📣', grad: G.primary, glow: 'rgba(124,58,237,.2)' },
+    { label: 'Números ativos', value: totalNumbers, icon: '📣', grad: G.primary, glow: 'rgba(124,58,237,.2)' },
   ];
 
   return (

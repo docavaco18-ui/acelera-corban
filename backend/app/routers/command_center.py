@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,6 +14,7 @@ from ..database import get_db
 from ..services.broadcast.meta_client import MetaClient
 
 router = APIRouter(prefix="/api/command-center", tags=["command-center"])
+logger = logging.getLogger(__name__)
 
 
 DISPATCHERS = {
@@ -75,7 +77,9 @@ def _safe_select(db, table: str, columns: str = "*", *, owner_id: str | None = N
         if limit:
             q = q.limit(limit)
         return q.execute().data or []
-    except Exception:
+    except Exception as e:
+        # Falha de DB não é "não configurado" — loga pra diagnóstico em vez de sumir
+        logger.warning("command_center: query em %s falhou: %s", table, e)
         return []
 
 
@@ -145,13 +149,20 @@ def _risk_level(row: dict) -> str:
 
 def _sent_today_from_assignments(db, owner_id: str) -> dict[str, int]:
     today = _now().date().isoformat()
-    rows = _safe_select(
-        db,
-        "broadcast_dispatch_assignments",
-        "phone_id, sent_count, created_at",
-        owner_id=owner_id,
-        limit=5000,
-    )
+    try:
+        rows = (
+            db.table("broadcast_dispatch_assignments")
+            .select("phone_id, sent_count, created_at")
+            .eq("owner_id", owner_id)
+            .gte("created_at", today)
+            .limit(5000)
+            .execute()
+            .data
+            or []
+        )
+    except Exception as e:
+        logger.warning("command_center: sent_today query falhou: %s", e)
+        rows = []
     totals: dict[str, int] = defaultdict(int)
     for row in rows:
         if str(row.get("created_at") or "")[:10] != today:
@@ -260,9 +271,15 @@ def _build_deliverability(db, owner_id: str, numbers: dict[str, list[dict]]) -> 
             used = sent_today.get(pid, int(row.get("sent_today") or 0))
             remaining = max(0, limit - used)
             level = _risk_level(row)
+            healthy = _is_number_healthy(row)
             totals["all"] += 1
-            totals[level if level != "ok" else "healthy"] += 1
-            if _is_number_healthy(row):
+            # "Saudável" segue a MESMA definição da capacidade (_is_number_healthy):
+            # pausado, sem tier ou desconectado não conta como saudável mesmo com risk ok.
+            if level == "ok" and not healthy:
+                totals["warning"] += 1
+            else:
+                totals[level if level != "ok" else "healthy"] += 1
+            if healthy:
                 totals["capacity_today"] += remaining
             totals["used_today"] += used
             channels.append({
@@ -279,7 +296,9 @@ def _build_deliverability(db, owner_id: str, numbers: dict[str, list[dict]]) -> 
                 "used_today": used,
                 "remaining_today": remaining,
                 "risk": level,
-                "is_healthy": _is_number_healthy(row),
+                "is_healthy": healthy,
+                "has_payment_issue": bool(row.get("has_payment_issue")),
+                "last_meta_check_at": row.get("last_meta_check_at"),
                 "issues": _number_issues(row),
             })
 
@@ -386,10 +405,16 @@ def _audit_meta_tokens_cached(settings: dict[str, dict], numbers: dict[str, list
     return audits
 
 
-async def _audit_meta_tokens_live(settings: dict[str, dict]) -> list[dict]:
-    async def audit_one(key: str, row: dict) -> dict:
+async def _audit_meta_tokens_live(settings: dict[str, dict], numbers: dict[str, list[dict]] | None = None) -> list[dict]:
+    numbers = numbers or {}
+
+    async def audit_one(key: str, row: dict) -> dict | None:
         cfg = DISPATCHERS[key]
         label = cfg["label"]
+        # CRM nunca configurado (sem settings E sem números): não emite auditoria —
+        # espelha o skip do modo cached, senão vira incidente crítico fantasma no live.
+        if not row and not (numbers.get(key) or []):
+            return None
         token = safe_decrypt(row.get(cfg["meta_token_col"]))
         if not token:
             return {
@@ -448,7 +473,8 @@ async def _audit_meta_tokens_live(settings: dict[str, dict]) -> list[dict]:
                 "live": True,
             }
 
-    return await asyncio.gather(*(audit_one(k, r or {}) for k, r in settings.items()))
+    results = await asyncio.gather(*(audit_one(k, r or {}) for k, r in settings.items()))
+    return [r for r in results if r is not None]
 
 
 def _build_templates(meta_audits: list[dict]) -> dict:
@@ -650,7 +676,7 @@ async def compute_overview(db, owner_id: str, *, live_meta: bool = False) -> dic
     if live_meta:
         try:
             meta_audits = await asyncio.wait_for(
-                _audit_meta_tokens_live(settings),
+                _audit_meta_tokens_live(settings, numbers),
                 timeout=LIVE_META_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:

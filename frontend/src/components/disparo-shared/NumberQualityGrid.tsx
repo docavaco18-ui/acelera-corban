@@ -45,7 +45,8 @@ export function NumberQualityGrid({
         const dotColor = QUALITY_COLOR[eq] || '#475569';
         const iid = String(inst.instance_id || inst.channel_id || inst.phone_id || '');
         const isMetaOnly = iid.startsWith('meta:') || inst.status === 'meta-only';
-        const crmConnected = !isMetaOnly;
+        // VendeAI expõe chatwoot_connected; sem inbox no CRM = não conectado (Aesir/Chipcare não têm o campo)
+        const crmConnected = !isMetaOnly && inst.chatwoot_connected !== false;
         const cards = statusCards(inst);
         const warnings = extraWarnings(inst);
         const top = topLevel(inst);

@@ -724,8 +724,8 @@ export const commandCenterApi = {
 };
 
 export const adminUsersMonitorApi = {
-  list: () =>
-    broadcastAxios.get<any>("/api/admin/users-monitor").then((r) => r.data),
+  list: (force = false) =>
+    broadcastAxios.get<any>("/api/admin/users-monitor", { params: force ? { force: 1 } : {} }).then((r) => r.data),
   refreshLiveAll: () =>
     broadcastAxios.post<any>("/api/admin/users-monitor/refresh-live").then((r) => r.data),
   detail: (ownerId: string, liveMeta = false) =>

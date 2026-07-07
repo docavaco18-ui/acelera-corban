@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ..credentials.crypto import safe_decrypt
+from ..db_scoped import scoped
 
 _CRM_FROM_HEALTH_ID = {"vendeai": "VendeAI", "aesir": "Aesir", "chipcare": "Chipcare"}
 
@@ -85,28 +86,33 @@ def _crm_status(overview: dict) -> dict:
 
 
 def count_bms(db, owner_id: str, settings: dict) -> dict:
-    """VendeAI = vendeai_meta_tokens (estavel/erro). Aesir/Chipcare = token único 0|1."""
+    """VendeAI = vendeai_meta_tokens (estavel/erro/pending). Aesir/Chipcare = token único 0|1."""
     connected = 0
     error = 0
+    pending = 0
     try:
         rows = (
-            db.table("vendeai_meta_tokens")
+            scoped(db, "vendeai_meta_tokens", owner_id)
             .select("connection_status")
-            .eq("owner_id", owner_id)
             .execute().data or []
         )
         for r in rows:
-            if str(r.get("connection_status")) == "estavel":
+            status = str(r.get("connection_status") or "")
+            if status == "estavel":
                 connected += 1
-            elif str(r.get("connection_status")) == "erro":
+            elif status == "erro":
                 error += 1
+            else:
+                # porta legada backfilled / nunca testada ('unknown') — conta como
+                # aguardando teste em vez de sumir do total (evita 'BMs 0/0')
+                pending += 1
     except Exception:
         pass
     for key in ("aesir", "chipcare"):
         row = settings.get(key) or {}
         if safe_decrypt(row.get("meta_token_enc")):
             connected += 1
-    return {"connected": connected, "error": error, "total": connected + error}
+    return {"connected": connected, "error": error, "pending": pending, "total": connected + error + pending}
 
 
 def summarize_overview(overview: dict, *, owner_id: str, email: str | None, client_label: str, bms: dict) -> dict:
@@ -150,7 +156,7 @@ def error_summary(owner_id: str, email: str | None, detail: str) -> dict:
     return {
         "owner_id": owner_id, "email": email, "client_label": email or owner_id,
         "score": {"score": 0, "status": "critical", "label": "Erro"},
-        "bms": {"connected": 0, "error": 0, "total": 0},
+        "bms": {"connected": 0, "error": 0, "pending": 0, "total": 0},
         "numbers": {"total": 0, "healthy": 0, "warning": 0, "critical": 0},
         "quality": {"green": 0, "yellow": 0, "red": 0, "unknown": 0},
         "capacity_today": 0, "templates": None, "crm": {},

@@ -141,13 +141,19 @@ function tplColor(status: string): string {
 // ── Componentes base ─────────────────────────────────────────────────────────
 
 function PageHeader({
-  scoreNum, scoreStatus, scoreLabel, generatedAt, loading, onRefresh, onLiveAudit, liveTimedOut, title,
+  scoreNum, scoreStatus, scoreLabel, generatedAt, metaCheckedAt, loading, onRefresh, onLiveAudit, liveTimedOut, title,
 }: {
-  scoreNum: number; scoreStatus: string; scoreLabel: string; generatedAt: string;
+  scoreNum: number; scoreStatus: string; scoreLabel: string; generatedAt: string; metaCheckedAt?: string | null;
   loading: boolean; onRefresh: () => void; onLiveAudit: () => void; liveTimedOut: boolean; title: string;
 }) {
   const grad = gradFor(scoreStatus);
   const color = colorFor(scoreStatus);
+  // Idade real do dado Meta (qualidade/tier vêm do último sync, não do request)
+  const metaAgeH = metaCheckedAt ? Math.floor((Date.now() - new Date(metaCheckedAt).getTime()) / 3600_000) : null;
+  const metaAgeLabel = metaAgeH === null ? null
+    : metaAgeH < 1 ? 'há menos de 1h'
+    : metaAgeH < 48 ? `há ${metaAgeH}h`
+    : `há ${Math.floor(metaAgeH / 24)}d`;
   return (
     <div style={{ ...glassCard(grad, 28), marginBottom: 22 }}>
       <div style={{
@@ -166,8 +172,13 @@ function PageHeader({
               <span style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>{scoreLabel}</span>
             </span>
             <span style={{ color: C.sec, fontSize: 12 }}>
-              Atualizado em {new Date(generatedAt).toLocaleString('pt-BR')}
+              Diagnóstico gerado em {new Date(generatedAt).toLocaleString('pt-BR')}
             </span>
+            {metaAgeLabel && (
+              <span style={{ color: (metaAgeH ?? 0) >= 24 ? C.yellow : C.sec, fontSize: 12 }}>
+                {(metaAgeH ?? 0) >= 24 ? '⚠ ' : ''}Dados Meta sincronizados {metaAgeLabel}
+              </span>
+            )}
             {liveTimedOut && (
               <span style={{ color: C.yellow, fontSize: 12, fontWeight: 700 }}>
                 ⚠ Auditoria ao vivo expirou — exibindo cache
@@ -523,6 +534,8 @@ export default function OverviewDashboard({
         scoreStatus={data.score.status}
         scoreLabel={data.score.label}
         generatedAt={data.generated_at}
+        metaCheckedAt={(data.deliverability.channels || []).reduce((mx: string | null, c: any) =>
+          c.last_meta_check_at && (!mx || c.last_meta_check_at > mx) ? c.last_meta_check_at : mx, null)}
         loading={loading}
         onRefresh={onRefresh}
         onLiveAudit={onLiveAudit}

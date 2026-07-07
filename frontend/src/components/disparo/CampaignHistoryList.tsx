@@ -159,6 +159,7 @@ export function CampaignHistoryList({ onRefresh }: Props) {
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [acting, setActing] = useState<string | null>(null);
+  const [actErr, setActErr] = useState('');
   const [metricsCache, setMetricsCache] = useState<Record<string, Metrics>>({});
   const [metricsLoading, setMetricsLoading] = useState<Record<string, boolean>>({});
 
@@ -187,14 +188,17 @@ export function CampaignHistoryList({ onRefresh }: Props) {
 
   const act = async (id: string, action: 'pause' | 'resume' | 'revoke') => {
     setActing(id + action);
+    setActErr('');
     try {
       if (action === 'pause') await broadcastApi.pauseDispatch(id);
       else if (action === 'resume') await broadcastApi.resumeDispatch(id);
       else await broadcastApi.revokeDispatch(id);
       await load();
       onRefresh?.();
-    } catch {
-      /* ignore */
+    } catch (e: any) {
+      // pause/cancel falho = campanha continua rodando no CRM — não engolir
+      const verb = action === 'pause' ? 'pausar' : action === 'resume' ? 'retomar' : 'cancelar';
+      setActErr(`Falha ao ${verb}: ${e?.response?.data?.detail || e?.message || 'erro desconhecido'}`);
     } finally {
       setActing(null);
     }
@@ -210,6 +214,11 @@ export function CampaignHistoryList({ onRefresh }: Props) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {actErr && (
+        <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.3)', borderRadius: 8, padding: '10px 14px', color: '#f87171', fontSize: 13 }}>
+          ⚠️ {actErr}
+        </div>
+      )}
       {dispatches.map((d, idx) => {
         const asns = d.broadcast_dispatch_assignments || [];
         const sent = totalSent(asns);

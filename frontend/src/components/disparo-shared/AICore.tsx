@@ -124,10 +124,21 @@ export function AIMonitorPanel({
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    const load = () => getSnapshot().then(setSnapshot).catch(() => { });
+    let inFlight = false;
+    const load = () => {
+      if (inFlight) return;
+      inFlight = true;
+      getSnapshot().then(setSnapshot).catch(() => { }).finally(() => { inFlight = false; });
+    };
     load();
-    const timer = setInterval(() => { load(); setTick(t => t + 1); }, 15000);
-    return () => clearInterval(timer);
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'hidden') return; // aba oculta: não empilha requests
+      load();
+      setTick(t => t + 1);
+    }, 15000);
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -137,9 +148,12 @@ export function AIMonitorPanel({
   };
 
   const active = snapshot?.active_dispatches || [];
+  // VendeAI embute broadcast_dispatch_assignments; Aesir/Chipcare usam assignments_json (campos sent/planned)
+  const asnsOf = (d: any) => d.broadcast_dispatch_assignments || d.assignments_json || [];
+  const sentOf = (a: any) => a.sent_count ?? a.sent ?? 0;
+  const plannedOf = (a: any) => a.planned_count ?? a.planned ?? 0;
   const totalSent = active.reduce((s: number, d: any) => {
-    const asns = d.broadcast_dispatch_assignments || [];
-    return s + asns.reduce((ss: number, a: any) => ss + (a.sent_count || 0), 0);
+    return s + asnsOf(d).reduce((ss: number, a: any) => ss + sentOf(a), 0);
   }, 0);
 
   const qBreak = { GREEN: 0, YELLOW: 0, RED: 0, UNKNOWN: 0 };
@@ -219,9 +233,9 @@ export function AIMonitorPanel({
               {active.length} {active.length === 1 ? campaignsLabel : campaignsLabelPlural}
             </div>
             {active.slice(0, 4).map((d: any) => {
-              const asns = d.broadcast_dispatch_assignments || [];
-              const sent = asns.reduce((s: number, a: any) => s + (a.sent_count || 0), 0);
-              const planned = asns.reduce((s: number, a: any) => s + (a.planned_count || 0), 0);
+              const asns = asnsOf(d);
+              const sent = asns.reduce((s: number, a: any) => s + sentOf(a), 0);
+              const planned = asns.reduce((s: number, a: any) => s + plannedOf(a), 0);
               const pct = planned > 0 ? Math.round(sent * 100 / planned) : 0;
               return (
                 <div key={d.id} style={{

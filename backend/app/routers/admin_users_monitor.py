@@ -9,10 +9,11 @@ import json
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth_deps import AuthUser, require_admin
 from ..database import get_db
+from ..db_scoped import scoped
 from ..redis_client import get_redis
 from .admin import _admin_headers, _admin_url
 from .command_center import _collect_settings, compute_overview
@@ -33,22 +34,29 @@ _CACHE_TTL = 300  # 5 minutos
 
 
 async def _list_auth_users() -> list[dict]:
+    users: list[dict] = []
     async with httpx.AsyncClient(timeout=15) as c:
-        r = await c.get(_admin_url() + "?per_page=200", headers=_admin_headers())
-    if not r.is_success:
-        logger.warning("Falha ao listar usuários (Supabase Admin API): %s %s", r.status_code, r.text[:200])
-        return []
-    data = r.json()
-    users = data.get("users") if isinstance(data, dict) else data
-    return users or []
+        page = 1
+        while page <= 50:  # teto de sanidade: 50 páginas × 200 = 10k usuários
+            r = await c.get(_admin_url() + f"?page={page}&per_page=200", headers=_admin_headers())
+            if not r.is_success:
+                logger.warning("Falha ao listar usuários (Supabase Admin API): %s %s", r.status_code, r.text[:200])
+                # Falha de API não pode virar snapshot "0 clientes" válido
+                raise HTTPException(503, "Falha ao listar usuários na Supabase Admin API")
+            data = r.json()
+            batch = (data.get("users") if isinstance(data, dict) else data) or []
+            users.extend(batch)
+            if len(batch) < 200:
+                break
+            page += 1
+    return users
 
 
 def _client_label(db, owner_id: str, email: str | None, settings: dict) -> str:
     try:
         rows = (
-            db.table("vendeai_meta_tokens")
+            scoped(db, "vendeai_meta_tokens", owner_id)
             .select("bm_name")
-            .eq("owner_id", owner_id)
             .execute().data or []
         )
         for r in rows:
@@ -93,21 +101,25 @@ async def _build_all(live_meta: bool) -> dict:
 
 
 @router.get("")
-async def list_users_monitor(_: AuthUser = Depends(require_admin)):
+async def list_users_monitor(force: bool = False, _: AuthUser = Depends(require_admin)):
     redis = await get_redis()
-    cached = await redis.get(_CACHE_KEY)
-    if cached:
-        return json.loads(cached)
+    if not force:
+        cached = await redis.get(_CACHE_KEY)
+        if cached:
+            return json.loads(cached)
     result = await _build_all(live_meta=False)
-    await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
+    # Snapshot vazio = falha upstream, não estado real — não cachear por 5 min
+    if result.get("users"):
+        await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
     return result
 
 
 @router.post("/refresh-live")
 async def refresh_live(_: AuthUser = Depends(require_admin)):
     result = await _build_all(live_meta=True)
-    redis = await get_redis()
-    await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
+    if result.get("users"):
+        redis = await get_redis()
+        await redis.set(_CACHE_KEY, json.dumps(result), ex=_CACHE_TTL)
     return result
 
 

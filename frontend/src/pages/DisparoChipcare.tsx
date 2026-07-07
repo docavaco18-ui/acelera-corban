@@ -692,11 +692,13 @@ export default function DisparoChipcare() {
   const [loadErr, setLoadErr] = useState('');
 
   const loadChannels = () => {
-    chipcareApi.listChannels().then(setChannels).catch(() => { });
+    chipcareApi.listChannels().then(setChannels)
+      .catch((e: any) => setLoadErr(`Falha ao carregar canais: ${e?.response?.data?.detail || e?.message || 'erro desconhecido'}`));
   };
 
   const loadHistory = () => {
-    chipcareApi.listDispatches().then(setHistDispatches).catch(() => { });
+    chipcareApi.listDispatches().then(setHistDispatches)
+      .catch((e: any) => setLoadErr(`Falha ao carregar histórico: ${e?.response?.data?.detail || e?.message || 'erro desconhecido'}`));
   };
 
   const loadTemplates = async () => {
@@ -705,7 +707,9 @@ export default function DisparoChipcare() {
       const res = await chipcareApi.listTemplates();
       const tpls = Array.isArray(res) ? res : ((res as any).templates ?? []);
       setTemplates(tpls);
-    } catch { /* templates não bloqueia */ }
+    } catch (e: any) {
+      setLoadErr(`Falha ao carregar templates: ${e?.response?.data?.detail || e?.message || 'erro desconhecido'}`);
+    }
     finally { setLoadingTpls(false); }
   };
 
